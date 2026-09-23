@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">Winston</title>
+  <desc id="desc">Identity artwork for Winston: a tuxedo front, a coffee cup, and a wristwatch</desc>
+  <defs>
+    <clipPath id="disc"><circle cx="270" cy="315" r="190"/></clipPath>
+  </defs>
+  <rect width="1200" height="630" rx="48" fill="#F4F1E8"/>
+  <circle cx="270" cy="315" r="190" fill="#4A4F6A"/>
+  <g clip-path="url(#disc)">
+    <path d="M130 520 L165 270 Q180 215 228 205 L312 205 Q360 215 375 270 L410 520 Z" fill="#1B2D2A"/>
+    <path d="M228 205 L312 205 L270 330 Z" fill="#F4F1E8"/>
+    <path d="M228 205 L270 330 L238 390 L200 250 Z" fill="#2B3D3A"/>
+    <path d="M312 205 L270 330 L302 390 L340 250 Z" fill="#2B3D3A"/>
+    <path d="M270 232 L236 216 L236 248 Z M270 232 L304 216 L304 248 Z" fill="#1B2D2A"/>
+    <circle cx="270" cy="232" r="7" fill="#1B2D2A"/>
+    <circle cx="270" cy="272" r="4" fill="#1B2D2A"/>
+    <circle cx="270" cy="298" r="4" fill="#1B2D2A"/>
+    <path d="M330 300 L352 300 L348 312 L334 312 Z" fill="#F4F1E8" opacity=".85"/>
+  </g>
+  <circle cx="270" cy="315" r="158" fill="none" stroke="#F4F1E8" stroke-width="5" opacity=".7"/>
+  <path d="M120 500 C330 405 385 180 560 130 S900 155 1080 70" fill="none" stroke="#4A4F6A" stroke-width="18" stroke-linecap="round" opacity=".22"/>
+  <text x="520" y="300" font-family="Georgia, serif" font-size="72" font-weight="700" fill="#1B2D2A">Winston</text>
+  <text x="525" y="355" font-family="system-ui, sans-serif" font-size="25" letter-spacing="5" fill="#4A4F6A">PERSONAL CODING TOOL</text>
+  <text x="525" y="420" font-family="system-ui, sans-serif" font-size="27" fill="#50635E">Set up the session, clear the stops, then run it clean.</text>
+  <g transform="translate(528 470)" fill="none" stroke="#4A4F6A" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M0 10 L44 10 L40 52 Q38 60 30 60 L14 60 Q6 60 4 52 Z" fill="#4A4F6A"/>
+    <path d="M44 20 Q60 20 58 34 Q56 46 42 44"/>
+    <path d="M14 -4 Q10 -12 16 -18 M28 -4 Q24 -12 30 -18"/>
+    <path d="M-6 66 L50 66"/>
+  </g>
+  <g transform="translate(640 470)" stroke="#4A4F6A" stroke-width="5" stroke-linecap="round">
+    <rect x="12" y="-14" width="26" height="16" rx="4" fill="#4A4F6A"/>
+    <rect x="12" y="58" width="26" height="16" rx="4" fill="#4A4F6A"/>
+    <circle cx="25" cy="30" r="26" fill="#F4F1E8"/>
+    <path d="M25 30 L25 14 M25 30 L36 36" fill="none"/>
+  </g>
+</svg>
