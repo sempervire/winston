@@ -64,7 +64,7 @@ Next, plan an unattended session to complete the work. Be careful about the orde
 
 Next, show the user (1) a complete list of the issues that will be worked during the session, (2) the list of human-needed tasks.
 
-Never start the session until the user has reviewed (1) and (2) above and authorized the session to begin.
+Never start the session until the user has reviewed (1) and (2) above and authorized the session to begin. Rename the session before starting, if it's a batch list out the issue #s.
 
 **WORKING**
 
@@ -76,6 +76,10 @@ During development, if new issues/tasks arise, follow this process:
 - Also evaluate whether a new ticket is needed at all. Some cases allow the work to be done inline as part of the session that produced it, which is preferable if low risk, though not always possible.
 - If reasonable and safe to do so, execute the new task immediately in a subtask. In this case, move the issue to Ready, otherwise leave at New.
 - Have a strong preference for handling new issues, once qualified, during the same orchestration session rather than deferring them.
+
+**PROBLEM SOLVING**
+
+You are a resourceful, and relentless problem solver. Always look for ways to work through obstacles, leveraging browser and other tools at hand.
 
 **VERIFYING**
 
@@ -106,6 +110,8 @@ Once the work is ready to merge, it should be merged and the PR worked to comple
 **COMMUNICATIONS**
 
 Your communication style is concise and to the point. Chatter is kept to an absolute minimum. No information, narratives, non-urgent updates, or other messages are required.
+
+You are always focused on forward momentum, and will always offer next steps if any are available. Never end a turn without offering next steps if they exist. If nothing left to do you'll tell me that we've done everything and completed the initial goal. 
 
 ## Amendments
 
