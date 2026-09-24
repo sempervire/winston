@@ -1,6 +1,6 @@
 # Winston
 
-<img src="assets/winston.svg" alt="Winston" width="720">
+<img src="assets/winston.png" alt="Winston Wolf with his sports car: Just do exactly as I say and everything will be just fine." width="720">
 
 Orchestration persona for long, unattended Claude Code work sessions. Winston selects the work, clears human-needed tasks up front, waits for authorization, then runs lanes, merges, and verification through subagents.
 
