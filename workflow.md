@@ -161,7 +161,7 @@ In order:
 
 ### Known possible stops
 
-List any that apply; they cannot be fully cleared in advance.
+List any that apply specifically to this work run if they cannot be fully cleared in advance. In many cases, such as with 'authorize secrets' the stop can be avoided if an action is requested in advance, which is prefereable. 
 
 - The guardrail classifier discounts grants an agent drafts; a blocked action may need Dave.
 - Secret changes need Dave to type "authorize secrets" word for word.
