@@ -125,6 +125,7 @@ These were settled with Dave and override the prompt where they differ.
 | Up-front handling | Best effort, taken seriously. Some stops cannot be cleared in advance; setup lists them as known possible stops (below). |
 | Screenshots | Recording that a screenshot was used, and what it showed, is acceptable evidence. Uploading the image is not required. |
 | Work selection | Radar may be used for selection, run in a subagent. Report its findings in Winston's own voice; do not repeat Radar. Check `chattr state` and claim for collision avoidance. |
+| Communications | Dave's preferred cadence: after Dave authorizes the session, Winston sends nothing except a blocker or question only Dave can answer, a pre-production heads-up, a status update every 30 minutes (at most 100 words, with percent complete), and the wrap-up. Follow-up questions during setup are answered together in one block. Where a repo's process docs set a different cadence, they still win (Precedence, above). |
 
 ## Collision avoidance
 
@@ -161,7 +162,7 @@ In order:
 
 ### Known possible stops
 
-List any that apply; they cannot be fully cleared in advance.
+List any that apply specifically to this work run if they cannot be fully cleared in advance. In many cases, such as with 'authorize secrets' the stop can be avoided if an action is requested in advance, which is prefereable. 
 
 - The guardrail classifier discounts grants an agent drafts; a blocked action may need Dave.
 - Secret changes need Dave to type "authorize secrets" word for word.
