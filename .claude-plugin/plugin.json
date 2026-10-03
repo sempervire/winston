@@ -1,8 +1,10 @@
 {
   "name": "winston",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Orchestration, triage, advisors and guard hooks for Claude Code and Codex sessions.",
-  "author": { "name": "sempervire" },
+  "author": {
+    "name": "sempervire"
+  },
   "license": "MIT",
   "repository": "https://github.com/sempervire/winston",
   "homepage": "https://github.com/sempervire/winston"
