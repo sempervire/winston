@@ -1,0 +1,17 @@
+{
+  "name": "winston",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Orchestration, triage, advisors and guard hooks for Claude Code and Codex sessions.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "winston": "bin/winston"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}
