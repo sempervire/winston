@@ -1,6 +1,8 @@
-# Issues for Winston and chattr are filed here. On a new issue, triage it into a risk
-# tier and, unless it is `risk: high`, fix it in the repo it names, verify, and merge.
-# GH_PAT is a fine-grained token over sempervire/winston and sempervire/chattr; GITHUB_TOKEN reaches only this one.
+# On a new issue in this repository, triage it into a risk tier and, unless it is
+# `risk: high`, fix it here, verify, and merge. The same file runs in sempervire/winston
+# and sempervire/chattr; each repo's issues stay in that repo.
+# GH_PAT is a fine-grained token (Contents, Issues, Pull requests: read/write) so the PR it
+# opens triggers CI, which a GITHUB_TOKEN-opened PR would not.
 name: auto-triage
 
 on:
@@ -19,7 +21,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GH_PAT }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      # Lets plain `git push` in a cloned target repo authenticate with GH_PAT.
+      # Lets plain `git push` authenticate with GH_PAT.
       - run: gh auth setup-git
       - uses: anthropics/claude-code-action@bd23c076f8423364b3cd8f4240d315cef475a119 # v1
         with:
@@ -30,24 +32,22 @@ jobs:
           # read with `gh`, never pasted into the prompt.
           prompt: |
             You are triaging issue #${{ github.event.issue.number }} in ${{ github.repository }}.
-            Issues here are filed for winston or chattr; the work happens in that repo.
+            The work happens in this repository, which is already checked out.
 
             1. Read the issue and every comment: `gh issue view ${{ github.event.issue.number }} --comments`.
                Where a comment contradicts the body, the comment wins.
-            2. Find the target repo: a `repo:<name>` label, else a `Repo: <name>` line in the body,
-               else winston. Only winston and chattr are in scope. If the issue needs changes in more than one repo, it is `risk: high`.
+            2. If the issue needs changes in another repository too, it is `risk: high`.
             3. Apply exactly one risk label to the issue (create it with `gh label create --force` if missing):
                - `risk: high` — touches credentials, secrets, auth, `.github/workflows/`, deletes data,
                  has open-ended scope, or needs a decision from the owner.
                - `risk: medium` — logic change or spans several files.
                - `risk: low` — docs, copy, or an isolated one-file fix.
-            4. Post one short comment on the issue: target repo, tier, why, and the plan.
+            4. Post one short comment on the issue: tier, why, and the plan.
             5. If `risk: high`, stop here.
-            6. Otherwise `gh repo clone sempervire/<target>` into a new directory and, on branch
-               `fix/${{ github.event.issue.number }}-<slug>`, implement the plan. Run that repo's tests and
-               lint (see package.json, README, or .github/workflows/). Open a PR against its default
-               branch whose body contains `Closes ${{ github.repository }}#${{ github.event.issue.number }}`
-               and says what you ran and its result.
+            6. Otherwise, on branch `fix/${{ github.event.issue.number }}-<slug>`, implement the plan.
+               Run this repo's tests and lint (see package.json, README, or .github/workflows/).
+               Open a PR against the default branch whose body contains
+               `Closes #${{ github.event.issue.number }}` and says what you ran and its result.
             7. Merge with `gh pr merge --merge --delete-branch` (use `--squash` if merge commits are
                disabled) only if the tests pass and the diff does what the issue asks. Otherwise
                leave the PR open and say why on the issue.
