@@ -4,6 +4,7 @@ import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, wr
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runReportRequest, discoverProjects } from '../scripts/report-runner.mjs';
 import { renderReportTerminal } from '../scripts/report-view.mjs';
 
@@ -119,7 +120,7 @@ test('command accepts free-text request and persists follow-up context while ope
     const capture = join(root, 'opened');
     const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`,
       XDG_DATA_HOME: join(root, 'state'), REX_OPEN_CAPTURE: capture };
-    const cli = join(process.cwd(), 'scripts', 'rex-report.mjs');
+    const cli = join(fileURLToPath(new URL('../scripts/', import.meta.url)), 'rex-report.mjs');
     const first = spawnSync(process.execPath, [cli, '--root', claudeRoot,
       'Show all my usage across every project'], { encoding: 'utf8', env });
     assert.equal(first.status, 0, first.stderr);
@@ -272,7 +273,7 @@ test('behavior report command invokes read-only Rex judgment before browser deli
     const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`,
       XDG_DATA_HOME: join(root, 'state'), REX_OPEN_CAPTURE: join(root, 'opened'),
       REX_JUDGE_CAPTURE: join(root, 'judged') };
-    const command = join(process.cwd(), 'scripts', 'rex-report.sh');
+    const command = join(fileURLToPath(new URL('../scripts/', import.meta.url)), 'rex-report.sh');
     const completed = spawnSync('sh', [command, request, '--root', claudeRoot], { encoding: 'utf8', env });
     assert.equal(completed.status, 0, completed.stderr);
     const judged = readFileSync(join(root, 'judged'), 'utf8');
@@ -297,7 +298,7 @@ test('prepared evidence excludes transcript text by default and only exposes a s
       type: 'user', uuid: 'private-turn', sessionId: 'session-a', timestamp: '2026-09-22T09:00:00Z',
       message: { content: 'SECRET_TRANSCRIPT_CONTENT?' },
     }));
-    const cli = join(process.cwd(), 'scripts', 'rex-report.mjs');
+    const cli = join(fileURLToPath(new URL('../scripts/', import.meta.url)), 'rex-report.mjs');
     const evidencePath = join(root, 'evidence.json');
     const ordinary = spawnSync(process.execPath, [cli, '--root', claudeRoot,
       '--prepare', evidencePath, 'Review all available history for habits'], { encoding: 'utf8' });
@@ -356,7 +357,7 @@ test('source request follows the report path and keeps provider conventions and 
     const opener = join(bin, process.platform === 'darwin' ? 'open' : 'xdg-open');
     writeFileSync(opener, '#!/bin/sh\nprintf "%s" "$1" > "$REX_OPEN_CAPTURE"\n');
     chmodSync(opener, 0o700);
-    const cli = spawnSync(process.execPath, [join(process.cwd(), 'scripts', 'rex-report.mjs'),
+    const cli = spawnSync(process.execPath, [join(fileURLToPath(new URL('../scripts/', import.meta.url)), 'rex-report.mjs'),
       '--root', claudeRoot, '--codex-root', codexRoot, '--rex-root', rexRoot,
       '--project-root', join(root, 'project'), 'Show Rex source inventory since installed'], {
       encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`,
@@ -389,7 +390,7 @@ test('prepared source evidence gives Rex the discovered source list and the repo
     const evidencePath = join(root, 'evidence.json');
     const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`,
       XDG_DATA_HOME: join(root, 'state'), REX_JUDGE_CAPTURE: join(root, 'judged') };
-    const prepare = spawnSync(process.execPath, [join(process.cwd(), 'scripts', 'rex-report.mjs'),
+    const prepare = spawnSync(process.execPath, [join(fileURLToPath(new URL('../scripts/', import.meta.url)), 'rex-report.mjs'),
       '--root', claudeRoot, '--codex-root', join(root, 'codex'), '--rex-root', join(root, 'rex'),
       '--project-root', join(root, 'project'), '--prepare', evidencePath, '--request-file', request],
     { encoding: 'utf8', env });
@@ -398,7 +399,7 @@ test('prepared source evidence gives Rex the discovered source list and the repo
     assert.ok(evidence.sourceInventory.sources.some((row) => row.id === 'claude.projects'));
     assert.ok(evidence.sourceInventory.sources.some((row) => row.id === 'codex.sessions'));
     assert.doesNotMatch(JSON.stringify(evidence), /SECRET_GRANT_VALUE/);
-    const command = spawnSync('sh', [join(process.cwd(), 'scripts', 'rex-report.sh'), request,
+    const command = spawnSync('sh', [join(fileURLToPath(new URL('../scripts/', import.meta.url)), 'rex-report.sh'), request,
       '--root', claudeRoot, '--codex-root', join(root, 'codex'), '--rex-root', join(root, 'rex'),
       '--project-root', join(root, 'project')], { encoding: 'utf8', env });
     assert.equal(command.status, 0, command.stderr);
