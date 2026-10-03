@@ -1,5 +1,7 @@
 # Winston
 
+<img src="assets/winston.png" alt="Winston, the fixer: Just do exactly as I say and everything will be just fine." width="720">
+
 An orchestration plugin for Claude Code (and Codex) that runs long, unattended engineering
 sessions off a GitHub board: pick the Ready work, clear every human-needed decision up front,
 build in parallel worktree lanes, merge one PR at a time, verify, and report.
