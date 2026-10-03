@@ -1,0 +1,307 @@
+#!/usr/bin/env node
+/**
+ * winston — the plugin's CLI. On the Bash tool's PATH through the plugin's bin/.
+ *
+ *   winston config [--json]            merged config, and which layers loaded
+ *   winston doctor                     check the setup; changes nothing
+ *   winston init [--yes]               create what doctor found missing (plan only without --yes)
+ *   winston install-codex-agents [--force]
+ *   winston title <words...>           record this session's title (published on the next prompt)
+ *
+ * Doctor and init share one list of checks: a check that init can fix carries a
+ * `fix`, and init runs exactly those fixes.
+ */
+
+import { spawnSync } from 'node:child_process'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { loadLayers } from '../lib/config.mjs'
+import { recordTitle } from '../hooks/session-title.mjs'
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+
+/**
+ * The labels the triage engine writes, in any repo. A repo adds its own through
+ * config `triage.labels` (names, or { name, color, description }).
+ *   risk: <tier>    the record that triage ran; every triaged issue gets exactly one
+ *   auto-merge      the work may be built and merged without a further ask
+ *   auto-verify     verification an agent can run itself
+ *   human-verify    verification only a person can do
+ */
+export const REQUIRED_LABELS = [
+  { name: 'risk: low', color: '0e8a16', description: 'Triage: docs, copy, or an isolated fix' },
+  { name: 'risk: medium', color: 'fbca04', description: 'Triage: a logic change, or several files' },
+  { name: 'risk: high', color: 'b60205', description: 'Triage: high blast radius, or needs an owner decision' },
+  { name: 'auto-merge', color: '1d76db', description: 'Triage: may be built and merged without a further ask' },
+  { name: 'auto-verify', color: '5319e7', description: 'Triage: an agent can run the verification' },
+  { name: 'human-verify', color: 'd93f0b', description: 'Triage: verification needs a person' },
+]
+
+const DEFAULT_STATUSES = ['New', 'Ready', 'Verify', 'Verified']
+const DEFAULT_TRIAGE_WORKFLOW = 'triage-on-new-issue.yml'
+
+function run(cmd, args, opts = {}) {
+  const r = spawnSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000, ...opts })
+  return { ok: r.status === 0, out: (r.stdout || '').trim(), err: (r.stderr || r.error?.message || '').trim() }
+}
+
+const onPath = (bin) => run('sh', ['-c', `command -v "$1"`, 'sh', bin]).ok
+
+export function requiredLabels(config) {
+  const extra = (config.triage?.labels ?? []).map((l) => (typeof l === 'string' ? { name: l } : l))
+  const byName = new Map([...REQUIRED_LABELS, ...extra].map((l) => [l.name, l]))
+  return [...byName.values()]
+}
+
+const codexHome = () => process.env.CODEX_HOME || join(homedir(), '.codex')
+const codexSources = () => {
+  const dir = join(ROOT, 'codex', 'agents')
+  try {
+    return readdirSync(dir).filter((f) => f.endsWith('.toml')).map((f) => ({ name: f, src: join(dir, f), dst: join(codexHome(), 'agents', f) }))
+  } catch {
+    return []
+  }
+}
+
+const BOARD_QUERY = `query($owner:String!,$number:Int!){ repositoryOwner(login:$owner){
+  ... on Organization{ projectV2(number:$number){ ...F } } ... on User{ projectV2(number:$number){ ...F } } } }
+fragment F on ProjectV2 { title fields(first:100){ nodes{ ... on ProjectV2FieldCommon{ name } ... on ProjectV2SingleSelectField{ options{ name } } } } }`
+
+/** Every check, in report order: { name, state: ok|missing|on|off, detail, required, fix? }. */
+export function checks(cwd) {
+  const out = []
+  const add = (c) => out.push({ required: true, detail: '', ...c })
+
+  add({ name: 'claude on PATH', state: onPath('claude') ? 'ok' : 'missing' })
+
+  const auth = run('gh', ['auth', 'status', '--json', 'hosts', '--jq', '.hosts["github.com"][] | select(.active) | .scopes'])
+  const scopes = auth.out.split(/,\s*/)
+  add({
+    name: 'gh auth with project scope',
+    state: auth.ok && scopes.includes('project') ? 'ok' : 'missing',
+    detail: !auth.ok ? 'gh not installed or not logged in' : scopes.includes('project') ? '' : 'run: gh auth refresh -s project',
+  })
+
+  let layers
+  try {
+    layers = loadLayers(cwd)
+  } catch (e) {
+    add({ name: 'repo config', state: 'missing', detail: e.message })
+    return out
+  }
+  const { root, repo } = layers
+  if (!root) {
+    add({ name: 'git repository', state: 'missing', detail: `${cwd} is not inside a git repository` })
+    return out
+  }
+  const config = { ...layers.user.data, ...repo.data }
+  const sample = join(ROOT, 'templates', 'config.sample.json')
+  const configPath = join(root, '.winston', 'config.json')
+  if (!repo.loaded) {
+    add({
+      name: 'repo config', state: 'missing', detail: `${configPath} not found`,
+      fix: { plan: `write ${configPath} from the sample (then edit it)`, run: () => { mkdirSync(dirname(configPath), { recursive: true }); copyFileSync(sample, configPath) } },
+    })
+  } else {
+    const problems = []
+    if (!config.branches?.integration || !config.branches?.production) problems.push('branches.integration and branches.production')
+    if (!config.board?.owner || !Number.isInteger(config.board?.number)) problems.push('board.owner and board.number')
+    add({ name: 'repo config', state: problems.length ? 'missing' : 'ok', detail: problems.length ? `needs ${problems.join(', ')}` : configPath })
+  }
+
+  for (const role of ['integration', 'production']) {
+    const branch = config.branches?.[role]
+    if (!branch) continue
+    const r = run('git', ['-C', root, 'ls-remote', '--exit-code', '--heads', 'origin', branch])
+    add({ name: `${role} branch on origin`, state: r.ok ? 'ok' : 'missing', detail: branch })
+  }
+
+  if (config.board?.owner && config.board?.number) {
+    const { owner, number } = config.board
+    const r = run('gh', ['api', 'graphql', '-f', `query=${BOARD_QUERY}`, '-f', `owner=${owner}`, '-F', `number=${number}`])
+    let project = null
+    try {
+      project = JSON.parse(r.out).data.repositoryOwner.projectV2
+    } catch {}
+    const where = `${owner} project ${number}`
+    if (!project) {
+      add({ name: 'board reachable', state: 'missing', detail: `${where}: ${r.err || 'not found'}`, board: true })
+    } else {
+      add({ name: 'board reachable', state: 'ok', detail: `${where}: ${project.title}` })
+      const fields = project.fields.nodes.filter((n) => n?.name)
+      const status = fields.find((f) => f.name === 'Status')
+      const have = new Set((status?.options ?? []).map((o) => o.name))
+      const lacking = (config.board.statuses ?? DEFAULT_STATUSES).filter((s) => !have.has(s))
+      add({ name: 'board Status options', state: lacking.length ? 'missing' : 'ok', detail: lacking.length ? `add: ${lacking.join(', ')}` : '', board: true })
+      const priority = config.board.priorityField ?? 'Priority'
+      add({ name: 'board Priority field', state: fields.some((f) => f.name === priority) ? 'ok' : 'missing', detail: priority, board: true })
+    }
+  }
+
+  const labels = run('gh', ['label', 'list', '--limit', '1000', '--json', 'name', '--jq', '.[].name'], { cwd: root })
+  if (!labels.ok) {
+    add({ name: 'triage labels', state: 'missing', detail: `cannot list labels: ${labels.err}` })
+  } else {
+    const have = new Set(labels.out.split('\n'))
+    const lacking = requiredLabels(config).filter((l) => !have.has(l.name))
+    add({
+      name: 'triage labels', state: lacking.length ? 'missing' : 'ok',
+      detail: lacking.length ? `missing: ${lacking.map((l) => l.name).join(', ')}` : '',
+      fix: lacking.length && {
+        plan: `create labels: ${lacking.map((l) => l.name).join(', ')}`,
+        run: () => {
+          for (const l of lacking) {
+            const r = run('gh', ['label', 'create', l.name, ...(l.color ? ['--color', l.color] : []), ...(l.description ? ['--description', l.description] : [])], { cwd: root })
+            if (!r.ok) throw new Error(`gh label create ${l.name}: ${r.err}`)
+          }
+        },
+      },
+    })
+  }
+
+  const wfName = config.triage?.workflow ?? DEFAULT_TRIAGE_WORKFLOW
+  const wf = join(root, '.github', 'workflows', wfName)
+  add({
+    name: 'triage-on-new-issue workflow', state: existsSync(wf) ? 'ok' : 'missing', detail: wf,
+    fix: !existsSync(wf) && {
+      plan: `write ${wf} from the template (needs repo secrets GH_PAT and CLAUDE_CODE_OAUTH_TOKEN)`,
+      run: () => { mkdirSync(dirname(wf), { recursive: true }); copyFileSync(join(ROOT, 'templates', 'triage-on-new-issue.yml'), wf) },
+    },
+  })
+
+  // Optional: features that use these degrade cleanly without them.
+  add({ name: 'codex CLI', required: false, state: onPath('codex') ? 'on' : 'off', detail: 'Rex, /winston:codex' })
+  add({ name: 'chattr CLI', required: false, state: onPath('chattr') ? 'on' : 'off', detail: 'peer messages, claims' })
+  const gemini = process.platform === 'darwin' && run('security', ['find-generic-password', '-s', 'GEMINI_API_KEY']).ok
+  add({ name: 'GEMINI_API_KEY in keychain', required: false, state: gemini ? 'on' : 'off', detail: '/winston:gemini' })
+  const agents = codexSources()
+  const stale = agents.filter((a) => !existsSync(a.dst) || readFileSync(a.dst, 'utf8') !== readFileSync(a.src, 'utf8'))
+  add({
+    name: 'Codex agents installed', required: false,
+    state: agents.length && !stale.length ? 'on' : 'off',
+    detail: !agents.length ? 'this plugin ships none' : stale.length ? `not installed or differ: ${stale.map((a) => a.name).join(', ')} (winston install-codex-agents)` : '',
+  })
+  return out
+}
+
+function doctor(cwd) {
+  const list = checks(cwd)
+  for (const c of list) console.log(`${c.state.padEnd(8)} ${c.name}${c.detail ? `  — ${c.detail}` : ''}`)
+  const bad = list.filter((c) => c.required && c.state === 'missing')
+  if (list.some((c) => c.board && c.state === 'missing')) console.log('\nBoard: winston init prints how to set one up; creating it needs the owner\'s decisions.')
+  if (bad.some((c) => c.fix)) console.log('\nFix: winston init')
+  return bad.length ? 1 : 0
+}
+
+function init(cwd, yes) {
+  const list = checks(cwd)
+  const fixes = list.filter((c) => c.required && c.state === 'missing' && c.fix)
+  const board = list.filter((c) => c.board && c.state === 'missing')
+  const manual = list.filter((c) => c.required && c.state === 'missing' && !c.fix && !c.board)
+  if (!fixes.length && !board.length && !manual.length) {
+    console.log('Nothing to do: every required check passes.')
+    return 0
+  }
+  if (fixes.length) {
+    console.log(yes ? 'Creating:' : 'winston init would create:')
+    for (const c of fixes) console.log(`  - ${c.fix.plan}`)
+  }
+  if (board.length) {
+    console.log('\nThe board needs the owner\'s decisions, so init does not create it:')
+    console.log('  1. Create a GitHub Project (v2) under the board owner: gh project create --owner <owner> --title "<title>"')
+    console.log('  2. Give its Status field the options: ' + DEFAULT_STATUSES.join(', ') + ' (or the repo config\'s board.statuses)')
+    console.log('  3. Add a single-select Priority field (or the name in board.priorityField)')
+    console.log('  4. Put its owner and number in .winston/config.json as board.owner and board.number')
+    for (const c of board) console.log(`  now: ${c.name} — ${c.detail}`)
+  }
+  if (manual.length) {
+    console.log('\nNeeds a hand fix:')
+    for (const c of manual) console.log(`  - ${c.name}${c.detail ? ` — ${c.detail}` : ''}`)
+  }
+  if (!yes) {
+    if (fixes.length) console.log('\nRerun with --yes to create these.')
+    return 0
+  }
+  let failed = 0
+  for (const c of fixes) {
+    try {
+      c.fix.run()
+      console.log(`done     ${c.fix.plan}`)
+    } catch (e) {
+      failed++
+      console.log(`failed   ${c.fix.plan}: ${e.message}`)
+    }
+  }
+  return failed ? 1 : 0
+}
+
+function installCodexAgents(force) {
+  const agents = codexSources()
+  if (!agents.length) {
+    console.log('No Codex agents in this plugin (codex/agents/*.toml).')
+    return 0
+  }
+  let refused = 0
+  for (const a of agents) {
+    const want = readFileSync(a.src, 'utf8')
+    const have = existsSync(a.dst) ? readFileSync(a.dst, 'utf8') : null
+    if (have === want) {
+      console.log(`same      ${a.dst}`)
+      continue
+    }
+    if (have !== null && !force) {
+      refused++
+      console.log(`differs   ${a.dst} — not overwritten (rerun with --force to replace it)`)
+      continue
+    }
+    mkdirSync(dirname(a.dst), { recursive: true })
+    writeFileSync(a.dst, want)
+    console.log(`${have === null ? 'installed' : 'replaced '} ${a.dst}`)
+  }
+  return refused ? 1 : 0
+}
+
+function config(cwd, json) {
+  const layers = loadLayers(cwd)
+  const merged = { ...layers.user.data, ...layers.repo.data }
+  if (json) {
+    console.log(JSON.stringify(merged, null, 2))
+    return 0
+  }
+  for (const [name, l] of [['user', layers.user], ['repo', layers.repo]]) {
+    console.log(`${name} layer: ${l.path ?? '(not in a git repository)'}${l.path ? (l.loaded ? '' : ' (not found)') : ''}`)
+  }
+  console.log(JSON.stringify(merged, null, 2))
+  return 0
+}
+
+const USAGE = 'usage: winston config [--json] | doctor | init [--yes] | install-codex-agents [--force] | title <words...>'
+
+function main(argv) {
+  const [cmd, ...rest] = argv
+  const cwd = process.cwd()
+  try {
+    switch (cmd) {
+      case 'config': return config(cwd, rest.includes('--json'))
+      case 'doctor': return doctor(cwd)
+      case 'init': return init(cwd, rest.includes('--yes'))
+      case 'install-codex-agents': return installCodexAgents(rest.includes('--force'))
+      case 'title':
+        if (!recordTitle(rest)) {
+          console.error('winston title: needs words and a Claude Code session (CLAUDE_CODE_SESSION_ID)')
+          return 1
+        }
+        return 0
+      default:
+        console.error(USAGE)
+        return 2
+    }
+  } catch (e) {
+    console.error(e.message)
+    return 1
+  }
+}
+
+if (import.meta.main) process.exitCode = main(process.argv.slice(2))

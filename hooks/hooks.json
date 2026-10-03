@@ -1,0 +1,95 @@
+{
+  "description": "Winston guard hooks: production-deploy gate, credential-console grant, session titles, worktree setup, open browser tabs. Each hook reads the calling CLI (Claude Code or Codex) from its payload.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/worktree-setup.mjs\"",
+            "timeout": 30,
+            "statusMessage": "Setting up the worktree"
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-title.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-title.mjs\"",
+            "timeout": 5,
+            "statusMessage": "Checking the session title"
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/secret-grant.mjs\"",
+            "timeout": 5,
+            "statusMessage": "Checking for a secret-handling grant"
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/deploy-gate.mjs\"",
+            "timeout": 5,
+            "statusMessage": "Checking for a production-deploy approval"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^(Bash|shell|local_shell|exec_command)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/deploy-gate.mjs\"",
+            "timeout": 20,
+            "statusMessage": "Checking production-deploy approval"
+          }
+        ]
+      },
+      {
+        "matcher": "^mcp__claude-in-chrome__(navigate|browser_batch)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/secret-grant.mjs\"",
+            "timeout": 10,
+            "statusMessage": "Checking secret-handling authorization"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^EnterWorktree$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/worktree-setup.mjs\"",
+            "timeout": 30,
+            "statusMessage": "Setting up the new worktree"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/browser-tab-guard.mjs\"",
+            "timeout": 10,
+            "statusMessage": "Checking for open browser tabs"
+          }
+        ]
+      }
+    ]
+  }
+}

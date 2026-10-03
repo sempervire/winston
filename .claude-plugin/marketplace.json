@@ -1,0 +1,17 @@
+{
+  "name": "winston",
+  "owner": { "name": "sempervire" },
+  "metadata": { "description": "Winston and the tools it works with." },
+  "plugins": [
+    {
+      "name": "winston",
+      "source": "./",
+      "description": "Orchestration, triage, advisors and guard hooks for Claude Code and Codex sessions."
+    },
+    {
+      "name": "chattr",
+      "source": { "source": "github", "repo": "sempervire/chattr", "ref": "v0.1.0" },
+      "description": "Peer messaging and coordination between agent sessions."
+    }
+  ]
+}

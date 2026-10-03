@@ -1,0 +1,72 @@
+# Triage each new issue with Winston's triage engine (/winston:triage), under the policy
+# named by `triage.policy` in .winston/config.json.
+#
+# Installed by `winston init` as .github/workflows/triage-on-new-issue.yml. Takes effect
+# only from the DEFAULT branch: `issues` is a repository-level event, and GitHub runs it
+# from the default branch alone. A copy merged anywhere else never fires and never errors.
+#
+# Secrets (Settings -> Secrets and variables -> Actions):
+#   GH_PAT                   fine-grained token over this repo: Issues read/write, and
+#                            Projects read/write on the board owner (the board is an
+#                            org/user project, which GITHUB_TOKEN cannot reach).
+#   CLAUDE_CODE_OAUTH_TOKEN  from `claude setup-token`.
+#
+# When Actions is unavailable (budget, outage, a failed run) nothing is stamped and nothing
+# reports itself broken: the issue stays untriaged, with no `risk:` label, which is exactly
+# what the next whole-board /winston:triage pass picks up.
+name: Triage a new issue
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: "Issue number to triage"
+        required: true
+
+concurrency:
+  group: triage-${{ github.event.issue.number || inputs.issue }}
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    # The agent holds a token that can write labels and the board, and it reads the issue
+    # body. Only issues from people with a stake in the repo get it; others wait for a
+    # manual /winston:triage pass.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+      # Through the environment, never interpolated into a script: a dispatch input is free
+      # text, and `${{ }}` is substituted before the shell parses the line.
+      INPUT_ISSUE: ${{ github.event.issue.number || inputs.issue }}
+    steps:
+      - name: Check the issue number
+        run: |
+          case "$INPUT_ISSUE" in
+            ""|*[!0-9]*) echo "not an issue number: $INPUT_ISSUE" >&2; exit 1 ;;
+          esac
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: anthropics/claude-code-action@bd23c076f8423364b3cd8f4240d315cef475a119 # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GH_PAT }}
+          plugin_marketplaces: https://github.com/sempervire/winston.git
+          plugins: winston@winston
+          # Triage reads and labels; it never edits code, merges or deploys.
+          claude_args: --allowedTools "Bash(gh issue:*),Bash(gh label:*),Bash(gh api:*),Bash(gh project:*),Bash(winston config:*),Read,Glob,Grep"
+          # Only the number is interpolated: the title and body are untrusted text and are
+          # read with `gh`, never pasted into the prompt.
+          prompt: |
+            /winston:triage ${{ github.event.issue.number || inputs.issue }}
+
+            This is the unattended run on a newly filed issue. Triage only that issue, under
+            the policy the repo's .winston/config.json names. Read the issue and every comment
+            with `gh issue view <n> --comments`; where a comment contradicts the body, the
+            comment wins. Do not implement, merge or deploy anything.

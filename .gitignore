@@ -1,0 +1,9 @@
+node_modules/
+.DS_Store
+# Build notes for the consolidation; never published.
+HANDOFF.md
+SPEC.md
+# Lane-extraction output for other repos; never published.
+.extracted/
+# Personal cutover script; never published.
+.local/
