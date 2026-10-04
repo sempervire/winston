@@ -94,7 +94,8 @@ export function setup(wt, config) {
       'worktree-setup: this worktree has a detached HEAD.',
       'worktree-setup: create a branch before committing or pushing -- git switch -c <branch>.'
     )
-  } else if (pattern) {
+  } else if (pattern && !branch.startsWith('session/')) {
+    // launcher-owned holding branches; renamed before pushing
     let ok = true
     try {
       ok = new RegExp(pattern).test(branch)

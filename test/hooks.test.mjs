@@ -168,6 +168,8 @@ test('worktree-setup: SessionStart reports as JSON; branch pattern and detached 
   assert.equal(out.hookSpecificOutput.hookEventName, 'SessionStart');
   assert.match(out.hookSpecificOutput.additionalContext, /\.env\.local/);
   assert.match(out.systemMessage, /does not match this repo's branch pattern/);
+  r.git(r.wt, 'switch', '-q', '-c', 'session/claude-x');
+  assert.doesNotMatch(r.run('worktree-setup.mjs', { hook_event_name: 'SessionStart', cwd: r.wt }).systemMessage ?? '', /branch pattern/);
   r.git(r.wt, 'switch', '-q', '--detach');
   assert.match(r.run('worktree-setup.mjs', { hook_event_name: 'PostToolUse', cwd: r.wt }).systemMessage, /detached HEAD/);
 });
