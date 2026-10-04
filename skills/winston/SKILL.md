@@ -215,23 +215,42 @@ In order:
 5. Plan order, dependencies, and parallel lanes. Mark each item **start now** or **blocked by**
    a named dependency (merged code, data, an owner action). Anything not blocked starts at
    authorization, under the Parallelism amendment.
-6. Show the owner (1) the issues to be worked and (2) the complete human-needed setup: every
+6. From the planned work and the commands it is likely to run (step 5), draft a narrow,
+   paste-ready block of Claude Code `/permissions` allow rules covering only that work. If
+   nothing in the plan needs a rule, skip this step and the `/permissions` steps below. Where
+   a needed permission can't be known or pinned down in advance, list it under Known possible
+   stops instead of forcing a rule for it.
+7. Show the owner (1) the issues to be worked and (2) the complete human-needed setup: every
    decision, gated action, permission, and known possible stop. Summarize the decisions
-   before asking them, so the owner can correct the shape of the run before answering.
-7. Ask every independent setup decision in a question box. Give each its own question,
-   explain the tradeoff, recommend an answer and say why. Batch the questions in one setup
-   round where the interface permits; ask dependent questions after their prerequisites are
-   answered. This skill requires question boxes as its standing setup behavior, even
-   where the repository's general chat rules open them only on request. If question boxes
-   are unavailable, ask the same numbered questions in chat. Record an explicit answer to
-   every decision; a suggested default, silence, or a general go-ahead is not an answer.
-   Treat each gated action separately, including production deployment, test messages,
-   consent screens, and moves to `Verified`; get explicit approval for each that applies.
-8. Confirm that the setup actions are complete and every decision and gate is answered.
+   before asking them, so the owner can correct the shape of the run before answering. Where
+   step 6 produced a rule block, show it here too, with:
+   1. Open `/permissions`.
+   2. Select **Add**.
+   3. Paste the proposed block (if a multiline paste isn't accepted, add the rules one at a
+      time instead).
+   4. Choose **Session**, **Project**, or **User** for the scope.
+
+   Explain the scope choice; never make it for the owner: matching actions won't prompt again
+   this session; **Project** carries that into this project on future sessions; **User**
+   carries it into every project. This covers only the prompts the new allow rules remove.
+   Claude Code evaluates deny, then ask, then allow, and a hook can block an action before any
+   rule is reached, so an allow rule never clears a `permissions.ask`/`permissions.deny` rule,
+   a hook, production approval, a secret grant, or any other gate below — those stay explicit.
+8. Ask every independent setup decision in a question box, including the `/permissions` scope
+   from step 7 where a rule block exists. Give each its own question, explain the tradeoff,
+   recommend an answer and say why. Batch the questions in one setup round where the interface
+   permits; ask dependent questions after their prerequisites are answered. This skill requires
+   question boxes as its standing setup behavior, even where the repository's general chat
+   rules open them only on request. If question boxes are unavailable, ask the same numbered
+   questions in chat. Record an explicit answer to every decision; a suggested default,
+   silence, or a general go-ahead is not an answer. Treat each gated action separately,
+   including production deployment, test messages, consent screens, and moves to `Verified`;
+   get explicit approval for each that applies.
+9. Confirm that the setup actions are complete and every decision and gate is answered.
    Show the resulting work set and plan, then ask for a separate authorization to start the
    session. If an answer changes the plan, update the decision list and resolve any new
    questions before asking to start. Nothing starts until the owner authorizes this final plan.
-9. On authorization: claim each approved issue and `resource:chrome`, then begin.
+10. On authorization: claim each approved issue and `resource:chrome`, then begin.
 
 ### Known possible stops
 
