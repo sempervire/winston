@@ -153,6 +153,8 @@ These override the prompt where they differ. Status names below are the roles in
 | Check waits | A lane that starts a PR check-waiter runs it in the foreground and never ends a turn on "waiting for checks". If the PR goes dirty while waiting, it prints `CONFLICT` and reports it to Winston rather than going idle; under the Merge queue, Winston updates the head onto the base when its turn comes. Lane dispatch prompts carry this rule. |
 | Review rounds | Each lane enforces the review-round limit itself rather than waiting for Winston to step in: two rounds of fixes for a P1 or P2 finding, one round for a P3, then defer. It records one line per round in the PR body, and once the limit is reached it defers the remaining finding with one line in the same place. Lane dispatch prompts carry this rule. |
 | Production deploys | When a run has reason to deploy production (an item that only takes effect in production needs it, or production is overdue for a promotion), Winston may deploy it as needed to finish every available task, including the production migrations the promotion carries. **The permission is conditional:** at setup, Winston tells the owner that a production deploy will happen during the session, and the owner approves it by typing the approval phrase (config `deployGate.phrase`) in the Winston session. Without that approval, no production deploy: where config `deployGate` is set, the plugin's deploy-gate hook blocks the guarded actions it lists (the promotion merge into config `branches.production`, a migration dispatch) in any session where the owner has not typed the phrase. A non-Winston session gets the same approval only the same way, by the owner typing the phrase in that session. Once approved, the accepted plan and authorization cover the migrations and every other action the deploy involves; none of them needs a second ask. The repo's promotion process still applies in full, and a harness permission denial is still a stop for the owner, never something to route around. Setup lists the production step among the human-needed tasks, so any permission rule the harness needs is in place before the run starts. With no `deployGate` configured, every production deploy is a separate explicit ask. |
+| Mid-run additions | When the owner adds work mid-session, build its gate ledger (Setup step 5) and ask its gates in the same question that approves the work. |
+| Wrap-up sweep | Before writing the wrap-up, sweep for every action still pending the owner (closes, labels, cleanups) and ask them together in one question box. The wrap-up reports outcomes, not open asks. |
 | Verify | Winston moves approved issues to `Verified` only under the repo's authorized-session verify rule. Where that rule is absent, issues it would cover stop at the owner. |
 | Up-front handling | Best effort, taken seriously. Some stops cannot be cleared in advance; setup lists them as known possible stops (below). |
 | Screenshots | Recording that a screenshot was used, and what it showed, is acceptable evidence. Uploading the image is not required. |
@@ -212,18 +214,28 @@ In order:
    PRs. Radar may help, in a subagent. With no board, the work set is what the owner names.
 4. Read each chosen issue in full. Walk its label, risk, merge path, and verification path
    end to end; collect every point where the session could stop.
-5. Plan order, dependencies, and parallel lanes. Mark each item **start now** or **blocked by**
+5. Build the **gate ledger**: for every chosen issue, walk its path to *closed* and list each
+   step reserved to the owner or gated by config or process: moves to `Ready`; moves to
+   `Verified` the repo's authorized-session verify rule does not cover (production-only
+   verification, no staging check, human judgment); labels a gate needs (a production-verify
+   label, a no-PR close label); the production deploy, including what the promotion gate will
+   require of every issue in the promotion range; hand-closes; test messages or emails to real
+   recipients; test-data creation and its later cleanup; secrets. Each entry becomes a
+   **conditional pre-approval** in the setup question round ("close #X when its production
+   check passes and evidence is posted"), so the triggering event performs the action without
+   a second ask.
+6. Plan order, dependencies, and parallel lanes. Mark each item **start now** or **blocked by**
    a named dependency (merged code, data, an owner action). Anything not blocked starts at
    authorization, under the Parallelism amendment.
-6. From the planned work and the commands it is likely to run (step 5), draft a narrow,
+7. From the planned work and the commands it is likely to run (step 6), draft a narrow,
    paste-ready block of Claude Code `/permissions` allow rules covering only that work. If
    nothing in the plan needs a rule, skip this step and the `/permissions` steps below. Where
    a needed permission can't be known or pinned down in advance, list it under Known possible
    stops instead of forcing a rule for it.
-7. Show the owner (1) the issues to be worked and (2) the complete human-needed setup: every
+8. Show the owner (1) the issues to be worked and (2) the complete human-needed setup: every
    decision, gated action, permission, and known possible stop. Summarize the decisions
    before asking them, so the owner can correct the shape of the run before answering. Where
-   step 6 produced a rule block, show it here too, with:
+   step 7 produced a rule block, show it here too, with:
    1. Open `/permissions`.
    2. Select **Add**.
    3. Paste the proposed block (if a multiline paste isn't accepted, add the rules one at a
@@ -236,8 +248,8 @@ In order:
    Claude Code evaluates deny, then ask, then allow, and a hook can block an action before any
    rule is reached, so an allow rule never clears a `permissions.ask`/`permissions.deny` rule,
    a hook, production approval, a secret grant, or any other gate below — those stay explicit.
-8. Ask every independent setup decision in a question box, including the `/permissions` scope
-   from step 7 where a rule block exists. Give each its own question, explain the tradeoff,
+9. Ask every independent setup decision in a question box, including the `/permissions` scope
+   from step 8 where a rule block exists. Give each its own question, explain the tradeoff,
    recommend an answer and say why. Batch the questions in one setup round where the interface
    permits; ask dependent questions after their prerequisites are answered. This skill requires
    question boxes as its standing setup behavior, even where the repository's general chat
@@ -245,12 +257,13 @@ In order:
    questions in chat. Record an explicit answer to every decision; a suggested default,
    silence, or a general go-ahead is not an answer. Treat each gated action separately,
    including production deployment, test messages, consent screens, and moves to `Verified`;
-   get explicit approval for each that applies.
-9. Confirm that the setup actions are complete and every decision and gate is answered.
+   get explicit approval for each that applies. Ask each gate-ledger entry (step 5) here as a
+   conditional pre-approval.
+10. Confirm that the setup actions are complete and every decision and gate is answered.
    Show the resulting work set and plan, then ask for a separate authorization to start the
    session. If an answer changes the plan, update the decision list and resolve any new
    questions before asking to start. Nothing starts until the owner authorizes this final plan.
-10. On authorization: claim each approved issue and `resource:chrome`, then begin.
+11. On authorization: claim each approved issue and `resource:chrome`, then begin.
 
 ### Known possible stops
 
@@ -266,6 +279,7 @@ advance, which is preferable.
 - A verification that needs a real payment, a production write, a second physical device, or
   a judgment of taste.
 - Anything the repo's process docs or the profile reserve to the owner.
+- A gate not in the gate ledger is a planning error: ask it at once and add it to the ledger.
 
 ## Plan mode — `/winston plan <draft>`
 
