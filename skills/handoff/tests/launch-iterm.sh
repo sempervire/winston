@@ -107,6 +107,9 @@ export HANDOFF_TEST_CLAUDE_CAPTURE="$tmp_dir/claude-capture"
 export HANDOFF_TEST_APPLESCRIPT_CAPTURE="$tmp_dir/applescript-capture"
 export HANDOFF_TEST_COMMAND_CAPTURE="$tmp_dir/command-capture"
 export HANDOFF_TEST_PS_MODE=exit-after-two
+export HOME="$tmp_dir/home"
+mkdir -p "$HOME"
+handoffs_dir="$HOME/.winston/handoffs"
 
 PATH="$bin_dir:$PATH" "$repo_dir/scripts/launch-iterm.sh" --open-tab \
   --wait-pid 4242 \
@@ -114,6 +117,17 @@ PATH="$bin_dir:$PATH" "$repo_dir/scripts/launch-iterm.sh" --open-tab \
   --name "$name" \
   --mode auto \
   --prompt-b64 "$prompt_b64"
+
+assert_not_grep() {
+  if grep -F -- "$1" "$2" >/dev/null; then
+    printf 'unexpected match for %s in %s\n' "$1" "$2" >&2
+    exit 1
+  fi
+}
+
+grep -F -- '--prompt-file' "$HANDOFF_TEST_COMMAND_CAPTURE" >/dev/null
+assert_not_grep '--prompt-b64' "$HANDOFF_TEST_COMMAND_CAPTURE"
+test -z "$(ls -A "$handoffs_dir" 2>/dev/null)"
 
 test ! -e "$marker"
 test -s "$HANDOFF_TEST_APPLESCRIPT_CAPTURE"
@@ -197,5 +211,82 @@ assert_failure 'claude could not start' \
   env PATH="$fail_bin:$bin_dir:$PATH" "$repo_dir/scripts/launch-iterm.sh" \
     --wait-pid 4242 --dir "$project_dir" --name "$name" --mode auto \
     --prompt-b64 "$prompt_b64" --session-id 11111111-2222-4333-8444-555555555555
+
+# Issue #17 regression: a prompt too large to type as one base64 argument must
+# still arm correctly, and the typed re-invocation command must stay short.
+large_prompt=$(i=0; while test "$i" -lt 200; do
+  printf 'The quick brown fox jumps over the lazy dog, line %03d.\n' "$i"
+  i=$((i + 1))
+done)
+large_prompt_b64=$(printf '%s\n\n' "$large_prompt" | base64 | tr -d '\n')
+test "$(printf '%s' "$large_prompt_b64" | wc -c)" -gt 5000
+
+rm -f "$HANDOFF_TEST_PS_COUNT" "$HANDOFF_TEST_CLAUDE_CAPTURE" "$HANDOFF_TEST_COMMAND_CAPTURE" "$HANDOFF_TEST_APPLESCRIPT_CAPTURE"
+export HANDOFF_TEST_PS_MODE=exit-after-two
+PATH="$bin_dir:$PATH" "$repo_dir/scripts/launch-iterm.sh" --open-tab \
+  --wait-pid 4242 \
+  --dir "$project_dir" \
+  --name "$name" \
+  --mode auto \
+  --prompt-b64 "$large_prompt_b64"
+
+command_len=$(wc -c < "$HANDOFF_TEST_COMMAND_CAPTURE")
+test "$command_len" -lt 2000
+grep -F -- '--prompt-file' "$HANDOFF_TEST_COMMAND_CAPTURE" >/dev/null
+assert_not_grep '--prompt-b64' "$HANDOFF_TEST_COMMAND_CAPTURE"
+test -z "$(ls -A "$handoffs_dir" 2>/dev/null)"
+
+expected_large="$tmp_dir/expected-capture-large"
+: > "$expected_large"
+for arg in \
+  --session-id 11111111-2222-4333-8444-555555555555 \
+  --name "$name" \
+  --permission-mode auto \
+  "$large_prompt"
+do
+  printf '%s' "$arg" | base64 | tr -d '\n' >> "$expected_large"
+  printf '\n' >> "$expected_large"
+done
+diff -u "$expected_large" "$HANDOFF_TEST_CLAUDE_CAPTURE"
+
+# --prompt-file also works as a direct, non-open-tab input.
+rm -f "$HANDOFF_TEST_PS_COUNT" "$HANDOFF_TEST_CLAUDE_CAPTURE"
+export HANDOFF_TEST_PS_MODE=reused
+direct_prompt_file="$tmp_dir/direct-prompt.txt"
+printf '%s' "$prompt_core" > "$direct_prompt_file"
+PATH="$bin_dir:$PATH" "$repo_dir/scripts/launch-iterm.sh" \
+  --wait-pid 4242 --dir "$project_dir" --name "$name" --mode auto \
+  --prompt-file "$direct_prompt_file" --session-id 11111111-2222-4333-8444-555555555555 >/dev/null
+diff -u "$expected" "$HANDOFF_TEST_CLAUDE_CAPTURE"
+test ! -e "$direct_prompt_file"
+
+# A missing prompt file is reported, not silently swallowed.
+missing_file_output="$tmp_dir/missing-file-output"
+if PATH="$bin_dir:$PATH" "$repo_dir/scripts/launch-iterm.sh" \
+    --wait-pid 4242 --dir "$project_dir" --name "$name" --mode auto \
+    --prompt-file "$tmp_dir/does-not-exist.prompt" --session-id 11111111-2222-4333-8444-555555555555 \
+    >"$missing_file_output" 2>&1
+then
+  printf 'expected launcher failure for a missing prompt file\n' >&2
+  exit 1
+fi
+grep -F 'the prompt file is missing' "$missing_file_output" >/dev/null
+
+# --prompt-b64 and --prompt-file are mutually exclusive, and one is required.
+assert_usage_failure() {
+  output="$tmp_dir/usage-output"
+  if "$@" >"$output" 2>&1; then
+    printf 'expected launcher usage failure\n' >&2
+    exit 1
+  fi
+  grep -F 'usage: launch-iterm.sh' "$output" >/dev/null
+}
+assert_usage_failure env PATH="$bin_dir:$PATH" "$repo_dir/scripts/launch-iterm.sh" \
+  --wait-pid 4242 --dir "$project_dir" --name "$name" --mode auto \
+  --session-id 11111111-2222-4333-8444-555555555555
+assert_usage_failure env PATH="$bin_dir:$PATH" "$repo_dir/scripts/launch-iterm.sh" \
+  --wait-pid 4242 --dir "$project_dir" --name "$name" --mode auto \
+  --prompt-b64 "$prompt_b64" --prompt-file "$tmp_dir/unused-prompt.txt" \
+  --session-id 11111111-2222-4333-8444-555555555555
 
 printf 'handoff: iTerm transport test passed\n'

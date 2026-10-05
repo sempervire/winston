@@ -69,7 +69,7 @@ Run the launcher by its absolute path, where `<skill-dir>` is this skill's base 
   --prompt-b64 "$prompt_b64"
 ```
 
-The launcher passes values to AppleScript as positional arguments. AppleScript applies `quoted form of` to every argument and types exactly one command into the new tab. Decoded prompt content is never shell code.
+The launcher passes values to AppleScript as positional arguments. AppleScript applies `quoted form of` to every argument and types exactly one command into the new tab. Decoded prompt content is never shell code. Because that command is typed keystroke-by-keystroke, the launcher stages the decoded prompt in `~/.winston/handoffs/<successor_uuid>.prompt` (mode 600) and types a short `--prompt-file` reference instead of the base64 blob itself; the re-invocation inside the new tab reads and deletes that file immediately.
 
 The new tab checks the target directory, installed CLI and requested mode, the predecessor pid, and its recorded `ps -o lstart= -p` start time. It prints an `Armed` line, waits until that pid disappears or its start time changes, and gives up after four hours by default. Only then does it start:
 
