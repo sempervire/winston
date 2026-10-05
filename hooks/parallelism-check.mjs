@@ -55,17 +55,16 @@ export function askedThisTurn(lines) {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i]
     if (!line) continue
-    if (line.includes(MARK)) return true
-    if (!line.includes('"user"')) continue
-    let e
-    try {
-      e = JSON.parse(line)
-    } catch {
-      continue
+    if (line.includes('"user"')) {
+      let e = null
+      try {
+        e = JSON.parse(line)
+      } catch {}
+      const c = e?.type === 'user' && !e.isMeta ? e.message?.content : undefined
+      // A prompt that quotes the ask is still a prompt: the boundary wins.
+      if (typeof c === 'string' || (Array.isArray(c) && !c.some((p) => p?.type === 'tool_result'))) return false
     }
-    if (e.type !== 'user' || e.isMeta) continue
-    const c = e.message?.content
-    if (typeof c === 'string' || (Array.isArray(c) && !c.some((p) => p?.type === 'tool_result'))) return false
+    if (line.includes(MARK)) return true
   }
   return false
 }
@@ -73,7 +72,8 @@ export function askedThisTurn(lines) {
 function main() {
   if (process.env.WINSTON_SKIP_PARALLELISM_CHECK) return
   const input = readInput()
-  if (input.stop_hook_active) return
+  // A subagent's Stop (Codex has no SubagentStop) carries agent_id and the parent's session_id.
+  if (input.stop_hook_active || input.agent_id) return
   if (!isWinston(input.session_id, input.cwd)) return
   const codex = harness(input) === 'codex'
   if (!codex) {

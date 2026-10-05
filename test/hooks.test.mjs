@@ -206,6 +206,9 @@ echo '{"ok":true,"claims":[{"resource":"resource:orchestrator","session_id":"win
   assert.ok(stop().hookSpecificOutput, 'a new prompt is a new turn');
 
   assert.equal(stop({ stop_hook_active: true }), '');
+  assert.equal(stop({ agent_id: 'lane-1', turn_id: 'x' }), '', 'a subagent is not the orchestrator');
+  writeFileSync(transcript, JSON.stringify({ type: 'user', message: { content: 'resume brief: Parallelism check (Winston), ...' } }));
+  assert.ok(stop().hookSpecificOutput, 'a prompt quoting the ask is still a new turn');
   assert.equal(stop({ session_id: 'other' }), '', 'not a Winston session');
   assert.equal(stop({}, { PATH: '/nonexistent' }), '', 'no chattr fails open');
   assert.equal(stop({ transcript_path: join(s.tmp, 'missing') }), '', 'unreadable transcript fails open');
