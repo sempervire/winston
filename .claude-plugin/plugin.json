@@ -1,6 +1,6 @@
 {
   "name": "winston",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Orchestration, triage, advisors and guard hooks for Claude Code and Codex sessions.",
   "author": {
     "name": "sempervire"
