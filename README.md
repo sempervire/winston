@@ -74,6 +74,7 @@ Top-level keys merge shallowly; the repo wins. See `templates/config.sample.json
 | `advisors` | Repo-specific agent names for Debbie, Sheldon and Radar. |
 | `deployGate` | Approval phrase and the guarded actions (`pr-merge` into a base, `workflow-run`). |
 | `secretGrant` | The phrase that grants secret handling for one session. |
+| `dismissalGrant` | The phrase that lets `/winston` post review dismissals under the repo's documented conditions. |
 | `worktree`, `launcher` | Files copied or linked into new worktrees; the repo the launchers open. |
 
 The repo's process docs always win over Winston where they conflict.
