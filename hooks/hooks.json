@@ -1,5 +1,5 @@
 {
-  "description": "Winston guard hooks: production-deploy gate, credential-console grant, session titles, worktree setup, open browser tabs. Each hook reads the calling CLI (Claude Code or Codex) from its payload.",
+  "description": "Winston guard hooks: production-deploy gate, credential-console grant, session titles, worktree setup, open browser tabs, Winston parallelism check. Each hook reads the calling CLI (Claude Code or Codex) from its payload.",
   "hooks": {
     "SessionStart": [
       {
@@ -87,6 +87,11 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/browser-tab-guard.mjs\"",
             "timeout": 10,
             "statusMessage": "Checking for open browser tabs"
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/parallelism-check.mjs\"",
+            "timeout": 10
           }
         ]
       }

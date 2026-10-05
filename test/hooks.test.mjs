@@ -179,3 +179,36 @@ test('worktree-setup: without worktree config it copies nothing', (t) => {
   assert.equal(r.run('worktree-setup.mjs', { hook_event_name: 'SessionStart', cwd: r.wt }), '');
   assert.ok(!existsSync(join(r.wt, '.env.local')));
 });
+
+// ---- parallelism-check
+
+test('parallelism-check: asks once per turn, only in a session holding resource:orchestrator', (t) => {
+  const s = sandbox(t);
+  const bin = join(s.tmp, 'bin');
+  mkdirSync(bin);
+  // Fake chattr: the orchestrator claim belongs to session "win"; "other" is not enrolled.
+  writeFileSync(join(bin, 'chattr'), `#!/bin/sh
+[ "$CHATTR_SESSION" = win ] || { echo '{"ok":false}'; exit 3; }
+echo '{"ok":true,"claims":[{"resource":"resource:orchestrator","session_id":"win","released_at":null}]}'
+`, { mode: 0o755 });
+  const transcript = join(s.tmp, 't.jsonl');
+  const prompt = JSON.stringify({ type: 'user', message: { content: 'go' } });
+  const toolResult = JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', content: 'ok' }] } });
+  const env = { PATH: `${bin}:${process.env.PATH}` };
+  const stop = (extra = {}, e = env) => s.run('parallelism-check.mjs', { hook_event_name: 'Stop', session_id: 'win', transcript_path: transcript, ...extra }, e);
+
+  writeFileSync(transcript, [prompt, toolResult].join('\n'));
+  const out = stop();
+  assert.match(out.hookSpecificOutput.additionalContext, /unmerged code is not a blocker/);
+  writeFileSync(transcript, [prompt, toolResult, JSON.stringify({ type: 'attachment', attachment: { type: 'hook_additional_context', content: [out.hookSpecificOutput.additionalContext] } }), toolResult].join('\n'));
+  assert.equal(stop(), '', 'already asked this turn');
+  writeFileSync(transcript, [readFileSync(transcript, 'utf8'), prompt].join('\n'));
+  assert.ok(stop().hookSpecificOutput, 'a new prompt is a new turn');
+
+  assert.equal(stop({ stop_hook_active: true }), '');
+  assert.equal(stop({ session_id: 'other' }), '', 'not a Winston session');
+  assert.equal(stop({}, { PATH: '/nonexistent' }), '', 'no chattr fails open');
+  assert.equal(stop({ transcript_path: join(s.tmp, 'missing') }), '', 'unreadable transcript fails open');
+  assert.equal(stop({ turn_id: 'x' }).decision, 'block', 'Codex gets a block');
+  assert.equal(stop({}, { ...env, WINSTON_SKIP_PARALLELISM_CHECK: '1' }), '');
+});
