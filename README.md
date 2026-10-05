@@ -46,8 +46,9 @@ Then, in a repo: `/winston:doctor`, and `/winston:init` for anything it reports 
 | `/winston:doctor`, `/winston:init` | Check, then create, the setup Winston needs. |
 
 Hooks: a production-deploy gate (blocks configured deploy actions until the owner types the
-approval phrase in that session), a secret-handling grant, session titles, worktree setup, and
-a browser-tab guard.
+approval phrase in that session), a secret-handling grant, session titles, worktree setup, a
+browser-tab guard, and a once-per-turn Parallelism check nudge in Winston sessions (those
+holding chattr's `resource:orchestrator` claim).
 
 ## Requirements
 

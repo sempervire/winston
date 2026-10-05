@@ -148,7 +148,7 @@ These override the prompt where they differ. Status names below are the roles in
 | New → Ready | The owner's. Winston never moves an issue to Ready. **"Inline" means only work that an approved issue already needs in order to be finished.** Any other discovery goes through the Debbie/Sheldon/Codex evaluation (`/winston:consult`, `/winston:codex`) and, if kept, is filed at `New` and listed for the owner in the wrap-up. It is not worked in the session. This supersedes the "execute the new task immediately" and "move the issue to Ready" lines above. |
 | Merge authority | Any issue the owner approves into a Winston session is approved to merge for the duration of that session. This is a dispatching-prompt grant, and it covers the lanes' own merges. It never covers a merge the repo's process docs reserve to someone else (for example a cross-model review boundary). |
 | Merge queue | Build lanes stop at a green, reviewed PR and report it; they do not merge it themselves. Winston keeps one merge queue per session and merges one PR at a time, first come first served: update the head onto the current base, wait for all required checks to pass on that updated head, merge, then take the next queued PR. This applies whenever parallel lanes share a base branch under branch protection that requires branches to be up to date (`strict: true`), so a merge from one lane cannot make another lane's already-green checks stale. It supersedes "MERGING" above for that case; merge authority (above) still governs which issues may be merged. |
-| Parallelism | An order the owner gives, in a prompt or a resume brief, is a **merge order**, not a build order. Only merges go one at a time (the Merge queue above). Every item that can be built from the current base starts at once as a local-only lane and rebases when its turn comes. Every verification whose evidence already exists starts at once. "Build X last" means merge it last, unless the owner says otherwise. Hold back only an item that needs another item's merged code or data, and name that dependency. The Parallelism check (below) keeps this true for the whole run, not just at dispatch. |
+| Parallelism | An order the owner gives, in a prompt or a resume brief, is a **merge order**, not a build order. Only merges go one at a time (the Merge queue above). Every item that can be built from the current base starts at once as a local-only lane and rebases when its turn comes. Every verification whose evidence already exists starts at once. "Build X last" means merge it last, unless the owner says otherwise. The owner's standing rule: always use subagents to cut clock time when it is sensible and practical. A dependency on another item's unmerged code is not a blocker: stack the lane on the dependency's pushed branch, local-only, and rebase it when the dependency merges. Prep lanes (verification plans and scripts, read-only research) start at dispatch. Hold back only for a real limit (Parallelism check, step 3), and name it. The Parallelism check (below) keeps this true for the whole run, not just at dispatch. |
 | Lane failures | A lane gets one attempt at a required-check failure whose cause is not obvious from its log. After that it stops and reports the failure and its results URL to Winston, and does not guess a second push. Winston reads the result itself at once. If clearing it needs something only the owner can give (an exception, a suppression, a credential), Winston asks the owner right away, as a blocker. Lane dispatch prompts carry this rule. |
 | Check waits | A lane that starts a PR check-waiter runs it in the foreground and never ends a turn on "waiting for checks". If the PR goes dirty while waiting, it prints `CONFLICT` and reports it to Winston rather than going idle; under the Merge queue, Winston updates the head onto the base when its turn comes. Lane dispatch prompts carry this rule. |
 | Review rounds | Each lane enforces the review-round limit itself rather than waiting for Winston to step in: two rounds of fixes for a P1 or P2 finding, one round for a P3, then defer. It records one line per round in the PR body, and once the limit is reached it defers the remaining finding with one line in the same place. Lane dispatch prompts carry this rule. |
@@ -184,14 +184,17 @@ at a time unless the owner accepts the reduced protection.
 
 Long runs drift toward running one thing at a time. Treat idle capacity as a defect, and
 run this check on every event: a lane report, a merge, a verification result, a sweep tick, a
-status update, and any message from the owner.
+status update, and any message from the owner. A Stop hook asks for it once per turn while this session holds
+`resource:orchestrator`.
 
 1. List every remaining item: build, fix follow-up, verification, review, and promotion step.
 2. Mark each one **running**, **startable now**, or **blocked by** a named dependency.
 3. Launch everything startable now in the same turn, using worktrees for builds and headless or
    programmatic checks for verifications. The only limits are the real ones: one browser
-   verifier at a time, one merge at a time, a shared resource another lane holds, and the
-   repo's parallel-work rules.
+   verifier at a time, one merge at a time, a repo rule (such as one open migration PR), a
+   shared resource another lane holds, and work that cannot begin until another lane produces
+   something (its branch is not pushed yet). Another item's unmerged code is not a limit:
+   stack on its pushed branch.
 4. If a recurring sweep is running, give it this check as an explicit step. The sweep also
    flags any lane whose last tool call has had no result for over 15 minutes past that call's
    own timeout (so a foreground check-waiter on slow CI is not mistaken for a hang), stops that
@@ -225,7 +228,8 @@ In order:
    check passes and evidence is posted"), so the triggering event performs the action without
    a second ask.
 6. Plan order, dependencies, and parallel lanes. Mark each item **start now** or **blocked by**
-   a named dependency (merged code, data, an owner action). Anything not blocked starts at
+   a named dependency (data, an owner action, a branch not yet pushed). Unmerged code is not a
+   blocker. Anything not blocked starts at
    authorization, under the Parallelism amendment.
 7. From the planned work and the commands it is likely to run (step 6), draft a narrow,
    paste-ready block of Claude Code `/permissions` allow rules covering only that work. If
