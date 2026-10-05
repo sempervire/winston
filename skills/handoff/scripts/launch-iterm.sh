@@ -9,10 +9,11 @@ permission_mode=auto
 session_id=
 claude_path=
 prompt_b64=
+prompt_file=
 max_wait_seconds=14400
 
 usage() {
-  printf '%s\n' 'usage: launch-iterm.sh [--open-tab] --wait-pid PID --dir DIR --name NAME --mode MODE --prompt-b64 BASE64 [--session-id UUID] [--max-wait-seconds SECONDS]' >&2
+  printf '%s\n' 'usage: launch-iterm.sh [--open-tab] --wait-pid PID --dir DIR --name NAME --mode MODE (--prompt-b64 BASE64 | --prompt-file FILE) [--session-id UUID] [--max-wait-seconds SECONDS]' >&2
   exit 2
 }
 
@@ -22,7 +23,7 @@ while test "$#" -gt 0; do
       open_tab=true
       shift
       ;;
-    --wait-pid|--dir|--name|--mode|--prompt-b64|--session-id|--claude-path|--max-wait-seconds)
+    --wait-pid|--dir|--name|--mode|--prompt-b64|--prompt-file|--session-id|--claude-path|--max-wait-seconds)
       test "$#" -ge 2 || usage
       option=$1
       value=$2
@@ -33,6 +34,7 @@ while test "$#" -gt 0; do
         --name) session_name=$value ;;
         --mode) permission_mode=$value ;;
         --prompt-b64) prompt_b64=$value ;;
+        --prompt-file) prompt_file=$value ;;
         --session-id) session_id=$value ;;
         --claude-path) claude_path=$value ;;
         --max-wait-seconds) max_wait_seconds=$value ;;
@@ -42,10 +44,28 @@ while test "$#" -gt 0; do
   esac
 done
 
-test -n "$prompt_b64" || usage
-if ! prompt=$(printf '%s' "$prompt_b64" | base64 -d 2>/dev/null); then
-  printf '%s\n' 'Handoff failed: the prompt was not valid base64.' >&2
-  exit 1
+if test -n "$prompt_b64" && test -n "$prompt_file"; then
+  usage
+fi
+if test -z "$prompt_b64" && test -z "$prompt_file"; then
+  usage
+fi
+
+if test -n "$prompt_file"; then
+  if ! test -f "$prompt_file"; then
+    printf '%s\n' 'Handoff failed: the prompt file is missing.' >&2
+    exit 1
+  fi
+  if ! prompt=$(cat "$prompt_file"); then
+    printf '%s\n' 'Handoff failed: the prompt file could not be read.' >&2
+    exit 1
+  fi
+  rm -f "$prompt_file"
+else
+  if ! prompt=$(printf '%s' "$prompt_b64" | base64 -d 2>/dev/null); then
+    printf '%s\n' 'Handoff failed: the prompt was not valid base64.' >&2
+    exit 1
+  fi
 fi
 
 fail() {
@@ -102,6 +122,14 @@ if test "$open_tab" = true; then
   if ! osascript -e 'id of application "iTerm2"' >/dev/null 2>&1; then
     fail 'iTerm is not installed.'
   fi
+  test -n "${HOME:-}" || fail 'HOME is not set; cannot stage the handoff prompt file.'
+  # iTerm "write text" types the whole re-invocation command over the pty; a long
+  # base64 blob in that typed line is what truncates (issue #17). Stage the decoded
+  # prompt in a file instead and type only a short --prompt-file reference.
+  staged_handoff_dir="$HOME/.winston/handoffs"
+  (umask 077 && mkdir -p "$staged_handoff_dir") || fail "cannot create the handoff directory: $staged_handoff_dir"
+  staged_prompt_file="$staged_handoff_dir/$session_id.prompt"
+  (umask 077 && printf '%s' "$prompt" > "$staged_prompt_file") || fail "cannot write the handoff prompt file: $staged_prompt_file"
   if ! osascript - \
     "$script_path" \
     --wait-pid "$wait_pid" \
@@ -110,7 +138,7 @@ if test "$open_tab" = true; then
     --mode "$permission_mode" \
     --session-id "$session_id" \
     --claude-path "$claude_path" \
-    --prompt-b64 "$prompt_b64" \
+    --prompt-file "$staged_prompt_file" \
     --max-wait-seconds "$max_wait_seconds" <<'APPLESCRIPT'
 on run argv
   set commandText to ""
@@ -133,6 +161,7 @@ on run argv
 end run
 APPLESCRIPT
   then
+    rm -f "$staged_prompt_file"
     fail 'osascript could not open the iTerm tab.'
   fi
   printf 'Tab opened for %s — check it shows "Armed", then exit this session.\n' "$session_name"
