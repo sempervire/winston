@@ -262,7 +262,9 @@ In order:
    silence, or a general go-ahead is not an answer. Treat each gated action separately,
    including production deployment, test messages, consent screens, and moves to `Verified`;
    get explicit approval for each that applies. Ask each gate-ledger entry (step 5) here as a
-   conditional pre-approval.
+   conditional pre-approval. Where config `dismissalGrant.phrase` is set, list it here too:
+   the owner types it to let Winston post a second-model review dismissal under the repo's own
+   documented conditions, which its process docs own; the wrap-up lists every dismissal posted.
 10. Confirm that the setup actions are complete and every decision and gate is answered.
    Show the resulting work set and plan, then ask for a separate authorization to start the
    session. If an answer changes the plan, update the decision list and resolve any new
@@ -279,6 +281,8 @@ advance, which is preferable.
   need the owner.
 - Secret changes need the owner to type the secret-grant phrase (config `secretGrant.phrase`)
   word for word, where that guard is configured.
+- A second-model review finding that needs a dismissal, unless the owner typed the
+  dismissal-grant phrase (config `dismissalGrant.phrase`) and the repo's conditions hold.
 - A merge the repo's process docs reserve to someone other than this session.
 - A verification that needs a real payment, a production write, a second physical device, or
   a judgment of taste.
