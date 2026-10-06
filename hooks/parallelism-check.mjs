@@ -28,11 +28,16 @@ import { harness, readInput } from '../lib/harness.mjs'
 
 const MARK = 'Parallelism check (Winston)'
 const ASK =
-  `${MARK}, before you end this turn: list every remaining item as running, startable now, ` +
-  'or blocked by a named dependency, and launch everything startable now in this turn. ' +
+  `${MARK}, before you end this turn: the goal is minimum wall-clock time, and token or model cost ` +
+  'never holds startable work. List every remaining item as running, startable now, or blocked by a ' +
+  'named dependency, and launch everything startable now in this turn. Mark an item blocked only ' +
+  "after walking the skill's prep list (review of unopened or stacked branches, restacks, " +
+  'verification plans and probes, promotion-gate prep, PR body and report drafts, evidence for ' +
+  'external runs, failing-check diagnosis) and launching every startable entry. ' +
   "Another item's unmerged code is not a blocker: stack the lane on its pushed branch, local-only. " +
   'The real limits are one browser verifier at a time, one merge at a time, a repo rule, a resource ' +
-  'another lane holds, or a branch not yet pushed. If nothing is startable, end the turn with no ' +
+  'another lane holds, or a branch not yet pushed. Write the table (item | state | prep running | ' +
+  'blocker) to your scratch, not chat. If nothing is startable, end the turn with no ' +
   'message; this check stands down until the next turn.'
 
 /** True when the session holds an unreleased resource:orchestrator claim. */

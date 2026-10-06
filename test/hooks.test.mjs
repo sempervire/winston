@@ -200,6 +200,7 @@ echo '{"ok":true,"claims":[{"resource":"resource:orchestrator","session_id":"win
   writeFileSync(transcript, [prompt, toolResult].join('\n'));
   const out = stop();
   assert.match(out.hookSpecificOutput.additionalContext, /unmerged code is not a blocker/);
+  assert.match(out.hookSpecificOutput.additionalContext, /prep list.*item \| state \| prep running \| blocker/s);
   writeFileSync(transcript, [prompt, toolResult, JSON.stringify({ type: 'attachment', attachment: { type: 'hook_additional_context', content: [out.hookSpecificOutput.additionalContext] } }), toolResult].join('\n'));
   assert.equal(stop(), '', 'already asked this turn');
   writeFileSync(transcript, [readFileSync(transcript, 'utf8'), prompt].join('\n'));
