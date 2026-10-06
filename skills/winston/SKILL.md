@@ -156,7 +156,7 @@ These override the prompt where they differ. Status names below are the roles in
 | Production deploys | When a run has reason to deploy production (an item that only takes effect in production needs it, or production is overdue for a promotion), Winston may deploy it as needed to finish every available task, including the production migrations the promotion carries. **The permission is conditional:** at setup, Winston tells the owner that a production deploy will happen during the session, and the owner approves it by typing the approval phrase (config `deployGate.phrase`) in the Winston session. Without that approval, no production deploy: where config `deployGate` is set, the plugin's deploy-gate hook blocks the guarded actions it lists (the promotion merge into config `branches.production`, a migration dispatch) in any session where the owner has not typed the phrase. A non-Winston session gets the same approval only the same way, by the owner typing the phrase in that session. Once approved, the accepted plan and authorization cover the migrations and every other action the deploy involves; none of them needs a second ask. The repo's promotion process still applies in full, and a harness permission denial is still a stop for the owner, never something to route around. Setup lists the production step among the human-needed tasks, so any permission rule the harness needs is in place before the run starts. With no `deployGate` configured, every production deploy is a separate explicit ask. |
 | Mid-run additions | When the owner adds work mid-session, get its verification plan first, build its gate ledger from it (Setup step 5), and ask its gates and missing preconditions in the same question that approves the work. That question waits until the plan exists and is mapped. |
 | Verification plans | Every verification plan, at setup and for mid-run additions, includes a **Gates and preconditions** section listing: every write and where (integration environment or production); the accounts and roles used, and any terms, consent or onboarding screens they must pass; env vars and secrets the feature needs in the integration environment; paid or metered calls; and the data each check needs to exist (a picked value, an empty state). The plan lane probes each precondition read-only against the integration environment and reports what is missing. |
-| Integration writes | "Reversible integration-environment writes are pre-approved. Verifiers may make writes on the integration environment (config `branches.integration`, e.g. staging) that can be reverted after verification, such as test-account onboarding, test data, and settings on test fixtures, without asking. They record each change, restore it after the check, and the evidence comment says what was changed and restored. Production writes, paid calls, secrets, external messages and irreversible changes stay gated." Lane dispatch prompts quote this rule verbatim, because the harness permission classifier discounts orchestrator paraphrase. If the classifier still blocks such an action, Winston asks the owner to type the approval in the main chat rather than repeating the attempt. |
+| Integration writes | "Reversible integration-environment writes are pre-approved. Verifiers may make writes on the integration environment (config `branches.integration`, e.g. staging) that can be reverted after verification, such as test-account onboarding, test data, and settings on test fixtures, without asking. A write counts as reversible only if the verification plan names its restore step. They record each change, restore it after the check, and the evidence comment says what was changed and restored; a failed restore is a blocker reported to Winston. Production writes, paid calls, secrets, external messages and irreversible changes stay gated. A write the harness blocks is reported to Winston, not retried." Lane dispatch prompts quote this rule verbatim, with the resolved branch name in place of the config reference, because the harness permission classifier discounts orchestrator paraphrase. If the classifier still blocks such an action, Winston asks the owner to type the approval in the main chat rather than repeating the attempt. |
 | Wrap-up sweep | Before writing the wrap-up, sweep for every action still pending the owner (closes, labels, cleanups) and ask them together in one question box. The wrap-up reports outcomes, not open asks. |
 | Verify | Winston moves approved issues to `Verified` only under the repo's authorized-session verify rule. Where that rule is absent, issues it would cover stop at the owner. |
 | Up-front handling | Best effort, taken seriously. Some stops cannot be cleared in advance; setup lists them as known possible stops (below). |
@@ -227,10 +227,12 @@ In order:
    label, a no-PR close label); the production deploy, including what the promotion gate will
    require of every issue in the promotion range; hand-closes; test messages or emails to real
    recipients; test data and other writes the Integration writes amendment does not cover;
-   secrets. Each entry becomes a **conditional pre-approval** in the setup question round ("close #X when its production
-   check passes and evidence is posted"), so the triggering event performs the action without
-   a second ask. **Ordering:** the ledger needs every chosen issue's verification plan, so
-   start those plan lanes here. Map each plan's Gates and preconditions section into the
+   secrets. Each entry becomes a **conditional pre-approval** in the setup question round
+   ("close #X when its production check passes and evidence is posted"), so the triggering
+   event performs the action without a second ask. **Ordering:** the ledger needs every chosen
+   issue's verification plan, so start those plan lanes here. They are read-only and exempt
+   from step 10's hold; a lane claims any shared resource its probe touches (Collision
+   avoidance, rule 2), and a browser probe takes `resource:chrome` first. Map each plan's Gates and preconditions section into the
    ledger; each missing precondition becomes a setup question (add the env var, which is a
    secret change, or verify in production instead). Step 9 does not ask its question round
    until every plan exists and is mapped.
@@ -270,12 +272,13 @@ In order:
    including production deployment, test messages, consent screens the Integration writes
    amendment does not cover, and moves to `Verified`;
    get explicit approval for each that applies. Ask each gate-ledger entry (step 5) here as a
-   conditional pre-approval. Record each approval as the owner's verbatim words; lane
-   prompts that rely on one quote it verbatim, since the classifier discounts paraphrase.
+   conditional pre-approval. Record each approval verbatim (the selected option's text, or the
+   owner's typed reply); lane prompts that rely on one quote it verbatim, since the
+   classifier discounts paraphrase.
 10. Confirm that the setup actions are complete and every decision and gate is answered.
    Show the resulting work set and plan, then ask for a separate authorization to start the
    session. If an answer changes the plan, update the decision list and resolve any new
-   questions before asking to start. Nothing starts until the owner authorizes this final plan.
+   questions before asking to start. Nothing but step 5's plan lanes starts until the owner authorizes this final plan.
 11. On authorization: claim each approved issue and `resource:chrome`, then begin.
 
 ### Known possible stops
@@ -295,7 +298,7 @@ advance, which is preferable.
   a judgment of taste.
 - Anything the repo's process docs or the profile reserve to the owner.
 - A gate not in the gate ledger is a planning error: ask it at once and add it to the ledger.
-  So is a gate a verification plan named that setup did not ask.
+  So is a gate named in a verification plan that setup did not ask.
 
 ## Plan mode — `/winston plan <draft>`
 
