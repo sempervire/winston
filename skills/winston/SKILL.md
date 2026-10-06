@@ -195,10 +195,10 @@ status update, and any message from the owner. A Stop hook asks for it once per 
 
 1. List every remaining item: build, fix follow-up, verification, review, and promotion step.
 2. Mark each one **running**, **startable now**, or **blocked by** a named dependency. A blocked
-   item hides prep that is startable: mark it blocked only after walking this prep list and
-   naming the blocker of each entry, and launch every startable entry in the same turn:
+   item can hide startable prep: mark it blocked only after walking this prep list and naming
+   the blocker of each entry:
    1. review of unopened or stacked branches, at the same effort and instructions as the CI
-      reviewer;
+      reviewer (findings go to the owning lane and count toward its review rounds);
    2. restacking onto a base that moved;
    3. verification plans and their read-only precondition probes;
    4. the promotion-gate check, the promotion PR body draft, and production verification plans;
