@@ -226,8 +226,8 @@ In order:
    verification, no staging check, human judgment); labels a gate needs (a production-verify
    label, a no-PR close label); the production deploy, including what the promotion gate will
    require of every issue in the promotion range; hand-closes; test messages or emails to real
-   recipients; test data and other writes the Integration writes amendment does not cover; secrets. Each entry becomes a
-   **conditional pre-approval** in the setup question round ("close #X when its production
+   recipients; test data and other writes the Integration writes amendment does not cover;
+   secrets. Each entry becomes a **conditional pre-approval** in the setup question round ("close #X when its production
    check passes and evidence is posted"), so the triggering event performs the action without
    a second ask. **Ordering:** the ledger needs every chosen issue's verification plan, so
    start those plan lanes here. Map each plan's Gates and preconditions section into the
@@ -267,7 +267,8 @@ In order:
    rules open them only on request. If question boxes are unavailable, ask the same numbered
    questions in chat. Record an explicit answer to every decision; a suggested default,
    silence, or a general go-ahead is not an answer. Treat each gated action separately,
-   including production deployment, test messages, consent screens, and moves to `Verified`;
+   including production deployment, test messages, consent screens the Integration writes
+   amendment does not cover, and moves to `Verified`;
    get explicit approval for each that applies. Ask each gate-ledger entry (step 5) here as a
    conditional pre-approval. Record each approval as the owner's verbatim words; lane
    prompts that rely on one quote it verbatim, since the classifier discounts paraphrase.
