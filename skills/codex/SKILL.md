@@ -10,7 +10,7 @@ With no argument, hand it the decision on the table.
 
 Codex is **not** one of the repo's advisor agents. It has no agent file, no verdict
 vocabulary, and no persona — it is a second model reached over the `codex` CLI.
-`/winston:consult` does not govern it.
+`/winston:verdict` does not govern it.
 
 **Codex is required.** Check `command -v codex` first. If it is absent, say in one line that
 `/winston:codex` is off because the `codex` CLI is not installed, and stop.

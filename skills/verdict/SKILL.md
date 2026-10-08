@@ -1,11 +1,11 @@
 ---
-name: consult
-description: Consult Debbie and Sheldon together, read-only, on whether proposed work is worth doing, whether its claims are true, and whether the engineering is sound. Use when the user runs /winston:consult, or before filing an issue, widening scope, or committing to a plan that a second engineer should challenge.
+name: verdict
+description: Consult Debbie and Sheldon together, read-only, on whether proposed work is worth doing, whether its claims are true, and whether the engineering is sound. Use when the user runs /winston:verdict, or before filing an issue, widening scope, or committing to a plan that a second engineer should challenge.
 ---
 
-# /winston:consult
+# /winston:verdict
 
-Consult both advisors on whatever is in front of us: `/winston:consult is this migration worth
+Consult both advisors on whatever is in front of us: `/winston:verdict is this migration worth
 it?`. With no argument, hand them the decision on the table.
 
 Debbie and Sheldon are **always consulted together**, on the same payload, never one alone.
@@ -24,7 +24,7 @@ user in this session.
   agents when set. Otherwise use the generic ones: `winston:debbie` and `winston:sheldon` in
   Claude Code; `debbie` and `sheldon` in Codex (installed by `winston install-codex-agents`).
   If a named agent is not available in this harness, say which one in one line and stop.
-- **Profile.** If config `profiles.winston` names a file, read its `## /winston:consult`
+- **Profile.** If config `profiles.winston` names a file, read its `## /winston:verdict`
   section, if any, and apply it; it wins over this file. The repo's process docs win over both.
 
 ## How to reach them

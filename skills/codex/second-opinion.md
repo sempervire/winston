@@ -3,7 +3,7 @@
 Shared by `/winston:codex` and `/winston:gemini`. Read this together with the model's own
 SKILL.md, which covers how to invoke that model and its quirks.
 These are other model families giving read-only opinions. They are not the
-`/winston:consult` advisors (Debbie and Sheldon) and `/winston:consult` does not govern them.
+`/winston:verdict` advisors (Debbie and Sheldon) and `/winston:verdict` does not govern them.
 
 ## The prompt: context, then the message
 
