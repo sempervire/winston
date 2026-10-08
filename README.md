@@ -38,7 +38,7 @@ Then, in a repo: `/winston:doctor`, and `/winston:init` for anything it reports 
 | `/winston plan <draft>` | Turn a draft plan into a settled one, one decision at a time. Never implements. |
 | `/winston:triage` | Whole-board triage pass under the repo's own policy (`TRIAGE.md`). |
 | `/winston:radar` | What to work on next, batched into the time you have. |
-| `/winston:consult` | Debbie (is it worth doing?) and Sheldon (is it true and well engineered?), together. |
+| `/winston:verdict` | Debbie (is it worth doing?) and Sheldon (is it true and well engineered?), together. |
 | `/winston:rex` | Session therapist and usage reports, run on Codex. |
 | `/winston:closeout` | Can this session end without stranding work? |
 | `/winston:handoff` | Hand the work to a fresh session. |
