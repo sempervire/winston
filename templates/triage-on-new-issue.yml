@@ -6,12 +6,16 @@
 # from the default branch alone. A copy merged anywhere else never fires and never errors.
 #
 # Secrets (Settings -> Secrets and variables -> Actions):
-#   GH_PAT                   fine-grained token over this repo: Issues read/write, and
-#                            Projects read/write on the board owner (the board is an
-#                            org/user project, which GITHUB_TOKEN cannot reach).
+#   GH_PAT                   a token over this repo: Issues read/write, and Projects
+#                            read/write on the board owner (the board is an org/user
+#                            project, which GITHUB_TOKEN cannot reach). Fine-grained when
+#                            an organization owns the board; classic (`repo`, `project`)
+#                            when a user does, since fine-grained tokens cannot reach a
+#                            user's projects.
 #   CLAUDE_CODE_OAUTH_TOKEN  from `claude setup-token`.
-# Until both exist the run skips with a notice and stays green; `winston doctor` reports
-# which are not set.
+# Until both exist the run skips with a notice and stays green. `winston doctor` reports
+# which are set and whether the latest runs failed; `winston init` prints the steps to
+# create the missing ones.
 #
 # This workflow triages. Putting a new issue on the board at its intake status is the
 # board's own job: its "Auto-add to project" and "Item added to project" workflows, which

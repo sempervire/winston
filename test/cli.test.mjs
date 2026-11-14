@@ -184,14 +184,16 @@ function fakeGh(s) {
   case "$1 $2" in
     "auth status") echo "project, repo";;
     "api user") echo "pat";;
-    "api users/"*) echo "User";;
+    "api users/"*) cat "${s.tmp}/owner-type" 2>/dev/null || echo "User";;
     "repo view") echo "acme/thing";;
     "repo create") git init -q --bare "${s.tmp}/origin.git" && git -C "${s.repo}" remote add origin "${s.tmp}/origin.git" && git -C "${s.repo}" push -q origin HEAD;;
     "project create") echo '{"number":7,"id":"P7"}'; cp "${s.tmp}/new-board.json" "${s.tmp}/board.json";;
     "project field-create"|"project link") ;;
     "label list") cat "${s.tmp}/labels" 2>/dev/null; true;;
     "label create") echo "$3" >> "${s.tmp}/labels";;
-    "secret list") cat "${s.tmp}/secrets" 2>/dev/null; true;;
+    "secret list") if [ -f "${s.tmp}/secrets-denied" ]; then echo "HTTP 403: Resource not accessible" >&2; exit 1; fi; cat "${s.tmp}/secrets" 2>/dev/null; true;;
+    "secret set"|"workflow run") echo "never run by winston" >&2; exit 1;;
+    "run list") cat "${s.tmp}/runs" 2>/dev/null || exit 1;;
     "api graphql") case "$*" in
       *createProjectV2View*) echo '{"data":{"createProjectV2View":{"view":{"id":"VIEW1"}}}}';;
       *updateProjectV2View*) echo '{}';;
@@ -417,7 +419,8 @@ test('doctor checks the board\'s two intake workflows and the triage workflow\'s
   assert.equal(off.status, 1);
   assert.match(off.stdout, /^missing\s+board auto-adds new issues\s+— the board's "Auto-add to project" workflow is off/m);
   assert.match(off.stdout, /^ok\s+board sets Inbox on added items\s+— on; GitHub's API does not show which Status it sets$/m);
-  assert.match(off.stdout, /^off\s+triage workflow secrets\s+— not set: CLAUDE_CODE_OAUTH_TOKEN/m);
+  assert.match(off.stdout, /^off\s+triage workflow secrets\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN missing/m);
+  assert.match(off.stdout, /Triage workflow:\n\s+- secrets missing: CLAUDE_CODE_OAUTH_TOKEN\.[^\n]*winston init --mode adopt/);
   assert.match(off.stdout, /In the browser \(GitHub has no API for these[^\n]*\n\s+- board auto-adds new issues: open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
   assert.doesNotMatch(off.stdout, /By hand/, 'browser steps are not listed twice');
 
@@ -425,8 +428,91 @@ test('doctor checks the board\'s two intake workflows and the triage workflow\'s
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
   const on = s.cli(['doctor']);
   assert.match(on.stdout, /^ok\s+board auto-adds new issues$/m);
-  assert.match(on.stdout, /^on\s+triage workflow secrets/m);
-  assert.doesNotMatch(on.stdout, /In the browser|By hand/);
+  assert.match(on.stdout, /^on\s+triage workflow secrets\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN set$/m);
+  assert.doesNotMatch(on.stdout, /In the browser|By hand|Triage workflow:/);
+});
+
+test('doctor says unknown, not missing, when it cannot list secrets, and flags a run of failed triage runs', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  mkdirSync(join(s.repo, '.winston'));
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ board: { owner: 'acme', number: 1 } }));
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
+  writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
+  // No workflow in the repo: nothing about its secrets or runs.
+  assert.doesNotMatch(s.cli(['doctor']).stdout, /triage workflow (secrets|runs)|Triage workflow:/);
+
+  mkdirSync(join(s.repo, '.github/workflows'), { recursive: true });
+  writeFileSync(join(s.repo, '.github/workflows/triage-on-new-issue.yml'), '');
+  // Newest first: one still running, three failures, then a success.
+  writeFileSync(join(s.tmp, 'runs'), '\nfailure\nstartup_failure\nfailure\nsuccess\n');
+  const failing = s.cli(['doctor']);
+  assert.match(failing.stdout, /^failed\s+triage workflow runs\s+— its last 3 runs failed$/m);
+  assert.match(failing.stdout, /Triage workflow:\n\s+- installed, but its last 3 runs failed\. See why: gh run list --workflow triage-on-new-issue\.yml --limit 1/);
+  assert.match(s.calls(), /^run list --workflow triage-on-new-issue\.yml --limit 5 --json conclusion/m);
+
+  writeFileSync(join(s.tmp, 'runs'), 'success\nfailure\nfailure\n');
+  const fine = s.cli(['doctor']);
+  assert.match(fine.stdout, /^on\s+triage workflow runs\s+— last run: success$/m);
+  assert.doesNotMatch(fine.stdout, /Triage workflow:/);
+  writeFileSync(join(s.tmp, 'runs'), '');
+  assert.match(s.cli(['doctor']).stdout, /^off\s+triage workflow runs\s+— no finished runs yet$/m);
+
+  // gh cannot list secrets (403) or runs: unknown, and not called a problem.
+  writeFileSync(join(s.tmp, 'secrets-denied'), '');
+  rmSync(join(s.tmp, 'runs'));
+  const blind = s.cli(['doctor']);
+  assert.match(blind.stdout, /^unknown\s+triage workflow secrets\s+— this account cannot list the repo's secrets$/m);
+  assert.match(blind.stdout, /^unknown\s+triage workflow runs/m);
+  assert.doesNotMatch(blind.stdout, /Triage workflow:|missing\s+triage workflow|403/);
+});
+
+test('init walks the owner through the triage workflow\'s missing secrets, by who owns the board', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  existingRepo(s);
+  writeFileSync(join(s.tmp, 'linked.json'), linkedJson([['acme', 3, 'Roadmap']]));
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
+  writeFileSync(join(s.tmp, 'milestones'), 'Pilot\n');
+  writeFileSync(join(s.tmp, 'secrets'), 'CLAUDE_CODE_OAUTH_TOKEN\n');
+
+  // The plan writes the workflow, so it carries the step; a user's board needs a classic token.
+  const plan = s.cli(['init', '--mode', 'adopt']);
+  assert.match(plan.stdout, /Secrets the triage workflow needs \(the owner's to do[^]*Not set on acme\/thing: GH_PAT\./);
+  assert.match(plan.stdout, /1\. acme is a user account, and a fine-grained token cannot reach a user's projects: create a classic token at https:\/\/github\.com\/settings\/tokens\/new with the scopes repo and project\n\s+2\. gh secret set GH_PAT --repo acme\/thing /);
+  assert.match(plan.stdout, /3\. gh workflow run triage-on-new-issue\.yml --repo acme\/thing -f issue=<[^\n]*\n\s+4\. gh run list --workflow triage-on-new-issue\.yml --repo acme\/thing --limit 1/);
+  assert.doesNotMatch(plan.stdout, /claude setup-token/, 'a secret that exists is not walked through');
+  assert.match(s.calls(), /^secret list --repo acme\/thing --json name/m);
+
+  // After applying, the same step; an organization's board takes a fine-grained token.
+  writeFileSync(join(s.tmp, 'owner-type'), 'Organization\n');
+  writeFileSync(join(s.tmp, 'secrets'), '');
+  const made = s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.equal(made.status, 0, made.stdout + made.stderr);
+  assert.match(made.stdout, /Not set on acme\/thing: GH_PAT, CLAUDE_CODE_OAUTH_TOKEN\./);
+  assert.match(made.stdout, /1\. acme is an organization: create a fine-grained token at https:\/\/github\.com\/settings\/personal-access-tokens\/new with Resource owner acme,[^\n]*"Issues: Read and write"[^\n]*"Projects: Read and write"/);
+  assert.match(made.stdout, /3\. claude setup-token[^\n]*\n\s+4\. gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo acme\/thing /);
+
+  // Set up already, secrets still missing: init says so rather than "Nothing to do".
+  const again = s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.match(again.stdout, /^Every required check passes\.\n\nSecrets the triage workflow needs/);
+  // A board under another owner than the repo, or an owner gh cannot look up: classic.
+  const config = JSON.parse(readFileSync(join(s.repo, '.winston/config.json'), 'utf8'));
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ ...config, board: { ...config.board, owner: 'other-org' } }));
+  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /1\. the board is other-org's and the repository is not, and a fine-grained token covers one owner: create a classic token/);
+  writeFileSync(join(s.tmp, 'owner-type'), '');
+  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /1\. create a classic token[^\n]*gh could not tell whether other-org is a user or an organization/);
+
+  // Secrets this account cannot list: check first, then both, never "missing".
+  writeFileSync(join(s.tmp, 'secrets-denied'), '');
+  const blind = s.cli(['init', '--mode', 'adopt']);
+  assert.match(blind.stdout, /This account cannot list the secrets of acme\/thing, so see which exist first: gh secret list --repo acme\/thing\./);
+  assert.doesNotMatch(blind.stdout, /Not set on/);
+  rmSync(join(s.tmp, 'secrets-denied'));
+  writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
+  const done = s.cli(['init', '--mode', 'adopt']);
+  assert.match(done.stdout, /^Nothing to do: every required check passes\.\n$/);
+  assert.doesNotMatch(s.calls(), /^(secret set|workflow run|secret list(?!.*--json name))/m, 'winston lists secret names and nothing else');
 });
 
 test('the triage workflow template skips, rather than fails, without its secrets', () => {

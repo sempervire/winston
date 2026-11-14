@@ -48,6 +48,13 @@ GitHub in that Chrome, and connect it with `/chrome` (or start with `claude --ch
 Without browser control it prints the two steps for you to do, and doctor reports them
 until they are done.
 
+The triage workflow needs two Actions secrets that only the owner can create: `GH_PAT`
+(Issues on the repo, Projects on the board's owner) and `CLAUDE_CODE_OAUTH_TOKEN` (from
+`claude setup-token`). `winston init` checks which exist, by name only, and prints numbered
+steps for the missing ones, with the token type GitHub requires for the board's owner.
+Until both are set new issues are not triaged automatically; `winston doctor` reports the
+secrets and whether the workflow's latest runs failed.
+
 ## Commands
 
 | Command | What it does |

@@ -6,7 +6,7 @@ description: Set Winston up in this repo, after asking which of three situations
 # /winston:init
 
 `winston init` sets up one of three things, and which one is the user's call, never a guess.
-It runs in four steps and never skips the first two.
+It runs in five steps and never skips the first two.
 
 1. **Ask which setup.** Run `winston init` from the repository root (or the empty directory
    for a new project), with no flags. It changes nothing and prints the three setups and
@@ -58,6 +58,20 @@ It runs in four steps and never skips the first two.
      `claude --chrome`). When they say it is on, carry out the steps. If they would
      rather not, or the harness has no browser control (Codex), give them the two lines
      from the output to do by hand, and run `winston doctor` once they say they have.
+
+5. **Relay the secrets steps.** When the output has **Secrets the triage workflow needs**,
+   the workflow `winston init` installed cannot triage until the repo has two Actions
+   secrets, `GH_PAT` and `CLAUDE_CODE_OAUTH_TOKEN`. The CLI checked their names only. The
+   numbered steps under that heading are the owner's: present them unaltered, commands
+   included, as the last thing the owner has to do, and say that new issues stay untriaged
+   until they are done. Never create a token, run `claude setup-token`, run
+   `gh secret set`, or ask for a token's value in chat: the owner runs those in their own
+   terminal, where `gh secret set` prompts for the value. The owner doing it by hand needs
+   no secret-grant phrase (config `secretGrant.phrase`); that phrase governs an agent
+   handling secrets, and here no agent does. When they say it is done, run
+   `winston doctor`: `triage workflow secrets` should read `on`, and after the proving run
+   `triage workflow runs` should show `last run: success`. In **join** the secrets are the
+   repo owner's; say so and stop.
 
 Anything under **By hand** needs a person: access someone else grants, or a missing policy
 file. Relay it as it stands.

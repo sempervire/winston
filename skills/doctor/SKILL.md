@@ -16,3 +16,9 @@ When it reports missing setup, or that the repo is not set up for Winston, offer
 needs its own confirmation. Its **In the browser** list (the board's intake workflows,
 which GitHub has no API for) is work `/winston:init` does through browser control: offer
 that rather than leaving it with the user. Relay its **By hand** list as it stands.
+
+A **Triage workflow** list means the installed triage workflow is not triaging: its secrets
+are missing, or its latest runs failed. Say so plainly, since nothing else reports it, and
+offer `/winston:init`, which prints the owner's steps for the secrets. `unknown` on either
+line means this account cannot see them, not that they are missing. Never create a token or
+set a secret yourself.

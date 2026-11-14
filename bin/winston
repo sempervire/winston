@@ -21,6 +21,10 @@
  * that only a person can fix (GitHub has no API for it, or it needs access someone else
  * grants) carries `hand`, the steps. `scope: 'you'` marks what belongs to the person at
  * the keyboard rather than to the repo's setup.
+ *
+ * The triage workflow's two secrets are the owner's to create. Winston checks their names
+ * only (`gh secret list` returns no values) and prints the steps; it never reads, prints,
+ * generates or sets a secret's value.
  */
 
 import { spawnSync } from 'node:child_process'
@@ -61,6 +65,8 @@ const MODES = ['join', 'new', 'adopt']
 const PUSH_TIMEOUT = 600000
 const DEFAULT_TRIAGE_WORKFLOW = 'triage-on-new-issue.yml'
 const DEFAULT_MILESTONE = 'Phase 1.0'
+const FAILED_RUNS = ['failure', 'timed_out', 'startup_failure']
+const TRIAGE_RUNS = 5
 
 function run(cmd, args, opts = {}) {
   const r = spawnSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000, ...opts })
@@ -155,11 +161,58 @@ function writeTriageWorkflow(wf) {
 }
 
 /**
- * Every check, in report order: { name, state: ok|missing|on|off, detail, required, fix?, hand?, scope? }.
- * `planned` is init's proposal for a repo with no config yet: { config, newBoard, noRepo, firstCommit }.
- * The checks then describe the repo as it will be once init's first steps have run.
+ * The owner's steps for the triage workflow's secrets, as lines. `want` is the names to
+ * create. Which token GH_PAT is depends on who owns the board: GitHub's fine-grained tokens
+ * cannot reach a project owned by a user account, and cover one owner at a time.
  */
-export function checks(cwd, planned = null) {
+function secretSteps({ slug, known, want, boardOwner, wfName }) {
+  const flag = slug ? ` --repo ${slug}` : ''
+  const where = slug || 'this repository'
+  const repoOwner = slug?.split('/')[0]
+  const board = boardOwner || 'the board\'s owner'
+  const lines = [known
+    ? `Not set on ${where}: ${want.join(', ')}. Until both secrets exist, new issues are not triaged automatically.`
+    : `This account cannot list the secrets of ${where}, so see which exist first: gh secret list${flag}. Then, for each of ${want.join(' and ')} it does not show:`]
+  let n = 0
+  const step = (text) => lines.push(`  ${++n}. ${text}`)
+  if (want.includes('GH_PAT')) {
+    lines.push(`GH_PAT, a token that can read and write Issues on ${where} and Projects on ${board}:`)
+    const type = boardOwner ? run('gh', ['api', `users/${boardOwner}`, '--jq', '.type']).out : ''
+    const classic = 'create a classic token at https://github.com/settings/tokens/new with the scopes repo and project'
+    if (type === 'User') step(`${boardOwner} is a user account, and a fine-grained token cannot reach a user's projects: ${classic}`)
+    else if (type !== 'Organization') step(`${classic} (gh could not tell whether ${board} is a user or an organization; a classic token reaches the projects of either)`)
+    else if (repoOwner?.toLowerCase() !== boardOwner.toLowerCase()) step(`the board is ${boardOwner}'s and the repository is not, and a fine-grained token covers one owner: ${classic}`)
+    else step(`${boardOwner} is an organization: create a fine-grained token at https://github.com/settings/personal-access-tokens/new with Resource owner ${boardOwner}, Repository access "Only select repositories": ${slug}, Repository permissions "Issues: Read and write", Organization permissions "Projects: Read and write" (if ${boardOwner} requires approval for fine-grained tokens, one of its owners approves it before it works)`)
+    step(`gh secret set GH_PAT${flag}   (it prompts for the value: paste the token there)`)
+  }
+  if (want.includes('CLAUDE_CODE_OAUTH_TOKEN')) {
+    lines.push('CLAUDE_CODE_OAUTH_TOKEN, which lets the workflow run Claude on your subscription:')
+    step('claude setup-token   (it prints a token)')
+    step(`gh secret set CLAUDE_CODE_OAUTH_TOKEN${flag}   (paste that token at the prompt)`)
+  }
+  lines.push('Then prove it, once the workflow is on the default branch:')
+  step(`gh workflow run ${wfName}${flag} -f issue=<the number of an open issue>`)
+  step(`gh run list --workflow ${wfName}${flag} --limit 1   (repeat until it shows completed and success)`)
+  return lines
+}
+
+/** The human step init prints for the secrets; nothing when both exist. */
+function printSecretSteps(list) {
+  const c = list.find((c) => c.steps)
+  if (!c) return
+  console.log('\nSecrets the triage workflow needs (the owner\'s to do, in a normal terminal; a token\'s value is never pasted into a chat):')
+  for (const line of c.steps()) console.log(`  ${line}`)
+}
+
+/**
+ * Every check, in report order: { name, state: ok|missing|on|off|unknown|failed, detail, required, fix?, hand?, scope? }.
+ * `planned` is init's proposal for a repo with no config yet: { config, newBoard, noRepo, firstCommit, slug }.
+ * The checks then describe the repo as it will be once init's first steps have run.
+ * `forInit` checks the triage workflow's secrets even before the workflow file exists,
+ * since init is about to write it. A check with `problem` is one doctor calls out; one
+ * with `steps` carries the owner's steps for the secrets.
+ */
+export function checks(cwd, planned = null, forInit = false) {
   const out = []
   const add = (c) => out.push({ required: true, detail: '', ...c })
 
@@ -306,16 +359,35 @@ export function checks(cwd, planned = null) {
   add({
     name: 'triage-on-new-issue workflow', state: hasWf ? 'ok' : 'missing', detail: wf,
     fix: !hasWf && {
-      plan: `write ${wf} from the template (it skips until the repo has the secrets ${TRIAGE_SECRETS.join(' and ')})`,
+      plan: `write ${wf} from the template (it skips until the repo has the secrets ${TRIAGE_SECRETS.join(' and ')}; the steps for those are below)`,
       run: () => writeTriageWorkflow(wf),
     },
   })
-  if (existsSync(wf) && !planned?.noRepo) {
-    const secrets = run('gh', ['secret', 'list', '--json', 'name', '--jq', '.[].name'], { cwd: root })
-    const lacking = TRIAGE_SECRETS.filter((n) => !secrets.out.split('\n').includes(n))
+  if (existsSync(wf) || forInit) {
+    // Names only. A repo init is about to create has no secrets; one whose secrets this
+    // account cannot list is unknown, never missing.
+    const slug = planned?.slug ?? (run('gh', ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'], { cwd: root }).out || null)
+    const listed = planned?.noRepo ? { ok: true, out: '' } : run('gh', ['secret', 'list', ...(slug ? ['--repo', slug] : []), '--json', 'name', '--jq', '.[].name'], { cwd: root })
+    const have = new Set(listed.out.split('\n'))
+    const lacking = TRIAGE_SECRETS.filter((n) => !have.has(n))
+    const init = 'winston init --mode adopt prints the steps'
     add({
-      name: 'triage workflow secrets', required: false, state: secrets.ok && !lacking.length ? 'on' : 'off',
-      detail: !secrets.ok ? 'cannot list the repo\'s secrets from this account' : lacking.length ? `not set: ${lacking.join(', ')} — new issues are not triaged automatically until they are` : 'new issues are triaged automatically',
+      name: 'triage workflow secrets', required: false, state: !listed.ok ? 'unknown' : lacking.length ? 'off' : 'on',
+      detail: !listed.ok ? 'this account cannot list the repo\'s secrets' : `${TRIAGE_SECRETS.map((n) => `${n} ${have.has(n) ? 'set' : 'missing'}`).join(', ')}${lacking.length ? ' — new issues are not triaged automatically until both are set' : ''}`,
+      problem: listed.ok && lacking.length && `secrets missing: ${lacking.join(', ')}. New issues are not triaged automatically until both are set (${init})`,
+      steps: (!listed.ok || lacking.length) && (() => secretSteps({ slug, known: listed.ok, want: listed.ok ? lacking : TRIAGE_SECRETS, boardOwner: config.board?.owner, wfName })),
+    })
+  }
+  if (existsSync(wf) && !planned) {
+    const runs = run('gh', ['run', 'list', '--workflow', wfName, '--limit', String(TRIAGE_RUNS), '--json', 'conclusion', '--jq', '.[].conclusion'], { cwd: root })
+    // Newest first; a run still going has no conclusion yet.
+    const done = runs.out.split('\n').filter((c) => c && c !== 'null')
+    const failed = done.findIndex((c) => !FAILED_RUNS.includes(c))
+    const n = failed === -1 ? done.length : failed
+    add({
+      name: 'triage workflow runs', required: false, state: !runs.ok ? 'unknown' : n ? 'failed' : done.length ? 'on' : 'off',
+      detail: !runs.ok ? 'cannot list its runs (GitHub knows a workflow only once it is on the default branch)' : n ? `its last ${n} ${n === 1 ? 'run' : 'runs'} failed` : done.length ? `last run: ${done[0]}` : 'no finished runs yet',
+      problem: runs.ok && n > 0 && `installed, but its last ${n} ${n === 1 ? 'run' : 'runs'} failed. See why: gh run list --workflow ${wfName} --limit 1, then gh run view <id> --log-failed. A missing, expired or under-scoped secret is the usual cause (winston init --mode adopt prints the steps for a missing one)`,
     })
   }
 
@@ -355,6 +427,11 @@ function doctor(cwd) {
   for (const c of list) console.log(`${c.state.padEnd(8)} ${c.name}${c.detail ? `  — ${c.detail}` : ''}`)
   const bad = missing(list)
   printSteps(bad.filter((c) => !c.fix && c.hand))
+  const problems = list.filter((c) => c.problem)
+  if (problems.length) {
+    console.log('\nTriage workflow:')
+    for (const c of problems) console.log(`  - ${c.problem}`)
+  }
   if (bad.some((c) => c.unconfigured)) console.log('\nNot set up for Winston here. winston init asks which setup fits: join, new or adopt.')
   else if (bad.some((c) => c.fix)) console.log('\nFix: winston init --mode adopt')
   return bad.length ? 1 : 0
@@ -562,7 +639,7 @@ function bootstrap(cwd, sit, opts) {
   if (sit.hasCommits) notes.push(`Commit ${configPath} and ${wf} to ${production}: GitHub runs the triage workflow from the default branch only.`)
   if (!present(config.triage.policy)) notes.push(`There is no ${config.triage.policy}: /winston:triage does not run without a policy. Write one, or point triage.policy in the config at the doc that holds your triage rules.`)
   notes.push(`No deploy gate is set. If merges into ${production} deploy, add deployGate to the config (see the README).`)
-  return { steps, notes, planned: { config, newBoard, noRepo, firstCommit: !sit.hasCommits } }
+  return { steps, notes, planned: { config, newBoard, noRepo, firstCommit: !sit.hasCommits, slug } }
 }
 
 /** new and adopt: build what is missing. With a config already here, that config is the plan. */
@@ -578,12 +655,13 @@ function setup(cwd, sit, opts) {
     console.log('  --board new   create a new one')
     return opts.yes ? 2 : 0
   }
-  const list = checks(cwd, boot?.planned)
+  const list = checks(cwd, boot?.planned, true)
   const fixes = missing(list).filter((c) => c.fix)
   const hand = missing(list).filter((c) => !c.fix)
   const printHand = printSteps
   if (!boot && !fixes.length && !hand.length) {
-    console.log('Nothing to do: every required check passes.')
+    console.log(list.some((c) => c.steps) ? 'Every required check passes.' : 'Nothing to do: every required check passes.')
+    printSecretSteps(list)
     return 0
   }
   const plans = [...(boot?.steps ?? []), ...fixes.map((c) => c.fix)]
@@ -593,6 +671,7 @@ function setup(cwd, sit, opts) {
       for (const p of plans) console.log(`  - ${p.plan}`)
     }
     printHand(hand)
+    printSecretSteps(list)
     for (const n of boot?.notes ?? []) console.log(`\nNote: ${n}`)
     if (plans.length) console.log('\nRerun with --yes to do these.')
     return 0
@@ -611,7 +690,7 @@ function setup(cwd, sit, opts) {
     }
   }
   // The config exists now, so the checks read the real repo and board.
-  const after = boot ? checks(cwd) : list
+  const after = boot ? checks(cwd, null, true) : list
   let failed = 0
   for (const c of missing(after).filter((c) => c.fix)) {
     try {
@@ -623,6 +702,7 @@ function setup(cwd, sit, opts) {
     }
   }
   printHand(missing(after).filter((c) => !c.fix))
+  printSecretSteps(after)
   for (const n of boot?.notes ?? []) console.log(`\nNote: ${n}`)
   return failed ? 1 : 0
 }
