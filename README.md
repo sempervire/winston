@@ -28,7 +28,19 @@ winston install-codex-agents        # Codex plugins cannot ship agents; this cop
 
 Codex asks you to trust the plugin's hooks once (`/hooks`).
 
-Then, in a repo: `/winston:doctor`, and `/winston:init` for anything it reports missing.
+Then, in a repo, `/winston:init`. It asks which of three setups this is and plans it before
+changing anything:
+
+| Setup | When | What it does |
+|---|---|---|
+| `join` | The repo already carries a `.winston/config.json`. | Checks your access (the `gh` project scope, the board, which is shared separately from the repo) and your machine. Changes nothing in the repo or on GitHub. |
+| `new` | A new project. | Creates the GitHub repo, both branches, the board, the config, labels and triage workflow. |
+| `adopt` | An existing repo Winston did not set up. | Fits a config to its default branch, an integration branch, a board already linked to it and its process docs; adds only what is missing. |
+
+`/winston:doctor` checks the result at any time. Two steps are always by hand, because
+GitHub has no API for them: on the board's Workflows page, turn on **Auto-add to project**
+(this repository, filter `is:issue`) and **Item added to project** (set Status to `New`).
+Without them a new issue never reaches the board; doctor reports both.
 
 ## Commands
 
@@ -43,7 +55,7 @@ Then, in a repo: `/winston:doctor`, and `/winston:init` for anything it reports 
 | `/winston:closeout` | Can this session end without stranding work? |
 | `/winston:handoff` | Hand the work to a fresh session. |
 | `/winston:codex`, `/winston:gemini` | Read-only second opinions from other model families. |
-| `/winston:doctor`, `/winston:init` | Check, then create, the setup Winston needs. |
+| `/winston:doctor`, `/winston:init` | Check the setup Winston needs; join, create or adopt it. |
 
 Hooks: a production-deploy gate (blocks configured deploy actions until the owner types the
 approval phrase in that session), a secret-handling grant, session titles, worktree setup, a
