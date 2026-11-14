@@ -3,11 +3,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { armMatcher, CREDENTIAL_URL, urlsIn } from '../hooks/secret-grant.mjs';
 import { normalize } from '../hooks/session-title.mjs';
+import { doctorResultPath } from '../lib/config.mjs';
 import { lastOpenAndClose } from '../hooks/browser-tab-guard.mjs';
 
 const HOOKS = resolve(import.meta.dirname, '../hooks');
@@ -178,6 +179,63 @@ test('worktree-setup: without worktree config it copies nothing', (t) => {
   const r = repoWithWorktree(t, {});
   assert.equal(r.run('worktree-setup.mjs', { hook_event_name: 'SessionStart', cwd: r.wt }), '');
   assert.ok(!existsSync(join(r.wt, '.env.local')));
+});
+
+// ---- doctor-nudge
+
+test('doctor-nudge: one line per session when the last doctor run left open items, silent otherwise', (t) => {
+  const s = sandbox(t);
+  const repo = join(s.tmp, 'repo');
+  mkdirSync(repo);
+  execFileSync('git', ['init', '-q', repo]);
+  const result = (data) => {
+    const file = doctorResultPath(repo);
+    mkdirSync(join(file, '..'), { recursive: true });
+    writeFileSync(file, typeof data === 'string' ? data : JSON.stringify(data));
+  };
+  process.env.WINSTON_HOME = s.home;
+  t.after(() => delete process.env.WINSTON_HOME);
+  mkdirSync(join(repo, 'src/deep'), { recursive: true });
+  const start = (id, cwd = repo) => s.run('doctor-nudge.mjs', { hook_event_name: 'SessionStart', cwd, session_id: id });
+
+  result({ root: repo, open: 3 });
+  assert.equal(start('aaaaaaaa-1'), '', 'no Winston config in the repo: silent');
+  mkdirSync(join(repo, '.winston'));
+  writeFileSync(join(repo, '.winston/config.json'), '{}');
+  const out = start('aaaaaaaa-1');
+  assert.equal(out.systemMessage, 'Winston setup has 3 open items – run /winston:doctor.');
+  assert.deepEqual(out.hookSpecificOutput, { hookEventName: 'SessionStart', additionalContext: out.systemMessage });
+  assert.equal(start('aaaaaaaa-1'), '', 'a resume or compaction in the same session does not repeat it');
+  result({ root: repo, open: 1 });
+  assert.equal(start('bbbbbbbb-2', join(repo, 'src/deep')).systemMessage, 'Winston setup has 1 open item – run /winston:doctor.', 'from a subdirectory too');
+
+  // Nothing open, doctor never run, or a result that does not parse: no output, exit 0.
+  result({ root: repo, open: 0 });
+  assert.equal(start('cccccccc-3'), '');
+  result('{ nope');
+  assert.equal(start('dddddddd-4'), '');
+  rmSync(doctorResultPath(repo));
+  assert.equal(start('eeeeeeee-5'), '');
+  assert.equal(s.run('doctor-nudge.mjs', undefined), '', 'no payload at all');
+
+  // No session id: nothing to remember it by, so it still speaks, and still never fails.
+  result({ root: repo, open: 2 });
+  const anonymous = () => s.run('doctor-nudge.mjs', { hook_event_name: 'SessionStart', cwd: repo });
+  assert.equal(anonymous().systemMessage, 'Winston setup has 2 open items – run /winston:doctor.');
+  assert.equal(anonymous().systemMessage, 'Winston setup has 2 open items – run /winston:doctor.');
+  // A session opened through a symlink to the checkout finds the same result.
+  symlinkSync(repo, join(s.tmp, 'link'));
+  assert.equal(start('ffffffff-6', join(s.tmp, 'link')).systemMessage, 'Winston setup has 2 open items – run /winston:doctor.');
+  // Outside any git repository, and in a directory that does not exist: silent.
+  mkdirSync(join(s.tmp, 'plain/.winston'), { recursive: true });
+  writeFileSync(join(s.tmp, 'plain/.winston/config.json'), '{}');
+  assert.equal(start('gggggggg-7', join(s.tmp, 'plain')), '');
+  assert.equal(start('hhhhhhhh-8', join(s.tmp, 'gone')), '');
+
+  // It is registered at session start, and reads nothing but local files.
+  const hooks = JSON.parse(readFileSync(join(HOOKS, 'hooks.json'), 'utf8')).hooks;
+  assert.ok(hooks.SessionStart[0].hooks.some((h) => h.command.includes('doctor-nudge.mjs')));
+  assert.doesNotMatch(readFileSync(join(HOOKS, 'doctor-nudge.mjs'), 'utf8'), /child_process|repoRoot|fetch\(|https?:/, 'no process to wait on, no network');
 });
 
 // ---- parallelism-check

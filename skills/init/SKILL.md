@@ -61,34 +61,63 @@ It runs in five steps and never skips the first two.
 
 5. **Carry the plan's notes through as help, not status.** `winston init`'s output can end
    with `Note:` lines and a **Secrets the triage workflow needs** list, and `winston doctor`
-   can report `triage workflow secrets` as `off` — all are non-blocking, so don't present
+   can report `triage workflow secrets` as `needs you` — all are non-blocking, so don't present
    them as bare facts or errors; say what to do about them, and always offer the next step.
    - **A note to commit the config and workflow:** it names the exact files and the reason
      (GitHub runs the triage workflow from the default branch only). Relay that reason, and
      offer to commit those two files yourself now (`git add` and `git commit` them) rather
      than leaving the user to work out why they're uncommitted.
-   - **`triage workflow secrets: off`, or the Secrets list:** the workflow skips cleanly
+   - **`triage workflow secrets` under Needs you, or the Secrets list:** the workflow skips cleanly
      without them, so frame this as an optional next step, not a problem; until it is done,
      new issues are not triaged automatically. Explain both secrets in plain terms: `GH_PAT`
      is a token over this repo with Issues read/write and Projects read/write on the board
      owner (`GITHUB_TOKEN` cannot reach an org/user project); `CLAUDE_CODE_OAUTH_TOKEN`
      comes from running `claude setup-token`. The numbered steps under **Secrets the triage
      workflow needs** are the walkthrough: the CLI checked which of the two names exist
-     (names only), and prints the exact commands for the missing ones. Present those steps
-     unaltered. Use the token type they name, not a guess: a fine-grained token for a
-     board an organization owns, a classic token (`repo`, `project`) for a board a user
-     owns, because GitHub's fine-grained tokens cannot reach a user's projects. With
-     browser control, offer to open the token settings page the steps give so the user
-     can create the token there. Without browser control, give them the same steps to do
-     by hand and wait.
+     (names only), and prints the exact steps for the missing ones. Present those steps
+     unaltered. They name the token type, not a guess: a fine-grained token for a board
+     an organization owns, a classic token (`repo`, `project`) for a board a user owns,
+     because GitHub's fine-grained tokens cannot reach a user's projects.
+   - **Help create the token, as far as possible.** The first step is a link that opens
+     GitHub's token form with the fields filled in (scopes for a classic token; name,
+     resource owner, expiration and the two permissions for a fine-grained one). In order
+     of preference:
+     1. **The owner opens the link themselves**, in their own signed-in browser. You
+        explain each field from the numbered steps, including what the link cannot fill
+        (the Note on a classic token; "Only select repositories" and this repository on a
+        fine-grained one), and answer questions as they go. This is the default, and what
+        happens if they say no to the offer below or do not answer it.
+     2. **Whenever you have browser tools** (Claude in Chrome), **offer the help** in one
+        plain line right after giving the link, for example: "I can also open this page in
+        your browser and fill in the fields for you, stopping before Generate – want me
+        to?" Proceed only on the owner's yes. Then open that link in a new tab in their
+        signed-in browser, check each field against the steps, and fill in what the link
+        could not. Never click Generate, and never type a password
+        or a two-factor code. Once the fields are filled, say so, and take **no further
+        browser action in that tab or window** – no screenshot, no page read, no
+        navigation, no close – until the owner says in chat that the token is copied and
+        the tab is closed (or tells you to close it after they have navigated away). The
+        owner clicks Generate and answers any password or two-factor prompt; GitHub then
+        shows the token in that same tab, which is why you do not look. A token is a
+        credential: it stays with the owner. With chattr, claim `resource:chrome` first
+        and release it after.
+     - **If the harness or a hook stops you from opening that page, that is the stop.**
+       Do not ask the owner to type a grant phrase for this. Go back to 1: the owner
+       opens the link, and you give the numbered directions.
+     - **The page shows a sign-in form, or the form does not match the steps:** say so
+       and go back to 1 with the numbered directions; never sign in for them.
+     - **No browser control:** give them the link and the numbered directions, which
+       name every field and value, and wait.
    - **The token's value stays with the owner.** They run `claude setup-token` and the two
      `gh secret set` lines in their own terminal, where `gh secret set` prompts for the
-     value. Never create a token, never ask for a token's value in chat, and never run
-     `gh secret set` with a value yourself. The owner doing it by hand needs no
-     secret-grant phrase (config `secretGrant.phrase`); that phrase governs an agent
-     handling secrets, and here no agent does.
+     value. For `claude setup-token`, explain what each prompt is for (it opens a browser
+     to sign in to Claude, they approve, it prints a long-lived token to copy); do not run
+     it. Never create a token, never ask for a token's value in chat, and never run
+     `gh secret set` yourself; the owner runs it in their own terminal. The owner doing it
+     by hand needs no secret-grant phrase (config `secretGrant.phrase`); that phrase
+     governs an agent handling secrets, and here no agent does.
    - **When they say it is done,** run `winston doctor`: `triage workflow secrets` should
-     read `on`, and after the proving run in the steps `triage workflow runs` should show
+     read `done`, and after the proving run in the steps `triage workflow runs` should show
      `last run: success`. In **join** the secrets are the repo owner's; say so and stop.
 
 **Permission rules** in the output is one more step for the owner: the project lacks some
@@ -120,6 +149,10 @@ it. init never overwrites an existing `TRIAGE.md` or edits the doc the config po
 
 Anything under **By hand** needs a person: access someone else grants, or a missing policy
 file. Relay it as it stands.
+
+`winston init` is safe to run again: it shows what is left, skips what is done, and never
+overwrites a finished step. Whenever it stops on something missing, point the user at
+`/winston:doctor`, the one checklist of what is open and how to fix it.
 
 If the `winston` command is not on PATH, run it by its path inside the plugin
 (`<plugin root>/bin/winston`, the plugin root being two directories above this skill's

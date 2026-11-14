@@ -13,7 +13,7 @@ vocabulary, and no persona — it is a second model reached over the `codex` CLI
 `/winston:verdict` does not govern it.
 
 **Codex is required.** Check `command -v codex` first. If it is absent, say in one line that
-`/winston:codex` is off because the `codex` CLI is not installed, and stop.
+`/winston:codex` is off because the `codex` CLI is not installed, end with "Run /winston:doctor to see what is missing and how to fix it.", and stop.
 
 **Read `second-opinion.md` in this skill's directory too.** It holds the prompt's two blocks, the review
 rules and the verbatim relay rule. This file covers only Codex's invocation and quirks.

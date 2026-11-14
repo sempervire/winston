@@ -23,7 +23,8 @@ user in this session.
 - **Which agents.** Config `advisors.debbie` and `advisors.sheldon` name repo-specific advisor
   agents when set. Otherwise use the generic ones: `winston:debbie` and `winston:sheldon` in
   Claude Code; `debbie` and `sheldon` in Codex (installed by `winston install-codex-agents`).
-  If a named agent is not available in this harness, say which one in one line and stop.
+  If a named agent is not available in this harness, say which one in one line, end with
+  "Run /winston:doctor to see what is missing and how to fix it.", and stop.
 - **Profile.** If config `profiles.winston` names a file, read its `## /winston:verdict`
   section, if any, and apply it; it wins over this file. The repo's process docs win over both.
 

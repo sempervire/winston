@@ -231,7 +231,9 @@ In order:
 
 1. Claim `resource:orchestrator`. Refused: name the holder, stop.
 2. With a board configured, check `gh auth status` shows the `project` scope. Missing: it is
-   the first human task (`gh auth refresh -s project`).
+   the first human task (`gh auth refresh -s project`). Whenever setup stops on a missing
+   prerequisite (no config, no board, a tool or access that is not there), end the message
+   with "Run /winston:doctor to see what is missing and how to fix it.".
 3. Read `chattr state`. Choose every `Ready` issue on the configured board (config `board`:
    `owner`, `number`, `statuses`) that is free of other sessions' claims, branches, and open
    PRs. Radar may help, in a subagent. With no board, the work set is what the owner names.

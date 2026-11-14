@@ -3,7 +3,9 @@
  * winston — the plugin's CLI. On the Bash tool's PATH through the plugin's bin/.
  *
  *   winston config [--json]            merged config, and which layers loaded
- *   winston doctor                     check the setup; changes nothing
+ *   winston doctor [--copy]            the setup checklist, ending in one "Next step:" line;
+ *                                      changes nothing. --copy puts that step's command on
+ *                                      the clipboard (macOS)
  *   winston init                       ask which setup this repository needs; changes nothing
  *   winston init --mode <join|new|adopt> [--yes]
  *                                      plan that setup; apply it only with --yes
@@ -36,7 +38,7 @@ import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync,
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { loadLayers, repoRoot, winstonHome } from '../lib/config.mjs'
+import { doctorResultPath, loadLayers, repoRoot, winstonHome } from '../lib/config.mjs'
 import { recordTitle } from '../hooks/session-title.mjs'
 import { installedVersion, installScope, newer, updateSteps } from '../lib/update.mjs'
 
@@ -85,6 +87,10 @@ const PUSH_TIMEOUT = 600000
 const DEFAULT_TRIAGE_WORKFLOW = 'triage-on-new-issue.yml'
 const DEFAULT_MILESTONE = 'Phase 1.0'
 const DEFAULT_POLICY = 'TRIAGE.md'
+/** Where every stop on a missing prerequisite sends the reader. */
+export const DOCTOR_POINTER = 'Run /winston:doctor to see what is missing and how to fix it.'
+/** The generic rows of the starter policy's risk tiers; a policy still carrying one has not been fitted to its repo. */
+const STARTER_TIER = /is docs, copy or tooling only — nothing a user runs behaves differently/
 const FAILED_RUNS = ['failure', 'timed_out', 'startup_failure']
 const TRIAGE_RUNS = 5
 
@@ -387,7 +393,7 @@ const GATES = 'An allow rule only removes a prompt, and deny wins over allow: de
  */
 function permissions(cwd, opts) {
   const root = repoRoot(cwd)
-  if (!root) throw new Error(`winston permissions: ${cwd} is not inside a git repository`)
+  if (!root) throw new Error(`winston permissions: ${cwd} is not inside a git repository\n${DOCTOR_POINTER}`)
   const bad = (opts.add ?? []).find((r) => !RULE.test(r))
   if (bad) throw new Error(`winston permissions: --add takes a Claude Code rule such as 'Bash(npm test*)', got: ${bad}`)
   const layers = loadLayers(cwd)
@@ -471,6 +477,27 @@ export function policyState(file) {
  * create. Which token GH_PAT is depends on who owns the board: GitHub's fine-grained tokens
  * cannot reach a project owned by a user account, and cover one owner at a time.
  */
+/**
+ * The page that creates GH_PAT, with the form filled in as far as GitHub lets a link fill
+ * it. The fine-grained form's parameters are the ones GitHub documents: `name`,
+ * `description`, `target_name`, `expires_in` and one per permission. The classic form's
+ * `scopes=repo,project` is best effort: GitHub's token page documents no prefill for
+ * it, so the printed directions always name both scopes to tick. A link carries no
+ * secret: the token exists only after the owner clicks Generate.
+ */
+export function tokenUrl({ fineGrained, slug, boardOwner }) {
+  if (!fineGrained) return `https://github.com/settings/tokens/new?scopes=${['repo', 'project'].map(encodeURIComponent).join(',')}`
+  const params = new URLSearchParams({
+    name: `winston triage ${slug.split('/')[1] ?? ''}`.trim().slice(0, 40),
+    description: `Winston triage workflow for ${slug}: Issues on the repository and Projects on ${boardOwner}, read and write.`.slice(0, 1024),
+    target_name: boardOwner,
+    expires_in: '90',
+    issues: 'write',
+    organization_projects: 'write',
+  })
+  return `https://github.com/settings/personal-access-tokens/new?${params}`
+}
+
 function secretSteps({ slug, known, want, boardOwner, wfName }) {
   const flag = slug ? ` --repo ${slug}` : ''
   const where = slug || 'this repository'
@@ -484,17 +511,30 @@ function secretSteps({ slug, known, want, boardOwner, wfName }) {
   if (want.includes('GH_PAT')) {
     lines.push(`GH_PAT, a token that can read and write Issues on ${where} and Projects on ${board}:`)
     const type = boardOwner ? run('gh', ['api', `users/${boardOwner}`, '--jq', '.type']).out : ''
-    const classic = 'create a classic token at https://github.com/settings/tokens/new with the scopes repo and project'
-    if (type === 'User') step(`${boardOwner} is a user account, and a fine-grained token cannot reach a user's projects: ${classic}`)
-    else if (type !== 'Organization') step(`${classic} (gh could not tell whether ${board} is a user or an organization; a classic token reaches the projects of either)`)
-    else if (repoOwner?.toLowerCase() !== boardOwner.toLowerCase()) step(`the board is ${boardOwner}'s and the repository is not, and a fine-grained token covers one owner: ${classic}`)
-    else step(`${boardOwner} is an organization: create a fine-grained token at https://github.com/settings/personal-access-tokens/new with Resource owner ${boardOwner}, Repository access "Only select repositories": ${slug}, Repository permissions "Issues: Read and write", Organization permissions "Projects: Read and write" (if ${boardOwner} requires approval for fine-grained tokens, one of its owners approves it before it works)`)
-    step(`gh secret set GH_PAT${flag}   (it prompts for the value: paste the token there)`)
+    const fineGrained = type === 'Organization' && !!slug && repoOwner?.toLowerCase() === boardOwner.toLowerCase()
+    const url = tokenUrl({ fineGrained, slug, boardOwner })
+    lines.next = { open: url }
+    const why = type === 'User' ? `${boardOwner} is a user account, and a fine-grained token cannot reach a user's projects, so this is a classic token`
+      : type !== 'Organization' ? `gh could not tell whether ${board} is a user or an organization, so this is a classic token, which reaches the projects of either`
+        : !fineGrained ? `the board is ${boardOwner}'s and the repository is not, and a fine-grained token covers one owner, so this is a classic token`
+          : `${boardOwner} is an organization, so this is a fine-grained token`
+    step(`Open this link while signed in to GitHub; it ${fineGrained ? 'fills in the form' : 'opens the form, and should tick the two scopes'} (${why}): ${url}`)
+    if (fineGrained) {
+      step(`Check the form: Token name (filled in), Resource owner ${boardOwner}, Expiration 90 days (change it if you like). Under Repository access choose "Only select repositories" and pick ${slug}; the link cannot fill that in. Under Permissions: Repository permissions "Issues: Read and write", Organization permissions "Projects: Read and write"`)
+      step(`If the form came up empty: github.com, your picture, Settings, Developer settings, Personal access tokens, Fine-grained tokens, "Generate new token", and enter the values from the step above`)
+      step(`Click "Generate token" yourself and copy the token; GitHub shows it once. If ${boardOwner} requires approval for fine-grained tokens, one of its owners approves it before it works`)
+    } else {
+      step('Check the form: Note is empty, so type a name such as "winston triage" (the link cannot fill it in). Expiration: your choice; 90 days is a reasonable one. Under Select scopes, "repo" and "project" must be ticked: tick them if the link did not, and nothing else needs to be')
+      step('If the form came up empty: github.com, your picture, Settings, Developer settings, Personal access tokens, Tokens (classic), "Generate new token (classic)", then the Note, the Expiration, and tick "repo" and "project"')
+      step('Click "Generate token" yourself and copy the token; GitHub shows it once')
+    }
+    step(`In your own terminal: gh secret set GH_PAT${flag}   (it prompts for the value: paste the token there, never into a chat)`)
   }
   if (want.includes('CLAUDE_CODE_OAUTH_TOKEN')) {
     lines.push('CLAUDE_CODE_OAUTH_TOKEN, which lets the workflow run Claude on your subscription:')
-    step('claude setup-token   (it prints a token)')
-    step(`gh secret set CLAUDE_CODE_OAUTH_TOKEN${flag}   (paste that token at the prompt)`)
+    lines.next ??= { command: 'claude setup-token' }
+    step('In your own terminal: claude setup-token   (it opens a browser to sign in to Claude; approve there, and it prints a long-lived token; copy it)')
+    step(`In your own terminal: gh secret set CLAUDE_CODE_OAUTH_TOKEN${flag}   (paste that token at the prompt)`)
   }
   lines.push('Then prove it, once the workflow is on the default branch:')
   step(`gh workflow run ${wfName}${flag} -f issue=<the number of an open issue>`)
@@ -549,6 +589,8 @@ export function checks(cwd, planned = null, forInit = false) {
     state: auth.ok && scopes.includes('project') ? 'ok' : 'missing',
     detail: !auth.ok ? 'gh not installed or not logged in' : scopes.includes('project') ? '' : 'run: gh auth refresh -s project',
     scope: 'you', hand: !auth.ok ? 'run: gh auth login, then: gh auth refresh -s project' : 'run: gh auth refresh -s project',
+    command: !auth.ok ? 'gh auth login' : 'gh auth refresh -s project',
+    fixLines: !auth.ok ? ['First: gh auth login   (it opens a browser to sign in to GitHub)', 'Then: gh auth refresh -s project   (lets gh read and update the board)'] : ['gh auth refresh -s project   (lets gh read and update the board)'],
   })
 
   let layers
@@ -726,6 +768,13 @@ export function checks(cwd, planned = null, forInit = false) {
       blanks: { file: resolve(root, policy), lines: blanks },
     })
   }
+  if (policyIs === 'ok' && STARTER_TIER.test(readFileSync(resolve(root, policy), 'utf8'))) {
+    add({
+      name: 'triage risk tiers', required: false, state: 'off',
+      detail: `${policy} still has the starter's example risk tiers`,
+      problem: `open ${policy} and rewrite the three rows under "Risk tiers" for this repository: what breaks for a user if a change of that kind is wrong, naming real paths. /winston:init can propose them from reading the repo, for you to approve. Then commit the file to the default branch`,
+    })
+  }
 
   const wfName = config.triage?.workflow ?? DEFAULT_TRIAGE_WORKFLOW
   const wf = join(root, '.github', 'workflows', wfName)
@@ -747,7 +796,7 @@ export function checks(cwd, planned = null, forInit = false) {
     const lacking = TRIAGE_SECRETS.filter((n) => !have.has(n))
     const init = 'winston init --mode adopt prints the steps'
     add({
-      name: 'triage workflow secrets', required: false, state: !listed.ok ? 'unknown' : lacking.length ? 'off' : 'on',
+      name: 'triage workflow secrets', required: false, state: !listed.ok ? 'unknown' : lacking.length ? 'off' : 'ok',
       detail: !listed.ok ? 'this account cannot list the repo\'s secrets' : `${TRIAGE_SECRETS.map((n) => `${n} ${have.has(n) ? 'set' : 'missing'}`).join(', ')}${lacking.length ? ' — new issues are not triaged automatically until both are set' : ''}`,
       problem: listed.ok && lacking.length && `secrets missing: ${lacking.join(', ')}. New issues are not triaged automatically until both are set (${init})`,
       steps: (!listed.ok || lacking.length) && (() => secretSteps({ slug, known: listed.ok, want: listed.ok ? lacking : TRIAGE_SECRETS, boardOwner: config.board?.owner, wfName })),
@@ -760,7 +809,7 @@ export function checks(cwd, planned = null, forInit = false) {
     const failed = done.findIndex((c) => !FAILED_RUNS.includes(c))
     const n = failed === -1 ? done.length : failed
     add({
-      name: 'triage workflow runs', required: false, state: !runs.ok ? 'unknown' : n ? 'failed' : done[0] === 'success' ? 'on' : 'off',
+      name: 'triage workflow runs', required: false, state: !runs.ok ? 'unknown' : n ? 'failed' : done[0] === 'success' ? 'ok' : 'off',
       detail: !runs.ok ? 'cannot list its runs (GitHub knows a workflow only once it is on the default branch)' : n ? `its last ${n} ${n === 1 ? 'run' : 'runs'} failed` : done.length ? `last run: ${done[0]}` : 'no finished runs yet',
       problem: runs.ok && n > 0 && `installed, but its last ${n} ${n === 1 ? 'run' : 'runs'} failed. See why: gh run list --workflow ${wfName} --limit 1, then gh run view <id> --log-failed. A missing, expired or under-scoped secret is the usual cause (winston init --mode adopt prints the steps for a missing one)`,
     })
@@ -777,7 +826,7 @@ export function checks(cwd, planned = null, forInit = false) {
   const lackingAllow = lackingRules.filter((r) => !r.deny).length
   const lackingText = `${lackingAllow} allow and ${lackingRules.length - lackingAllow} deny rules Winston runs use are not in ${perms.path}`
   add({
-    name: 'project permission rules', required: false, state: perms.error ? 'unknown' : lackingRules.length ? 'off' : 'on',
+    name: 'project permission rules', required: false, state: perms.error ? 'unknown' : lackingRules.length ? 'off' : 'ok',
     detail: perms.error ?? (lackingRules.length ? `${lackingText}${lackingRules.length > 3 ? '' : `: ${lackingRules.map((r) => r.rule).join(', ')}`} (winston permissions --apply adds them)` : perms.path),
     ownerStep: lackingRules.length > 0 && [
       `${lackingText}, so routine actions prompt during a run and the risky forms of them are not blocked.`,
@@ -787,21 +836,65 @@ export function checks(cwd, planned = null, forInit = false) {
   })
 
   // Optional: features that use these degrade cleanly without them.
-  add({ name: 'codex CLI', required: false, state: onPath('codex') ? 'on' : 'off', detail: 'Rex, /winston:codex' })
-  add({ name: 'chattr CLI', required: false, state: onPath('chattr') ? 'on' : 'off', detail: 'peer messages, claims' })
+  add({ name: 'codex CLI', required: false, state: onPath('codex') ? 'on' : 'off', detail: 'optional: Rex, /winston:codex' })
+  add({ name: 'chattr CLI', required: false, state: onPath('chattr') ? 'on' : 'off', detail: 'optional: peer messages, claims' })
   const gemini = process.platform === 'darwin' && run('security', ['find-generic-password', '-s', 'GEMINI_API_KEY']).ok
-  add({ name: 'GEMINI_API_KEY in keychain', required: false, state: gemini ? 'on' : 'off', detail: '/winston:gemini' })
+  add({ name: 'GEMINI_API_KEY in keychain', required: false, state: gemini ? 'on' : 'off', detail: 'optional: /winston:gemini' })
   const agents = codexSources()
   const stale = agents.filter((a) => !existsSync(a.dst) || readFileSync(a.dst, 'utf8') !== readFileSync(a.src, 'utf8'))
   add({
     name: 'Codex agents installed', required: false,
     state: agents.length && !stale.length ? 'on' : 'off',
-    detail: !agents.length ? 'this plugin ships none' : stale.length ? `not installed or differ: ${stale.map((a) => a.name).join(', ')} (winston install-codex-agents)` : '',
+    detail: !agents.length ? 'this plugin ships none' : stale.length ? `optional: not installed or differ: ${stale.map((a) => a.name).join(', ')} (winston install-codex-agents)` : '',
   })
   return out
 }
 
 const missing = (list) => list.filter((c) => c.required && c.state === 'missing')
+
+/** One sentence on why each check matters, by its name. */
+const WHY = [
+  [/^claude on PATH/, 'Winston runs inside Claude Code.'],
+  [/^gh auth/, 'Winston reads and updates issues and the board through the gh command.'],
+  [/^(repo config|git repository)/, 'The config tells Winston which branches and board this repository uses.'],
+  [/branch on origin$/, 'Work lands on the integration branch and is released from the production branch.'],
+  [/^board reachable/, 'The board is where Winston finds work and records its state.'],
+  [/^board (Status|Priority)/, 'Winston moves work through these statuses and sorts it by priority.'],
+  [/^board kanban view/, 'A board view grouped by status is how you see the work at a glance.'],
+  [/^starting milestone/, 'The board view is filtered to a milestone, so there must be one.'],
+  [/^board (auto-adds|sets)/, 'Without this a new issue never shows up on the board.'],
+  [/^triage labels/, 'Triage records its judgment with these labels.'],
+  [/^triage policy blanks/, 'Triage reads these lines as they stand, so a blank becomes part of the rule.'],
+  [/^triage policy/, 'Triage takes every rule from this file. Without rules a triage run finishes and changes nothing.'],
+  [/^triage risk tiers/, 'The example tiers describe no real repository, so triage cannot judge risk here until they are rewritten.'],
+  [/^triage-on-new-issue workflow/, 'This is what triages a new issue without anyone asking.'],
+  [/^triage workflow secrets/, 'The workflow cannot sign in to GitHub or Claude without them, so new issues stay untriaged.'],
+  [/^triage workflow runs/, 'Failed runs mean new issues are not being triaged, and nothing else reports it.'],
+  [/^project permission rules/, 'Without these rules a long run stops to ask permission for routine commands.'],
+  [/^Winston version/, 'Newer versions fix setup problems like the ones this checklist looks for.'],
+]
+
+/** The plain word for a check: done, needs you, could not check, or on/off for an optional tool. */
+export function statusOf(c) {
+  if (c.state === 'ok') return 'done'
+  if (c.state === 'unknown') return 'could not check'
+  if (c.state === 'on' || (c.state === 'off' && !c.problem && !c.steps && !c.ownerStep)) return c.state
+  return 'needs you'
+}
+
+/** How to close an open item: { command } for one paste-ready command, and the lines to show. */
+function fixOf(c) {
+  if (c.steps) {
+    const lines = c.steps()
+    return { lines, ...lines.next }
+  }
+  if (c.ownerStep) return { command: 'winston permissions --apply', lines: ['Run it yourself, once: winston permissions --apply   (winston permissions lists the rules first)'] }
+  if (c.command) return { command: c.command, lines: c.fixLines }
+  if (c.unconfigured) return { command: 'winston init', lines: ['winston init   (or /winston:init; it asks which setup fits: join, new or adopt, and shows its plan before changing anything)'] }
+  if (c.fix) return { command: 'winston init --mode adopt', lines: [`winston init --mode adopt   (or /winston:init; it shows this plan first, then asks: ${c.fix.plan})`] }
+  if (c.browser) return { lines: [`/winston:init does this for you in the browser. By hand: ${c.hand}`] }
+  return { lines: [c.problem || c.hand || c.detail] }
+}
 
 /** The steps no API call can take: those done on a web page, then the rest. */
 function printSteps(items) {
@@ -817,7 +910,11 @@ function printSteps(items) {
   }
 }
 
-/** The installed version against the latest, asked now. Never a required check: a stale Winston still works. */
+/**
+ * The installed version against the latest. The answer comes from the update check's
+ * cache, so GitHub is asked at most once a day (once an hour after a failed lookup).
+ * Never a required check: a stale Winston still works.
+ */
 function versionCheck(cwd) {
   const have = installedVersion()
   const asked = run(process.execPath, [join(ROOT, 'lib', 'update.mjs')], { timeout: 8000 })
@@ -825,26 +922,67 @@ function versionCheck(cwd) {
   try {
     latest = JSON.parse(asked.out).latest
   } catch {}
-  if (!latest) return { name: 'Winston version', required: false, state: 'off', detail: `${have} installed; could not reach GitHub to check for a newer one` }
-  if (!newer(latest, have)) return { name: 'Winston version', required: false, state: 'ok', detail: `${have}, the latest` }
-  return { name: 'Winston version', required: false, state: 'old', detail: `${have} installed, ${latest} available`, update: updateSteps('claude', installScope(cwd)) }
+  const base = { name: 'Winston version', required: false, scope: 'you' }
+  if (!latest) return { ...base, state: 'unknown', detail: `${have} installed; could not reach GitHub to check for a newer one` }
+  if (!newer(latest, have)) return { ...base, state: 'ok', detail: `${have}, the latest` }
+  const steps = updateSteps('claude', installScope(cwd))
+  return {
+    ...base, state: 'off', detail: `${have} installed, ${latest} available`, problem: `update to ${latest}`,
+    command: steps.match(/`([^`]+)`/)?.[1],
+    fixLines: [`To update, ${steps}.`, 'Winston never updates itself: an update replaces hooks and skills and needs a restart.'],
+  }
 }
 
-function doctor(cwd) {
+/**
+ * The checklist: every check with a plain status, then each open item with why it
+ * matters and how to close it, then one "Next step:" line naming the first. Read-only,
+ * apart from Winston's own state directory: the result is kept there for the
+ * session-start nudge, and the version check keeps its answer there.
+ */
+function doctor(cwd, copy = false) {
+  const list = checks(cwd)
   const version = versionCheck(cwd)
-  const list = [version, ...checks(cwd)]
-  for (const c of list) console.log(`${c.state.padEnd(8)} ${c.name}${c.detail ? `  — ${c.detail}` : ''}`)
-  const bad = missing(list)
-  printSteps(bad.filter((c) => !c.fix && c.hand))
-  const problems = list.filter((c) => c.problem)
-  if (problems.length) {
-    console.log('\nTriage workflow:')
-    for (const c of problems) console.log(`  - ${c.problem}`)
+  if (version) list.splice(list.findIndex((c) => c.name === 'codex CLI'), 0, { detail: '', ...version })
+  const root = repoRoot(cwd)
+  console.log(`Winston setup checklist${root ? ` for ${root}` : ''}. Safe to run again: it only reads.\n`)
+  for (const c of list) console.log(`${statusOf(c).padEnd(16)} ${c.name}${c.detail ? `  — ${c.detail}` : ''}`)
+
+  // A repo with no config has one thing to do; the rest follows from it.
+  const all = list.filter((c) => statusOf(c) === 'needs you')
+  const open = all.some((c) => c.unconfigured) ? all.filter((c) => c.unconfigured || c.scope === 'you') : all
+  const blind = list.filter((c) => statusOf(c) === 'could not check')
+  if (root) {
+    try {
+      const file = doctorResultPath(root)
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, JSON.stringify({ root, open: open.length, at: new Date().toISOString() }))
+    } catch {}
   }
-  if (bad.some((c) => c.unconfigured)) console.log('\nNot set up for Winston here. winston init asks which setup fits: join, new or adopt.')
-  else if (bad.some((c) => c.fix)) console.log('\nFix: winston init --mode adopt')
-  if (version.update) console.log(`\nUpdate Winston: ${version.update}.`)
-  return bad.length ? 1 : 0
+  const code = missing(list).length ? 1 : 0
+  if (!open.length) {
+    if (copy) console.log('\nNothing was copied: there is no next step.')
+    console.log(`\nSetup is complete: nothing needs you.${blind.length ? ` ${blind.length} ${blind.length === 1 ? 'item' : 'items'} could not be checked from this account or network.` : ''}`)
+    return code
+  }
+  console.log(`\nNeeds you (${open.length}):`)
+  const fixes = open.map(fixOf)
+  for (const [i, c] of open.entries()) {
+    console.log(`\n${i + 1}. ${c.name}`)
+    const why = WHY.find(([re]) => re.test(c.name))?.[1]
+    if (why) console.log(`   Why: ${why}`)
+    console.log('   Fix:')
+    for (const line of fixes[i].lines) console.log(`     ${line}`)
+  }
+  const { open: link } = fixes[0]
+  const command = fixes[0].command ?? link
+  let copied = ''
+  if (copy) {
+    const done = command && process.platform === 'darwin' && spawnSync('pbcopy', { input: command }).status === 0
+    if (done) copied = '   (copied to the clipboard)'
+    else console.log(`\nNothing was copied: ${!command ? 'the next step is several steps, not one command' : process.platform !== 'darwin' ? '--copy works on macOS only' : 'pbcopy did not run'}.`)
+  }
+  console.log(`\nNext step: ${open[0].name} – ${link ? `open ${link}${copied} and follow the steps under 1 above` : command ? `run: ${command}${copied}` : 'follow the steps under 1 above'}. Then run winston doctor again.`)
+  return code
 }
 
 /** What this directory is, read-only: the facts the three setups differ on. */
@@ -879,6 +1017,7 @@ function join_(cwd, sit, yes) {
   if (!sit.hasConfig) {
     console.log('There is no .winston/config.json here, so this checkout is not set up for Winston.')
     console.log('If the repo is, pull the branch that holds its config. Otherwise: winston init --mode adopt')
+    console.log(DOCTOR_POINTER)
     return 1
   }
   const list = checks(cwd)
@@ -923,14 +1062,14 @@ function bootstrap(cwd, sit, opts) {
   const root = sit.root ?? cwd
   const git = (...args) => run('git', ['-C', root, ...args])
   const login = run('gh', ['api', 'user', '--jq', '.login']).out
-  if (!login) throw new Error('gh is not logged in. Run: gh auth login, then: gh auth refresh -s project')
+  if (!login) throw new Error(`gh is not logged in. Run: gh auth login, then: gh auth refresh -s project\n${DOCTOR_POINTER}`)
 
   const noRepo = !sit.origin
   let slug
   if (noRepo) slug = opts.repo || `${login}/${basename(root)}`
   else {
     const view = run('gh', ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'], { cwd: root })
-    if (!view.ok) throw new Error(`origin (${sit.origin}) is not a GitHub repository gh can read: ${view.err}`)
+    if (!view.ok) throw new Error(`origin (${sit.origin}) is not a GitHub repository gh can read: ${view.err}\n${DOCTOR_POINTER}`)
     slug = view.out
   }
   const [ghOwner, name] = slug.split('/')
@@ -942,7 +1081,7 @@ function bootstrap(cwd, sit, opts) {
   else {
     heads = git('ls-remote', '--heads', 'origin').out.split('\n').map((l) => l.split('refs/heads/')[1]).filter(Boolean)
     production = git('ls-remote', '--symref', 'origin', 'HEAD').out.match(/^ref: refs\/heads\/(\S+)\s+HEAD/m)?.[1]
-    if (!production) throw new Error('cannot read origin\'s default branch (is the remote empty?)')
+    if (!production) throw new Error(`cannot read origin's default branch (is the remote empty?)\n${DOCTOR_POINTER}`)
   }
   const integration = opts.integration || INTEGRATION_NAMES.find((b) => b !== production && heads.includes(b)) || 'staging'
 
@@ -952,14 +1091,14 @@ function bootstrap(cwd, sit, opts) {
     const [owner, number] = opts.board.split('/')
     if (!owner || !/^\d+$/.test(number ?? '')) throw new Error(`--board takes <owner>/<number> or new, got: ${opts.board}`)
     board = { owner, number: Number(number) }
-    if (!fetchBoard(owner, board.number).project) throw new Error(`--board ${opts.board}: no such project, or this account has no access to it`)
+    if (!fetchBoard(owner, board.number).project) throw new Error(`--board ${opts.board}: no such project, or this account has no access to it\n${DOCTOR_POINTER}`)
   } else if (!opts.board && !noRepo) {
     const linked = run('gh', ['api', 'graphql', '-f', `query=${LINKED_BOARDS_QUERY}`, '-f', `owner=${ghOwner}`, '-f', `name=${name}`])
     let nodes = []
     try {
       nodes = JSON.parse(linked.out).data.repository.projectsV2.nodes.filter((n) => n && !n.closed)
     } catch {
-      throw new Error(`cannot list the projects linked to ${slug}: ${linked.err || linked.out}`)
+      throw new Error(`cannot list the projects linked to ${slug}: ${linked.err || linked.out}\n${DOCTOR_POINTER}`)
     }
     if (nodes.length > 1) return { boards: nodes.map((n) => ({ owner: n.owner.login, number: n.number, title: n.title })) }
     if (nodes.length === 1) board = { owner: nodes[0].owner.login, number: nodes[0].number }
@@ -1071,7 +1210,7 @@ function setup(cwd, sit, opts) {
   const hand = missing(list).filter((c) => !c.fix)
   const printHand = printSteps
   if (!boot && !fixes.length && !hand.length) {
-    console.log(ownerSteps(list) ? 'Every required check passes.' : 'Nothing to do: every required check passes.')
+    console.log(`${ownerSteps(list) ? 'Every required check passes' : 'Nothing to do: every required check passes'}. Nothing was changed. Safe to run again.`)
     printOwnerSteps(list)
     return 0
   }
@@ -1084,7 +1223,7 @@ function setup(cwd, sit, opts) {
     printHand(hand)
     printOwnerSteps(list)
     for (const n of boot?.notes ?? []) console.log(`\nNote: ${n}`)
-    if (plans.length) console.log('\nRerun with --yes to do these.')
+    if (plans.length) console.log('\nNothing was changed. Rerun with --yes to do these. Safe to run again: steps already done are skipped, and nothing existing is overwritten.')
     return 0
   }
 
@@ -1118,6 +1257,7 @@ function setup(cwd, sit, opts) {
   if (written) printBlanks(written, policyBlanks(written))
   printOwnerSteps(after)
   for (const n of boot?.notes ?? []) console.log(`\nNote: ${n}`)
+  console.log(`\n${failed ? `${failed} ${failed === 1 ? 'step' : 'steps'} failed. ` : ''}Safe to run again: steps already done are skipped. winston doctor shows what is left.`)
   return failed ? 1 : 0
 }
 
@@ -1210,7 +1350,7 @@ function config(cwd, json) {
   return 0
 }
 
-const USAGE = 'usage: winston config [--json] | doctor | init [--mode join|new|adopt] [--yes] | permissions [--apply] [--add <rule>] | install-codex-agents [--force] | title <words...>'
+const USAGE = 'usage: winston config [--json] | doctor [--copy] | init [--mode join|new|adopt] [--yes] | permissions [--apply] [--add <rule>] | install-codex-agents [--force] | title <words...>'
 
 function main(argv) {
   const [cmd, ...rest] = argv
@@ -1218,13 +1358,15 @@ function main(argv) {
   try {
     switch (cmd) {
       case 'config': return config(cwd, rest.includes('--json'))
-      case 'doctor': return doctor(cwd)
+      case 'doctor':
+        if (rest.some((a) => a !== '--copy')) throw new Error(`winston doctor: unknown argument ${rest.find((a) => a !== '--copy')}`)
+        return doctor(cwd, rest.includes('--copy'))
       case 'init': return init(cwd, initOptions(rest))
       case 'permissions': return permissions(cwd, permissionOptions(rest))
       case 'install-codex-agents': return installCodexAgents(rest.includes('--force'))
       case 'title':
         if (!recordTitle(rest)) {
-          console.error('winston title: needs words and a Claude Code session (CLAUDE_CODE_SESSION_ID)')
+          console.error(`winston title: needs words and a Claude Code session (CLAUDE_CODE_SESSION_ID)`)
           return 1
         }
         return 0

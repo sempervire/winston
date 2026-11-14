@@ -18,7 +18,8 @@ is reached, what goes on the wire, and how the answer comes back.
 SKILL.md); its scripts live in `<skill-dir>/scripts/`. Write it out as an absolute path.
 
 **Codex is required.** Check `command -v codex` first. If it is absent, say in one line that
-Rex is off because the `codex` CLI is not installed, and stop — except for a usage report,
+Rex is off because the `codex` CLI is not installed, end with
+"Run /winston:doctor to see what is missing and how to fix it.", and stop — except for a usage report,
 which still runs and delivers the measured report without his judgment.
 
 ## Report requests and follow-ups

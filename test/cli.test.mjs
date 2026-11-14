@@ -5,7 +5,7 @@ import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, rea
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { loadConfig, loadLayers } from '../lib/config.mjs';
-import { coveredBy, permissionRules, policyBlanks, policyState } from '../bin/winston';
+import { coveredBy, DOCTOR_POINTER, permissionRules, policyBlanks, policyState, tokenUrl } from '../bin/winston';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const CLI = join(ROOT, 'bin/winston');
@@ -83,13 +83,16 @@ test('doctor on a repo with no config says it is not set up and points at init',
   esac`);
   const doc = s.cli(['doctor']);
   assert.equal(doc.status, 1);
-  assert.match(doc.stdout, /^ok\s+claude on PATH/m);
-  assert.match(doc.stdout, /^ok\s+gh auth with project scope/m);
-  assert.match(doc.stdout, /^missing\s+repo config/m);
-  assert.match(doc.stdout, /^missing\s+triage labels\s+— missing: risk: low/m);
-  assert.match(doc.stdout, /^missing\s+triage-on-new-issue workflow/m);
+  assert.match(doc.stdout, /^done\s+claude on PATH/m);
+  assert.match(doc.stdout, /^done\s+gh auth with project scope/m);
+  assert.match(doc.stdout, /^needs you\s+repo config/m);
+  assert.match(doc.stdout, /^needs you\s+triage labels\s+— missing: risk: low/m);
+  assert.match(doc.stdout, /^needs you\s+triage-on-new-issue workflow/m);
   assert.match(doc.stdout, /^(on|off)\s+codex CLI/m);
-  assert.match(doc.stdout, /Not set up for Winston here\. winston init asks which setup fits: join, new or adopt\.\n$/);
+  assert.match(doc.stdout, /^Winston setup checklist for .*\. Safe to run again: it only reads\.\n/);
+  // A repo with no config has one thing to do, and the last line names it.
+  assert.match(doc.stdout, /Needs you \(1\):\n\n1\. repo config\n   Why: [^\n]+\n   Fix:\n     winston init   \(or \/winston:init; it asks which setup fits: join, new or adopt/);
+  assert.match(doc.stdout, /\nNext step: repo config – run: winston init\. Then run winston doctor again\.\n$/);
 });
 
 test('doctor finds a missing kanban view and starting milestone; init creates them', (t) => {
@@ -121,11 +124,11 @@ test('doctor finds a missing kanban view and starting milestone; init creates th
   esac`);
 
   const doc = s.cli(['doctor']);
-  assert.match(doc.stdout, /^ok\s+board reachable/m);
-  assert.match(doc.stdout, /^missing\s+board kanban view\s+— no board view with Status columns/m);
-  assert.match(doc.stdout, /^missing\s+starting milestone\s+— no open milestone/m);
+  assert.match(doc.stdout, /^done\s+board reachable/m);
+  assert.match(doc.stdout, /^needs you\s+board kanban view\s+— no board view with Status columns/m);
+  assert.match(doc.stdout, /^needs you\s+starting milestone\s+— no open milestone/m);
   // Neither new check needs the owner's input, so init can create both on its own.
-    assert.match(doc.stdout, /Fix: winston init/);
+  assert.match(doc.stdout, /\d\. board kanban view\n   Why: [^\n]+\n   Fix:\n     winston init --mode adopt   \(or \/winston:init; it shows this plan first, then asks: create a board view with Status columns/);
 
   const made = s.cli(['init', '--mode', 'adopt', '--yes']);
   assert.equal(made.status, 0, made.stdout);
@@ -186,6 +189,7 @@ function fakeGh(s) {
   case "$1 $2" in
     "auth status") echo "project, repo";;
     "api user") echo "pat";;
+    "api repos/sempervire/"*) cat "${s.tmp}/published.json" 2>/dev/null || exit 1;;
     "api users/"*) cat "${s.tmp}/owner-type" 2>/dev/null || echo "User";;
     "repo view") echo "acme/thing";;
     "repo create") git init -q --bare "${s.tmp}/origin.git" && git -C "${s.repo}" remote add origin "${s.tmp}/origin.git" && git -C "${s.repo}" push -q origin HEAD;;
@@ -373,7 +377,7 @@ test('init --mode adopt asks which board when several are linked, and refuses a 
   rmSync(join(s.tmp, 'board.json'));
   const gone = s.cli(['init', '--mode', 'adopt', '--board', 'acme/99', '--yes']);
   assert.equal(gone.status, 1, 'a board this account cannot read is refused before anything is written');
-  assert.match(gone.stderr, /--board acme\/99: no such project/);
+  assert.match(gone.stderr, /--board acme\/99: no such project[^\n]*\nRun \/winston:doctor to see what is missing and how to fix it\.\n$/);
   assert.ok(!existsSync(join(s.repo, '.winston')));
   writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
   assert.match(s.cli(['init', '--mode', 'adopt', '--board', 'new']).stdout, /create a private GitHub Project "thing" under acme/);
@@ -429,19 +433,19 @@ test('doctor checks the board\'s two intake workflows and the triage workflow\'s
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\n');
   const off = s.cli(['doctor']);
   assert.equal(off.status, 1);
-  assert.match(off.stdout, /^missing\s+board auto-adds new issues\s+— the board's "Auto-add to project" workflow is off/m);
-  assert.match(off.stdout, /^ok\s+board sets Inbox on added items\s+— on; GitHub's API does not show which Status it sets$/m);
-  assert.match(off.stdout, /^off\s+triage workflow secrets\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN missing/m);
-  assert.match(off.stdout, /Triage workflow:\n\s+- secrets missing: CLAUDE_CODE_OAUTH_TOKEN\.[^\n]*winston init --mode adopt/);
-  assert.match(off.stdout, /In the browser \(GitHub has no API for these[^\n]*\n\s+- board auto-adds new issues: open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
-  assert.doesNotMatch(off.stdout, /By hand/, 'browser steps are not listed twice');
+  assert.match(off.stdout, /^needs you\s+board auto-adds new issues\s+— the board's "Auto-add to project" workflow is off/m);
+  assert.match(off.stdout, /^done\s+board sets Inbox on added items\s+— on; GitHub's API does not show which Status it sets$/m);
+  assert.match(off.stdout, /^needs you\s+triage workflow secrets\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN missing/m);
+  assert.match(off.stdout, /\d\. triage workflow secrets\n   Why: [^\n]+\n   Fix:\n     Not set on acme\/thing: CLAUDE_CODE_OAUTH_TOKEN\.[^]*\n       1\. In your own terminal: claude setup-token/);
+  assert.match(off.stdout, /\d\. board auto-adds new issues\n   Why: Without this a new issue never shows up on the board\.\n   Fix:\n     \/winston:init does this for you in the browser\. By hand: open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
+  assert.equal(off.stdout.match(/board auto-adds new issues/g).length, 2, 'once in the checklist, once under Needs you');
 
   writeFileSync(join(s.tmp, 'board.json'), boardJson({ options: ['Inbox', 'Ready', 'Verify', 'Verified'], workflows: INTAKE, views: KANBAN }));
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
   const on = s.cli(['doctor']);
-  assert.match(on.stdout, /^ok\s+board auto-adds new issues$/m);
-  assert.match(on.stdout, /^on\s+triage workflow secrets\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN set$/m);
-  assert.doesNotMatch(on.stdout, /In the browser|By hand|Triage workflow:/);
+  assert.match(on.stdout, /^done\s+board auto-adds new issues$/m);
+  assert.match(on.stdout, /^done\s+triage workflow secrets\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN set$/m);
+  assert.doesNotMatch(on.stdout, /\d\. (board auto-adds|board sets|triage workflow)/);
 });
 
 test('doctor says unknown, not missing, when it cannot list secrets, and flags a run of failed triage runs', (t) => {
@@ -452,23 +456,23 @@ test('doctor says unknown, not missing, when it cannot list secrets, and flags a
   writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
   // No workflow in the repo: nothing about its secrets or runs.
-  assert.doesNotMatch(s.cli(['doctor']).stdout, /triage workflow (secrets|runs)|Triage workflow:/);
+  assert.doesNotMatch(s.cli(['doctor']).stdout, /triage workflow (secrets|runs)/);
 
   mkdirSync(join(s.repo, '.github/workflows'), { recursive: true });
   writeFileSync(join(s.repo, '.github/workflows/triage-on-new-issue.yml'), '');
   // Newest first: one still running, three failures, then a success.
   writeFileSync(join(s.tmp, 'runs'), '\nfailure\nstartup_failure\nfailure\nsuccess\n');
   const failing = s.cli(['doctor']);
-  assert.match(failing.stdout, /^failed\s+triage workflow runs\s+— its last 3 runs failed$/m);
-  assert.match(failing.stdout, /Triage workflow:\n\s+- installed, but its last 3 runs failed\. See why: gh run list --workflow triage-on-new-issue\.yml --limit 1/);
+  assert.match(failing.stdout, /^needs you\s+triage workflow runs\s+— its last 3 runs failed$/m);
+  assert.match(failing.stdout, /\d\. triage workflow runs\n   Why: Failed runs mean new issues are not being triaged, and nothing else reports it\.\n   Fix:\n     installed, but its last 3 runs failed\. See why: gh run list --workflow triage-on-new-issue\.yml --limit 1/);
   assert.match(s.calls(), /^run list --workflow triage-on-new-issue\.yml --limit 5 --json conclusion/m);
 
   writeFileSync(join(s.tmp, 'runs'), 'success\nfailure\nfailure\n');
   const fine = s.cli(['doctor']);
-  assert.match(fine.stdout, /^on\s+triage workflow runs\s+— last run: success$/m);
+  assert.match(fine.stdout, /^done\s+triage workflow runs\s+— last run: success$/m);
   writeFileSync(join(s.tmp, 'runs'), 'cancelled\nsuccess\n');
   assert.match(s.cli(['doctor']).stdout, /^off\s+triage workflow runs\s+— last run: cancelled$/m);
-  assert.doesNotMatch(fine.stdout, /Triage workflow:/);
+  assert.doesNotMatch(fine.stdout, /\d\. triage workflow runs/);
   writeFileSync(join(s.tmp, 'runs'), '');
   assert.match(s.cli(['doctor']).stdout, /^off\s+triage workflow runs\s+— no finished runs yet$/m);
 
@@ -476,9 +480,9 @@ test('doctor says unknown, not missing, when it cannot list secrets, and flags a
   writeFileSync(join(s.tmp, 'secrets-denied'), '');
   rmSync(join(s.tmp, 'runs'));
   const blind = s.cli(['doctor']);
-  assert.match(blind.stdout, /^unknown\s+triage workflow secrets\s+— this account cannot list the repo's secrets$/m);
-  assert.match(blind.stdout, /^unknown\s+triage workflow runs/m);
-  assert.doesNotMatch(blind.stdout, /Triage workflow:|missing\s+triage workflow|403/);
+  assert.match(blind.stdout, /^could not check\s+triage workflow secrets\s+— this account cannot list the repo's secrets$/m);
+  assert.match(blind.stdout, /^could not check\s+triage workflow runs/m);
+  assert.doesNotMatch(blind.stdout, /\d\. triage workflow|needs you\s+triage workflow|403/);
 });
 
 test('init walks the owner through the triage workflow\'s missing secrets, by who owns the board', (t) => {
@@ -493,8 +497,10 @@ test('init walks the owner through the triage workflow\'s missing secrets, by wh
   // The plan writes the workflow, so it carries the step; a user's board needs a classic token.
   const plan = s.cli(['init', '--mode', 'adopt']);
   assert.match(plan.stdout, /Secrets the triage workflow needs \(the owner's to do[^]*Not set on acme\/thing: GH_PAT\./);
-  assert.match(plan.stdout, /1\. acme is a user account, and a fine-grained token cannot reach a user's projects: create a classic token at https:\/\/github\.com\/settings\/tokens\/new with the scopes repo and project\n\s+2\. gh secret set GH_PAT --repo acme\/thing /);
-  assert.match(plan.stdout, /3\. gh workflow run triage-on-new-issue\.yml --repo acme\/thing -f issue=<[^\n]*\n\s+4\. gh run list --workflow triage-on-new-issue\.yml --repo acme\/thing --limit 1/);
+  // The prefilled link first, then every field by name for when the link fills nothing in.
+  assert.match(plan.stdout, /1\. Open this link while signed in to GitHub; it opens the form, and should tick the two scopes \(acme is a user account, and a fine-grained token cannot reach a user's projects, so this is a classic token\): https:\/\/github\.com\/settings\/tokens\/new\?scopes=repo,project\n/);
+  assert.match(plan.stdout, /2\. Check the form: Note is empty, so type a name[^\n]*"repo" and "project" must be ticked: tick them if the link did not[^\n]*\n\s+3\. If the form came up empty: [^\n]*Tokens \(classic\), "Generate new token \(classic\)"[^\n]*\n\s+4\. Click "Generate token" yourself and copy the token[^\n]*\n\s+5\. In your own terminal: gh secret set GH_PAT --repo acme\/thing /);
+  assert.match(plan.stdout, /6\. gh workflow run triage-on-new-issue\.yml --repo acme\/thing -f issue=<[^\n]*\n\s+7\. gh run list --workflow triage-on-new-issue\.yml --repo acme\/thing --limit 1/);
   assert.doesNotMatch(plan.stdout, /claude setup-token/, 'a secret that exists is not walked through');
   assert.match(s.calls(), /^secret list --repo acme\/thing --json name/m);
 
@@ -504,18 +510,19 @@ test('init walks the owner through the triage workflow\'s missing secrets, by wh
   const made = s.cli(['init', '--mode', 'adopt', '--yes']);
   assert.equal(made.status, 0, made.stdout + made.stderr);
   assert.match(made.stdout, /Not set on acme\/thing: GH_PAT, CLAUDE_CODE_OAUTH_TOKEN\./);
-  assert.match(made.stdout, /1\. acme is an organization: create a fine-grained token at https:\/\/github\.com\/settings\/personal-access-tokens\/new with Resource owner acme,[^\n]*"Issues: Read and write"[^\n]*"Projects: Read and write"/);
-  assert.match(made.stdout, /3\. claude setup-token[^\n]*\n\s+4\. gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo acme\/thing /);
+  assert.match(made.stdout, /1\. Open this link while signed in to GitHub; it fills in the form \(acme is an organization, so this is a fine-grained token\): https:\/\/github\.com\/settings\/personal-access-tokens\/new\?name=winston\+triage\+thing&description=[^ &]+&target_name=acme&expires_in=90&issues=write&organization_projects=write\n/);
+  assert.match(made.stdout, /2\. Check the form: Token name \(filled in\), Resource owner acme, Expiration 90 days[^\n]*"Only select repositories" and pick acme\/thing; the link cannot fill that in[^\n]*"Issues: Read and write"[^\n]*"Projects: Read and write"\n\s+3\. If the form came up empty: [^\n]*Fine-grained tokens[^\n]*\n\s+4\. Click "Generate token" yourself/);
+  assert.match(made.stdout, /6\. In your own terminal: claude setup-token[^\n]*\n\s+7\. In your own terminal: gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo acme\/thing /);
 
   // Set up already, secrets still missing: init says so rather than "Nothing to do".
   const again = s.cli(['init', '--mode', 'adopt', '--yes']);
-  assert.match(again.stdout, /^Every required check passes\.\n\nSecrets the triage workflow needs[^]*\n\nPermission rules \(the owner's to do, in one step\):\n[^]*Run it yourself, once: winston permissions --apply/);
+  assert.match(again.stdout, /^Every required check passes\. Nothing was changed\. Safe to run again\.\n\nSecrets the triage workflow needs[^]*\n\nPermission rules \(the owner's to do, in one step\):\n[^]*Run it yourself, once: winston permissions --apply/);
   // A board under another owner than the repo, or an owner gh cannot look up: classic.
   const config = JSON.parse(readFileSync(join(s.repo, '.winston/config.json'), 'utf8'));
   writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ ...config, board: { ...config.board, owner: 'other-org' } }));
-  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /1\. the board is other-org's and the repository is not, and a fine-grained token covers one owner: create a classic token/);
+  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /1\. Open this link[^\n]*\(the board is other-org's and the repository is not, and a fine-grained token covers one owner, so this is a classic token\): https:\/\/github\.com\/settings\/tokens\/new\?scopes=repo,project\n/);
   writeFileSync(join(s.tmp, 'owner-type'), '');
-  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /1\. create a classic token[^\n]*gh could not tell whether other-org is a user or an organization/);
+  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /1\. Open this link[^\n]*\(gh could not tell whether other-org is a user or an organization, so this is a classic token, which reaches the projects of either\): https:\/\/github\.com\/settings\/tokens\/new\?scopes=repo,project\n/);
 
   // Secrets this account cannot list: check first, then both, never "missing".
   writeFileSync(join(s.tmp, 'secrets-denied'), '');
@@ -527,7 +534,7 @@ test('init walks the owner through the triage workflow\'s missing secrets, by wh
   assert.doesNotMatch(s.cli(['init', '--mode', 'adopt']).stdout, /Secrets the triage workflow needs|Nothing to do/);
   assert.equal(s.cli(['permissions', '--apply']).status, 0);
   const done = s.cli(['init', '--mode', 'adopt']);
-  assert.match(done.stdout, /^Nothing to do: every required check passes\.\n$/);
+  assert.match(done.stdout, /^Nothing to do: every required check passes\. Nothing was changed\. Safe to run again\.\n$/);
   assert.doesNotMatch(s.calls(), /^(secret set|workflow run|secret list(?!.*--json name))/m, 'winston lists secret names and nothing else');
 });
 
@@ -544,27 +551,36 @@ test('doctor says when a newer Winston is out, with the command, and stays quiet
   const s = sandbox(t);
   fakeGh(s);
   const have = JSON.parse(readFileSync(join(ROOT, '.claude-plugin/plugin.json'), 'utf8')).version;
-  const latest = (v) => writeFileSync(join(s.tmp, 'latest.json'), JSON.stringify({ version: v }));
+  // doctor reads the update check's cached answer; forgetting it stands in for a day passing.
+  const cache = join(s.home, 'state/update-check/latest.json');
+  const latest = (v) => { rmSync(cache, { force: true }); writeFileSync(join(s.tmp, 'latest.json'), JSON.stringify({ version: v })); };
 
   const unknown = s.cli(['doctor']);
-  assert.match(unknown.stdout, new RegExp(`^off\\s+Winston version\\s+— ${have} installed; could not reach GitHub`, 'm'));
-  assert.doesNotMatch(unknown.stdout, /Update Winston/);
+  assert.match(unknown.stdout, new RegExp(`^could not check\\s+Winston version\\s+— ${have} installed; could not reach GitHub`, 'm'));
+  assert.doesNotMatch(unknown.stdout, /\d\. Winston version/);
 
   latest(have);
   const current = s.cli(['doctor']);
-  assert.match(current.stdout, new RegExp(`^ok\\s+Winston version\\s+— ${have}, the latest$`, 'm'));
-  assert.doesNotMatch(current.stdout, /Update Winston/);
+  assert.match(current.stdout, new RegExp(`^done\\s+Winston version\\s+— ${have}, the latest$`, 'm'));
+  assert.doesNotMatch(current.stdout, /\d\. Winston version/);
 
   latest('99.0.0');
   const old = s.cli(['doctor']);
-  assert.match(old.stdout, new RegExp(`^old\\s+Winston version\\s+— ${have} installed, 99\\.0\\.0 available$`, 'm'));
-  assert.match(old.stdout, /\nUpdate Winston: run `claude plugin marketplace update winston && claude plugin update winston@winston`, then restart Claude Code/);
+  assert.match(old.stdout, new RegExp(`^needs you\\s+Winston version\\s+— ${have} installed, 99\\.0\\.0 available$`, 'm'));
+  assert.match(old.stdout, /\d\. Winston version\n   Why: [^\n]+\n   Fix:\n     To update, run `claude plugin marketplace update winston && claude plugin update winston@winston`, then restart Claude Code[^\n]*\n     Winston never updates itself/);
+  assert.doesNotMatch(s.calls(), /plugin update/, 'doctor never updates');
+  assert.equal(s.cli(['doctor', '--fix']).status, 1, 'an unknown flag is refused');
+  // GitHub is asked at most once a day: a new answer there is not seen until the cache ages out.
+  writeFileSync(join(s.tmp, 'latest.json'), JSON.stringify({ version: have }));
+  assert.match(s.cli(['doctor']).stdout, /^needs you\s+Winston version\s+— .* installed, 99\.0\.0 available$/m);
+  writeFileSync(cache, JSON.stringify({ ...JSON.parse(readFileSync(cache, 'utf8')), checkedAt: Date.now() - 25 * 60 * 60 * 1000 }));
+  assert.match(s.cli(['doctor']).stdout, /^done\s+Winston version/m, 'a day later it asks again');
   assert.equal(old.status, unknown.status, 'an old Winston is reported, never a failed check');
 
   latest('0.0.1');
-  assert.match(s.cli(['doctor']).stdout, /^ok\s+Winston version/m, 'an older "latest" is not an update');
+  assert.match(s.cli(['doctor']).stdout, /^done\s+Winston version/m, 'an older "latest" is not an update');
   latest('not-a-version; rm -rf');
-  assert.match(s.cli(['doctor']).stdout, /^off\s+Winston version/m, 'a manifest that is not a version is ignored');
+  assert.match(s.cli(['doctor']).stdout, /^could not check\s+Winston version/m, 'a manifest that is not a version is ignored');
 });
 
 test('a policy has triage rules when a heading names triage or it carries a risk tier', (t) => {
@@ -598,8 +614,8 @@ test('doctor flags a policy with no triage rules; init writes a starter, repoint
   write('AGENTS.md');
   const doc = s.cli(['doctor']);
   assert.equal(doc.status, 1);
-  assert.match(doc.stdout, /^missing\s+triage policy\s+— AGENTS\.md has no triage rules \(no heading that names triage, no risk: low\/medium\/high tier\): a triage pass under it changes nothing$/m);
-  assert.match(doc.stdout, /Fix: winston init --mode adopt/);
+  assert.match(doc.stdout, /^needs you\s+triage policy\s+— AGENTS\.md has no triage rules \(no heading that names triage, no risk: low\/medium\/high tier\): a triage pass under it changes nothing$/m);
+  assert.match(doc.stdout, /\nNext step: triage policy – run: winston init --mode adopt\. Then run winston doctor again\.\n$/);
   const plan = s.cli(['init', '--mode', 'adopt']);
   assert.match(plan.stdout, /write .*TRIAGE\.md, a starter triage policy filled in from the config, and set triage\.policy to it in .*config\.json \(AGENTS\.md is left as it is\)\. Its three \(per-repo\) sections are generic/);
   assert.ok(!existsSync(join(s.repo, 'TRIAGE.md')), 'no --yes, no change');
@@ -622,7 +638,7 @@ test('doctor flags a policy with no triage rules; init writes a starter, repoint
   assert.equal(after.owner, 'Dana', 'the rest of the config is kept');
   const ok = s.cli(['doctor']);
   assert.equal(ok.status, 0, ok.stdout);
-  assert.match(ok.stdout, /^ok\s+triage policy\s+— TRIAGE\.md$/m);
+  assert.match(ok.stdout, /^done\s+triage policy\s+— TRIAGE\.md$/m);
 
   // A config without an owner, branches or a board number: plain "fill this in" lines,
   // listed by init as the owner's step and flagged by doctor until they are gone.
@@ -637,10 +653,10 @@ test('doctor flags a policy with no triage rules; init writes a starter, repoint
   assert.match(filled, /work lands on `fill this in: the branch work lands on`; `fill this in: the branch that is released` is/);
   assert.match(sparse.stdout, /\nValues to fill in \(the owner's to do\): .*TRIAGE\.md has \d+ lines that say "fill this in"[^\n]*\n  line \d+: [^\n]*fill this in: /);
   const flagged = s.cli(['doctor']);
-  assert.match(flagged.stdout, new RegExp(`^off\\s+triage policy blanks\\s+— TRIAGE\\.md has ${policyBlanks(join(s.repo, 'TRIAGE.md')).length} lines still to fill in$`, 'm'));
+  assert.match(flagged.stdout, new RegExp(`^needs you\\s+triage policy blanks\\s+— TRIAGE\\.md has ${policyBlanks(join(s.repo, 'TRIAGE.md')).length} lines still to fill in$`, 'm'));
   assert.match(flagged.stdout, /TRIAGE\.md has \d+ lines still to fill in \(open the file and replace each "fill this in" or \{\{placeholder\}\} with the real value\): line \d+: /);
   writeFileSync(join(s.repo, 'TRIAGE.md'), '# Triage\n\nOwner: {{owner}}\n');
-  assert.match(s.cli(['doctor']).stdout, /^off\s+triage policy blanks\s+— TRIAGE\.md has 1 line still to fill in$/m);
+  assert.match(s.cli(['doctor']).stdout, /^needs you\s+triage policy blanks\s+— TRIAGE\.md has 1 line still to fill in$/m);
   writeFileSync(join(s.repo, 'TRIAGE.md'), '# Triage\n\nOwner: Dana\n');
   assert.doesNotMatch(s.cli(['doctor']).stdout, /triage policy blanks/);
 
@@ -649,9 +665,9 @@ test('doctor flags a policy with no triage rules; init writes a starter, repoint
   rmSync(join(s.repo, 'TRIAGE.md'));
   write('../outside.md');
   writeFileSync(join(s.tmp, 'outside.md'), '# Triage\n');
-  assert.match(s.cli(['doctor']).stdout, /^missing\s+triage policy\s+— triage\.policy must be a file inside the repository/m);
+  assert.match(s.cli(['doctor']).stdout, /^needs you\s+triage policy\s+— triage\.policy must be a file inside the repository/m);
   write('docs/POLICY.md');
-  assert.match(s.cli(['doctor']).stdout, /^missing\s+triage policy\s+— docs\/POLICY\.md not found: \/winston:triage does not run without a policy$/m);
+  assert.match(s.cli(['doctor']).stdout, /^needs you\s+triage policy\s+— docs\/POLICY\.md not found: \/winston:triage does not run without a policy$/m);
 
   // A TRIAGE.md with rules already in the repo is pointed at, not rewritten.
   writeFileSync(join(s.repo, 'TRIAGE.md'), '## Triage\n\nmine\n');
@@ -765,7 +781,7 @@ test('winston permissions lists the rules; --apply adds only the missing ones an
   const again = s.cli(['permissions', '--apply', '--add', 'Bash(npm test*)']);
   assert.match(again.stdout, /Nothing to add/);
   assert.equal(readFileSync(file, 'utf8'), text);
-  assert.match(s.cli(['doctor']).stdout, /^on\s+project permission rules/m);
+  assert.match(s.cli(['doctor']).stdout, /^done\s+project permission rules/m);
   assert.equal(readFileSync(userFile, 'utf8'), '{"permissions":{"allow":[]}}', 'user-level settings are never touched');
 
   // A rule that would allow every shell command is refused, from --add or from the config.
@@ -787,7 +803,7 @@ test('winston permissions lists the rules; --apply adds only the missing ones an
     assert.match(stopped.stderr, /settings\.json is not (valid JSON|a settings object)[^]*Nothing was changed/);
     assert.equal(readFileSync(file, 'utf8'), broken);
   }
-  assert.match(s.cli(['doctor']).stdout, /^unknown\s+project permission rules\s+— .*settings\.json is not/m);
+  assert.match(s.cli(['doctor']).stdout, /^could not check\s+project permission rules\s+— .*settings\.json is not/m);
   // A settings file hard-linked to one elsewhere is replaced, not written through.
   rmSync(file);
   linkSync(userFile, file);
@@ -821,5 +837,120 @@ test('doctor reports the permission rules the project lacks', (t) => {
   const { allow, deny } = permissionRules({});
   mkdirSync(join(s.repo, '.claude'));
   writeFileSync(join(s.repo, '.claude/settings.json'), JSON.stringify({ permissions: { allow: allow.filter((r) => r !== 'Bash(gh pr comment *)'), deny: deny.slice(1) } }));
-  assert.match(s.cli(['doctor']).stdout, /^off\s+project permission rules\s+— 1 allow and 1 deny rules Winston runs use are not in .*settings\.json: Bash\(gh pr comment \*\), Bash\(git push\*--force\*\) \(winston permissions --apply adds them\)$/m);
+  assert.match(s.cli(['doctor']).stdout, /^needs you\s+project permission rules\s+— 1 allow and 1 deny rules Winston runs use are not in .*settings\.json: Bash\(gh pr comment \*\), Bash\(git push\*--force\*\) \(winston permissions --apply adds them\)$/m);
+});
+
+// ---- guided setup: doctor as the one checklist
+
+// A repo set up on GitHub (board, labels, branches, workflow file) with the three gaps of a
+// first setup: no Actions secrets, a policy file with no triage rules, no permission rules.
+function gappedRepo(s) {
+  fakeGh(s);
+  existingRepo(s);
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
+  writeFileSync(join(s.tmp, 'milestones'), 'Pilot\n');
+  writeFileSync(join(s.tmp, 'labels'), 'risk: low\nrisk: medium\nrisk: high\nauto-merge\nauto-verify\nhuman-verify\n');
+  writeFileSync(join(s.tmp, 'runs'), '');
+  mkdirSync(join(s.repo, '.github/workflows'), { recursive: true });
+  writeFileSync(join(s.repo, '.github/workflows/triage-on-new-issue.yml'), '');
+  s.git('push', '-q', 'origin', 'main:staging');
+  mkdirSync(join(s.repo, '.winston'));
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ owner: 'Dana', branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, triage: { policy: 'AGENTS.md', workflow: 'triage-on-new-issue.yml' } }));
+}
+const lastLine = (out) => out.trimEnd().split('\n').at(-1);
+
+test('doctor lists what needs the owner with why and how, names the first as the next step, and moves on as each is fixed', (t) => {
+  const s = sandbox(t);
+  gappedRepo(s);
+  const first = s.cli(['doctor']);
+  for (const name of ['triage policy', 'triage workflow secrets', 'project permission rules']) {
+    assert.match(first.stdout, new RegExp(`^needs you\\s+${name}`, 'm'), name);
+    assert.match(first.stdout, new RegExp(`\\d\\. ${name}\\n   Why: [^\\n]+\\n   Fix:\\n     \\S`), name);
+  }
+  assert.match(first.stdout, /Needs you \(3\):/);
+  assert.equal(lastLine(first.stdout), 'Next step: triage policy – run: winston init --mode adopt. Then run winston doctor again.');
+
+  // Fix the policy: that item is done, a new one asks for the repo's own risk tiers.
+  assert.equal(s.cli(['init', '--mode', 'adopt', '--yes']).status, 0);
+  const second = s.cli(['doctor']);
+  assert.match(second.stdout, /^done\s+triage policy\s+— TRIAGE\.md$/m);
+  assert.match(second.stdout, /^needs you\s+triage risk tiers\s+— TRIAGE\.md still has the starter's example risk tiers$/m);
+  assert.match(lastLine(second.stdout), /^Next step: triage risk tiers – follow the steps under 1 above\./);
+  const policy = join(s.repo, 'TRIAGE.md');
+  writeFileSync(policy, readFileSync(policy, 'utf8').replace('is docs, copy or tooling only — nothing a user runs behaves differently', 'touches only docs/'));
+  assert.equal(second.status, 0, 'an example tier is flagged, not a failed setup');
+
+  // Then the secrets, then the permission rules.
+  // A missing secret: the next step is the link that fills in the token form.
+  assert.equal(lastLine(s.cli(['doctor']).stdout), 'Next step: triage workflow secrets – open https://github.com/settings/tokens/new?scopes=repo,project and follow the steps under 1 above. Then run winston doctor again.');
+  // With GH_PAT in place, it is the one command that makes the other token.
+  writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\n');
+  assert.equal(lastLine(s.cli(['doctor']).stdout), 'Next step: triage workflow secrets – run: claude setup-token. Then run winston doctor again.');
+  writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
+  const third = s.cli(['doctor']);
+  assert.match(third.stdout, /^done\s+triage workflow secrets/m);
+  assert.equal(lastLine(third.stdout), 'Next step: project permission rules – run: winston permissions --apply. Then run winston doctor again.');
+  assert.equal(s.cli(['permissions', '--apply']).status, 0);
+  const complete = s.cli(['doctor']);
+  assert.equal(complete.status, 0, complete.stdout);
+  assert.doesNotMatch(complete.stdout, /^needs you/m);
+  assert.match(lastLine(complete.stdout), /^Setup is complete: nothing needs you\./);
+  assert.match(s.cli(['doctor', '--copy']).stdout, /\nNothing was copied: there is no next step\.\n/);
+
+  // init on the finished repo changes nothing and says so.
+  const before = s.git('status', '--porcelain');
+  const again = s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.equal(again.stdout, 'Nothing to do: every required check passes. Nothing was changed. Safe to run again.\n');
+  assert.equal(s.git('status', '--porcelain'), before);
+});
+
+test('doctor --copy puts the next step\'s command on the clipboard', { skip: process.platform !== 'darwin' }, (t) => {
+  const s = sandbox(t);
+  s.fake('gh', 'exit 1');
+  s.fake('pbcopy', `cat > "${s.tmp}/clipboard"`);
+  assert.match(lastLine(s.cli(['doctor', '--copy']).stdout), /^Next step: gh auth with project scope – run: gh auth login   \(copied to the clipboard\)\./);
+  assert.equal(readFileSync(join(s.tmp, 'clipboard'), 'utf8'), 'gh auth login');
+  rmSync(join(s.tmp, 'clipboard'));
+  s.cli(['doctor']);
+  assert.ok(!existsSync(join(s.tmp, 'clipboard')), 'only when asked');
+  // When nothing reaches the clipboard it says so, and the next step is still the last line.
+  s.fake('pbcopy', 'exit 1');
+  const failed = s.cli(['doctor', '--copy']).stdout;
+  assert.match(failed, /\nNothing was copied: pbcopy did not run\.\n/);
+  assert.match(lastLine(failed), /^Next step: gh auth with project scope – run: gh auth login\. Then/);
+});
+
+test('every stop on a missing prerequisite points at /winston:doctor', (t) => {
+  assert.equal(DOCTOR_POINTER, 'Run /winston:doctor to see what is missing and how to fix it.');
+  const flat = (f) => readFileSync(join(ROOT, 'skills', f, 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  for (const skill of ['codex', 'gemini', 'radar', 'rex', 'verdict', 'triage', 'winston']) assert.ok(flat(skill).includes(DOCTOR_POINTER.replace(/\s+/g, ' ')) || flat(skill).includes('Run /winston:doctor to see what is missing and how to fix it.'), skill);
+  assert.equal(flat('triage').split('to see what is missing and how to fix it').length - 1, 2, 'no policy, and no board');
+
+  const s = sandbox(t);
+  s.fake('gh', 'exit 1');
+  const noGh = s.cli(['init', '--mode', 'new']);
+  assert.equal(noGh.status, 1);
+  assert.match(noGh.stderr, /gh is not logged in\.[^\n]*\nRun \/winston:doctor to see what is missing and how to fix it\.\n$/);
+  assert.match(s.cli(['init', '--mode', 'join']).stdout, /Run \/winston:doctor to see what is missing and how to fix it\.\n$/);
+  assert.match(s.cli(['permissions'], s.tmp).stderr, /is not inside a git repository\nRun \/winston:doctor to see what is missing and how to fix it\.\n$/);
+});
+
+test('the token link fills in what GitHub documents, by who owns the board', () => {
+  // A user's board, or one under another owner than the repo: the classic form, scopes ticked.
+  assert.equal(tokenUrl({ fineGrained: false, slug: 'pat/thing', boardOwner: 'pat' }), 'https://github.com/settings/tokens/new?scopes=repo,project');
+  // An organization's board: the fine-grained form, owner, expiry and the two permissions.
+  const url = new URL(tokenUrl({ fineGrained: true, slug: 'acme-co/my app & more-than-forty-characters-long-name', boardOwner: 'acme-co' }));
+  assert.equal(url.origin + url.pathname, 'https://github.com/settings/personal-access-tokens/new');
+  assert.deepEqual([...url.searchParams.keys()], ['name', 'description', 'target_name', 'expires_in', 'issues', 'organization_projects'], 'only documented parameters');
+  assert.equal(url.searchParams.get('target_name'), 'acme-co');
+  assert.equal(url.searchParams.get('expires_in'), '90');
+  assert.equal(url.searchParams.get('issues'), 'write');
+  assert.equal(url.searchParams.get('organization_projects'), 'write');
+  assert.equal(url.searchParams.get('name'), 'winston triage my app & more-than-forty-');
+  assert.equal(url.searchParams.get('name').length, 40, 'GitHub caps a token name at 40 characters');
+  assert.match(url.searchParams.get('description'), /^Winston triage workflow for acme-co\/my app & more-than-forty-characters-long-name: /);
+  // Encoded, so a space or an ampersand in a name cannot add or break a parameter.
+  assert.doesNotMatch(url.search, / /);
+  assert.match(url.search, /name=winston\+triage\+my\+app\+%26\+more/);
+  assert.doesNotMatch(tokenUrl({ fineGrained: true, slug: 'acme/thing', boardOwner: 'acme' }), /scopes=|token=|ghp_/);
 });

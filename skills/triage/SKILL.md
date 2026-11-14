@@ -22,10 +22,12 @@ Read the merged config with `winston config` (if unavailable, read `~/.winston/c
 and the repo's `.winston/config.json`, repo winning).
 
 - **Policy**: the file named by config `triage.policy`, default `TRIAGE.md` at the repo root.
-  Read it completely before anything else. **No policy file, no pass**: say so in one line and
-  stop. Triage without a policy is a guess.
+  Read it completely before anything else. **No policy file, no pass**: say so in one line, end
+  with "Run /winston:doctor to see what is missing and how to fix it.", and stop. Triage
+  without a policy is a guess.
 - **Board**: config `board` — `owner`, `number`, `statuses`, `priorityField`. No board
-  configured: say so in one line and stop. `winston init` creates one; `winston doctor` checks it.
+  configured: say so in one line, end with "Run /winston:doctor to see what is missing and how
+  to fix it.", and stop.
 - **Fetch**: config `triage.fetch`, a repo script that performs the read below. Optional.
 - **Reconcile**: config `triage.reconcile`, a repo script that performs the reconciliation
   below. Optional.
