@@ -32,12 +32,13 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadLayers, repoRoot, winstonHome } from '../lib/config.mjs'
 import { recordTitle } from '../hooks/session-title.mjs'
+import { installedVersion, installScope, newer, updateSteps } from '../lib/update.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -59,7 +60,21 @@ export const REQUIRED_LABELS = [
 ]
 
 const DEFAULT_STATUSES = ['New', 'Ready', 'Verify', 'Verified']
-const STATUS_COLORS = ['GRAY', 'BLUE', 'YELLOW', 'GREEN']
+// The board Winston builds: six columns in this order, with these colours and
+// descriptions. Four are the Winston roles, named by config `board.statuses`; In Progress
+// and Done are GitHub's own, which the board's closing workflows point at.
+const COLUMNS = [
+  { role: 0, name: 'New', color: 'BLUE', description: 'Issues That Need To Be Evaluated' },
+  { role: 1, name: 'Ready', color: 'GREEN', description: 'Triaged by a human. Ready to code.' },
+  { name: 'In Progress', color: 'YELLOW', description: 'This is actively being worked on' },
+  { role: 2, name: 'Verify', color: 'RED', description: 'Deployed to staging and ready for verification.' },
+  { role: 3, name: 'Verified', color: 'GRAY', description: 'Confirmed on staging, ready to push to prod.' },
+  { name: 'Done', color: 'PURPLE', description: 'This has been completed and pushed to prod' },
+]
+const columns = (statuses = DEFAULT_STATUSES) => COLUMNS.map(({ role, ...c }) => ({ ...c, name: role === undefined ? c.name : statuses[role] ?? c.name }))
+// What a card on the kanban view shows, in order; a field the board lacks is skipped.
+const CARD_FIELDS = ['Title', 'Assignees', 'Status', 'Labels', 'Linked pull requests', 'Sub-issues progress', 'Start date', 'Target date']
+const DATE_FIELDS = ['Start date', 'Target date']
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 const TRIAGE_SECRETS = ['GH_PAT', 'CLAUDE_CODE_OAUTH_TOKEN']
 const INTEGRATION_NAMES = ['staging', 'develop', 'dev', 'development']
@@ -100,10 +115,20 @@ const BOARD_QUERY = `query($owner:String!,$number:Int!){ repositoryOwner(login:$
   ... on Organization{ projectV2(number:$number){ ...F } } ... on User{ projectV2(number:$number){ ...F } } } }
 fragment F on ProjectV2 { id title fields(first:100){ nodes{ ... on ProjectV2FieldCommon{ id name } ... on ProjectV2SingleSelectField{ options{ id name color description } } } }
   workflows(first:50){ nodes{ name enabled } }
-  views(first:50){ nodes{ layout groupByFields(first:10){ nodes{ ... on ProjectV2FieldCommon{ name } } } } } }`
+  views(first:50){ nodes{ id name layout fields(first:50){ nodes{ ... on ProjectV2FieldCommon{ id name } } }
+    groupByFields(first:10){ nodes{ ... on ProjectV2FieldCommon{ name } } } verticalGroupByFields(first:10){ nodes{ ... on ProjectV2FieldCommon{ name } } } } } }`
 
-const CREATE_VIEW_MUTATION = `mutation($projectId:ID!,$name:String!){ createProjectV2View(input:{projectId:$projectId,name:$name,layout:BOARD_LAYOUT}){ view{ id } } }`
-const FILTER_VIEW_MUTATION = `mutation($viewId:ID!,$filter:String!){ updateProjectV2View(input:{viewId:$viewId,filter:$filter}){ view{ id } } }`
+const CREATE_VIEW_MUTATION = `mutation($projectId:ID!,$name:String!){ createProjectV2View(input:{projectId:$projectId,name:$name,layout:BOARD_LAYOUT}){ projectV2View{ id } } }`
+
+/** A board view's columns are its vertical grouping; older data carries it as groupByFields. */
+const isKanban = (v) => v?.layout === 'BOARD_LAYOUT' && [...(v.verticalGroupByFields?.nodes ?? []), ...(v.groupByFields?.nodes ?? [])].some((f) => f?.name === 'Status')
+
+/** Set which fields a view's cards show, and optionally its filter. */
+function updateView(viewId, fieldIds, filter) {
+  const input = `viewId:$viewId,configuration:{visibleFieldIds:${JSON.stringify(fieldIds)}}${filter === undefined ? '' : `,filter:${JSON.stringify(filter)}`}`
+  const r = run('gh', ['api', 'graphql', '-f', `query=mutation($viewId:ID!){ updateProjectV2View(input:{${input}}){ projectV2View{ id } } }`, '-f', `viewId=${viewId}`])
+  if (!r.ok) throw new Error(`update view: ${r.err || r.out}`)
+}
 
 const LINKED_BOARDS_QUERY = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ projectsV2(first:50){ nodes{ number title closed
   owner{ ... on Organization{ login } ... on User{ login } } } } } }`
@@ -133,7 +158,10 @@ function setOptions(fieldId, options) {
   if (!r.ok) throw new Error(`set field options: ${r.err || r.out}`)
 }
 
-const statusOption = (name, i) => ({ name, color: STATUS_COLORS[i] ?? 'GRAY' })
+function createDateField(owner, number, name) {
+  const r = run('gh', ['project', 'field-create', String(number), '--owner', owner, '--name', name, '--data-type', 'DATE'])
+  if (!r.ok) throw new Error(`create the ${name} field: ${r.err}`)
+}
 
 function createPriorityField(owner, number, name) {
   const r = run('gh', ['project', 'field-create', String(number), '--owner', owner, '--name', name, '--data-type', 'SINGLE_SELECT', '--single-select-options', PRIORITIES.join(',')])
@@ -147,31 +175,59 @@ function createMilestone(root, title) {
   if (!r.ok) throw new Error(`create milestone ${title}: ${r.err}`)
 }
 
-function createKanbanView(root, projectId) {
+function createKanbanView(root, project) {
   const milestone = openMilestones(root)[0] ?? (createMilestone(root, DEFAULT_MILESTONE), DEFAULT_MILESTONE)
-  const created = run('gh', ['api', 'graphql', '-f', `query=${CREATE_VIEW_MUTATION}`, '-f', `projectId=${projectId}`, '-f', `name=${milestone}`])
+  const created = run('gh', ['api', 'graphql', '-f', `query=${CREATE_VIEW_MUTATION}`, '-f', `projectId=${project.id}`, '-f', `name=${milestone}`])
   let viewId
   try {
-    viewId = JSON.parse(created.out).data.createProjectV2View.view.id
+    viewId = JSON.parse(created.out).data.createProjectV2View.projectV2View.id
   } catch {
     throw new Error(`create view: ${created.err || created.out}`)
   }
-  const filtered = run('gh', ['api', 'graphql', '-f', `query=${FILTER_VIEW_MUTATION}`, '-f', `viewId=${viewId}`, '-f', `filter=milestone:"${milestone}"`])
-  if (!filtered.ok) throw new Error(`filter view to milestone:"${milestone}": ${filtered.err}`)
+  const ids = new Map(project.fields.nodes.filter((f) => f?.name).map((f) => [f.name, f.id]))
+  updateView(viewId, CARD_FIELDS.map((n) => ids.get(n)).filter(Boolean), `milestone:"${milestone}"`)
 }
 
+/** What each config value the starter policy uses is, in words, for a value the config lacks. */
+const POLICY_VALUES = {
+  owner: 'the name of the person who approves and decides',
+  'board.owner': 'the GitHub user or organization that owns the board',
+  'board.number': 'the board\'s project number',
+  'board.statuses[0]': 'the status new issues arrive in',
+  'board.statuses[1]': 'the status that means ready to work',
+  'board.priorityField': 'the name of the board\'s priority field',
+  'branches.integration': 'the branch work lands on',
+  'branches.production': 'the branch that is released',
+}
+const FILL_IN = 'fill this in: '
+
 /**
- * Write the starter policy, never over an existing file. Each `{{key}}` that names a
- * value in the config (`{{board.statuses[0]}}`, `{{owner}}`) becomes that value; one the
- * config does not hold is left for the owner. The (per-repo) sections stay generic.
+ * Write the starter policy, never over an existing file. Each `{{key}}` becomes the
+ * config's value for it (`{{board.statuses[0]}}`, `{{owner}}`). Where the config has no
+ * such value the text says "fill this in: <what>" in plain words, never a placeholder.
+ * The template's opening comment, which tells a person to do that substitution by hand,
+ * is replaced. The (per-repo) sections stay generic.
  */
 function writeStarterPolicy(file, config) {
   const filled = { ...config, board: { statuses: DEFAULT_STATUSES, priorityField: 'Priority', ...config.board } }
-  const text = readFileSync(join(ROOT, 'templates', 'TRIAGE.md'), 'utf8').replace(/\{\{([\w.[\]]+)\}\}/g, (whole, key) => {
-    const value = key.split(/[.[\]]+/).filter(Boolean).reduce((v, k) => (v && Object.hasOwn(v, k) ? v[k] : undefined), filled)
-    return typeof value === 'string' || typeof value === 'number' ? String(value) : whole
-  })
+  const text = readFileSync(join(ROOT, 'templates', 'TRIAGE.md'), 'utf8')
+    .replace(/^<!--[^]*?-->\n/, '<!-- Winston starter triage policy, written by winston init. Rewrite the three sections\nmarked (per-repo) at the end for this repository, then delete this comment. -->\n')
+    .replace(/\{\{([\w.[\]]+)\}\}/g, (whole, key) => {
+      const value = key.split(/[.[\]]+/).filter(Boolean).reduce((v, k) => (v && Object.hasOwn(v, k) ? v[k] : undefined), filled)
+      return typeof value === 'string' || typeof value === 'number' ? String(value) : `${FILL_IN}${POLICY_VALUES[key] ?? `the value of ${key}`}`
+    })
   writeFileSync(file, text, { flag: 'wx' })
+}
+
+/** The lines of a policy still waiting for a value: a `{{placeholder}}` or a "fill this in". */
+export function policyBlanks(file) {
+  let text
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch {
+    return []
+  }
+  return text.split('\n').flatMap((line, i) => (/\{\{[^}]*\}\}/.test(line) || line.includes(FILL_IN) ? [`line ${i + 1}: ${line.trim().slice(0, 140)}`] : []))
 }
 
 function writeTriageWorkflow(wf) {
@@ -180,45 +236,68 @@ function writeTriageWorkflow(wf) {
 }
 
 /**
- * The Claude Code allow rules a Winston run uses in this repo: the git and gh forms the
- * skills call, scoped by the config where a rule can be, then the repo's own (config
+ * The Claude Code rules a Winston run uses in this repo, as { allow, deny }.
+ *
+ * allow: the git and gh forms the skills call, each as narrow as a pattern can make it
+ * and scoped by the config where it can be, then the repo's own (config
  * `permissions.allow`) and any passed with --add. Merging pull requests is listed only
  * where the deploy-gate hook guards merges, so the rule cannot wave a production merge
- * through. An allow rule never clears a deny or ask rule, a hook, or any other gate.
+ * through.
+ *
+ * deny: an allow pattern cannot exclude a flag, so `git push origin *` would also cover a
+ * force push, a push to production and a branch deletion. Claude Code checks deny before
+ * allow, so the short deny list is what keeps those out: deny wins.
  */
 export function permissionRules(config, extra = []) {
-  const integration = config.branches?.integration
+  const { integration, production } = config.branches ?? {}
   const board = config.board?.number
   const gated = (config.deployGate?.guarded ?? []).some((g) => g?.kind === 'pr-merge')
-  const commands = [
-    'git status', 'git diff', 'git log', 'git show', 'git fetch', 'git branch', 'git worktree', 'git switch',
-    'git add', 'git commit', 'git push origin', 'git push -u origin', ...(integration ? [`git rebase origin/${integration}`] : []),
-    'gh issue view', 'gh issue list', 'gh pr view', 'gh pr list', 'gh pr checks', 'gh pr diff', 'gh run view', 'gh run list', 'gh label list',
-    ...(Number.isInteger(board) ? [`gh project item-list ${board}`] : []),
-    'gh pr create', 'gh pr comment', 'gh pr review', 'gh pr edit', ...(gated ? ['gh pr merge'] : []),
-    'gh issue comment', 'gh issue edit', 'gh project item-edit',
-    'winston config', 'winston doctor', 'winston title',
+  const allow = [
+    'git status*', 'git diff*', 'git log*', 'git show*', 'git fetch*',
+    'git branch --show-current*', 'git branch --list*', 'git worktree list*', 'git worktree add *',
+    'git switch -c *', ...(integration ? [`git switch ${integration}`, `git rebase origin/${integration}*`] : []),
+    'git add *', 'git commit -m *', 'git commit -F *', 'git push origin *', 'git push -u origin *',
+    'gh issue view*', 'gh issue list*', 'gh pr view*', 'gh pr list*', 'gh pr checks*', 'gh pr diff*', 'gh run view*', 'gh run list*', 'gh label list*',
+    ...(Number.isInteger(board) ? [`gh project item-list ${board}*`] : []),
+    'gh pr create *', 'gh pr comment *', 'gh pr review * --comment*', 'gh pr edit * --add-label *', 'gh pr edit * --remove-label *',
+    ...(gated ? ['gh pr merge *'] : []),
+    'gh issue comment *', 'gh issue edit * --add-label *', 'gh issue edit * --remove-label *', 'gh project item-edit *',
+    'winston config*', 'winston doctor*', 'winston title *',
+  ]
+  const deny = [
+    // No `git push* :*` for the colon form of a deletion: a trailing `:*` is Claude Code's
+    // prefix syntax, so that rule would deny every push.
+    'git push*--force*', 'git push* -f*', 'git push*--delete*', 'git push*--all*', 'git push*--mirror*',
+    ...(production ? [`git push* ${production}`, `git push* ${production} *`, `git push*:${production}*`, `git push*:refs/heads/${production}*`] : []),
+    'gh pr review*--approve*', 'gh pr review* -a*',
+    'git branch* -D*', 'git branch*--force*', 'git worktree remove*--force*', 'git worktree remove* -f*',
   ]
   const own = [...(Array.isArray(config.permissions?.allow) ? config.permissions.allow : []), ...extra].filter((r) => typeof r === 'string')
-  return [...new Set([...commands.map((c) => `Bash(${c}*)`), ...own])]
+  return { allow: [...new Set([...allow.map((c) => `Bash(${c})`), ...own])], deny: deny.map((c) => `Bash(${c})`) }
 }
 
-const RULE = /^(\w+)(?:\((.+)\))?$/s
+// A tool name may carry hyphens: mcp__claude-in-chrome__navigate.
+const RULE = /^([\w-]+)(?:\((.+)\))?$/s
 
 const ruleText = (spec = '') => spec.replace(/ ?:?\*$/, '').trim()
+
+/** A rule that allows a whole tool, or every command of one: never added. */
+const tooWide = (rule) => /^Bash(\([\s:*]*\))?$/.test(rule)
 
 /**
  * The entry of `list` that covers all of what `rule` names, or null: the same rule, the
  * bare tool, or a pattern that matches the command `rule` starts with. Used against deny
  * (a rule a deny entry covers is never added; a narrower deny is no conflict, since deny
- * is evaluated first) and against allow (a rule already covered is not added twice).
+ * is evaluated first), against ask, and against allow (a rule already covered is not
+ * added twice).
  */
 export function coveredBy(rule, list) {
+  if (list.includes(rule)) return rule
   const m = RULE.exec(rule)
   if (!m) return null
   const text = ruleText(m[2])
   return list.find((d) => {
-    if (d === rule || d === m[1]) return true
+    if (d === m[1]) return true
     const dm = RULE.exec(d)
     if (!dm?.[2] || dm[1] !== m[1]) return false
     const pattern = dm[2].replace(/ ?:?\*$/, '*').split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')
@@ -238,12 +317,15 @@ function narrowerIn(rule, allow) {
 }
 
 /**
- * The project's .claude/settings.json and each expected rule's state in it: have, missing,
- * denied, or narrower. Throws, having changed nothing, when the file is not the JSON Claude Code reads.
+ * The project's .claude/settings.json and each expected rule's state in it. An allow rule
+ * is have, missing, denied, asks or narrower; a deny rule is have or missing. Throws,
+ * having changed nothing, when the file is not the JSON Claude Code reads, is a link that
+ * leads out of the repository, or a rule from the config or --add is too wide to add.
  */
 function permissionState(root, config, extra = []) {
-  const path = join(root, '.claude', 'settings.json')
-  // The project's own file only: a link that leads out of the repository is not followed.
+  let path = join(root, '.claude', 'settings.json')
+  // The project's own file only. A link that stays inside the repository is followed to
+  // the real file; one that leads out is refused.
   for (const p of [dirname(path), path]) {
     if (!lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink()) continue
     let inside = false
@@ -252,6 +334,7 @@ function permissionState(root, config, extra = []) {
     } catch {}
     if (!inside) throw new Error(`${p} is a link that leads outside the repository. Nothing was changed.`)
   }
+  if (existsSync(path)) path = realpathSync(path)
   const text = existsSync(path) ? readFileSync(path, 'utf8') : null
   const isObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
   let data = {}
@@ -264,24 +347,31 @@ function permissionState(root, config, extra = []) {
   }
   const lists = isObject(data) && (data.permissions === undefined || (isObject(data.permissions) && ['allow', 'deny', 'ask'].every((k) => data.permissions[k] === undefined || Array.isArray(data.permissions[k]))))
   if (!lists) throw new Error(`${path} is not a settings object whose permissions.allow, deny and ask are lists. Nothing was changed: fix the file, then rerun.`)
+  const wanted = permissionRules(config, extra)
+  const wide = wanted.allow.find(tooWide)
+  if (wide) throw new Error(`${wide} would allow every shell command, so Winston does not add it (it came from config permissions.allow or --add). Nothing was changed: name the commands instead, such as Bash(npm test*).`)
   const strings = (k) => (data.permissions?.[k] ?? []).filter((r) => typeof r === 'string')
-  const [allow, deny] = [strings('allow'), strings('deny')]
-  const rules = permissionRules(config, extra).map((rule) => {
+  const [allow, deny, ask] = [strings('allow'), strings('deny'), strings('ask')]
+  const rules = wanted.allow.map((rule) => {
     if (coveredBy(rule, allow)) return { rule, state: 'have' }
     const by = coveredBy(rule, deny)
     if (by) return { rule, state: 'denied', note: `not added: the deny rule ${by} covers it` }
+    const asks = coveredBy(rule, ask)
+    if (asks) return { rule, state: 'asks', note: `not added: the ask rule ${asks} covers it, so it still prompts` }
     const narrower = narrowerIn(rule, allow)
     return narrower ? { rule, state: 'narrower', note: `not added: the project allows a narrower form, ${narrower}` } : { rule, state: 'missing' }
   })
-  return { path, text, data, rules }
+  const denies = wanted.deny.map((rule) => ({ rule, deny: true, state: coveredBy(rule, deny) ? 'have' : 'missing' }))
+  return { path, text, data, rules, denies }
 }
 
-const GATES = 'An allow rule only removes a prompt: deny and ask rules, hooks, production approval and secret grants still apply.'
+const GATES = 'An allow rule only removes a prompt, and deny wins over allow: deny and ask rules, hooks, production approval and secret grants still apply.'
 
 /**
  * List the rules, or with --apply add the missing ones to the project file. Only
- * permissions.allow grows: existing rules, the deny and ask lists, every other key, the
- * file's indentation and its final newline are kept. User-level settings are never touched.
+ * permissions.allow and permissions.deny grow: existing rules in every list, every other
+ * key, the file's indentation, mode and final newline are kept, and no deny or ask entry
+ * is removed or loosened. User-level settings are never touched.
  */
 function permissions(cwd, opts) {
   const root = repoRoot(cwd)
@@ -291,29 +381,51 @@ function permissions(cwd, opts) {
   const layers = loadLayers(cwd)
   const st = permissionState(root, { ...layers.user.data, ...layers.repo.data }, opts.add)
   const lacking = st.rules.filter((r) => r.state === 'missing')
+  const denies = st.denies.filter((r) => r.state === 'missing')
   const skipped = st.rules.filter((r) => r.note)
   if (!opts.apply) {
-    console.log(`Claude Code allow rules Winston runs use in this repo, against ${st.path}${st.text === null ? ' (not there yet)' : ''}:`)
+    console.log(`Claude Code rules Winston runs use in this repo, against ${st.path}${st.text === null ? ' (not there yet)' : ''}.`)
+    console.log('\nAllow (these stop prompting):')
     for (const r of st.rules) console.log(`  ${r.state.padEnd(8)} ${r.rule}${r.note ? `  — ${r.note}` : ''}`)
-    console.log(lacking.length ? `\nAdd the ${lacking.length} missing to the project's permissions.allow: winston permissions --apply` : '\nNothing is missing.')
+    console.log('\nDeny (an allow pattern cannot leave out a flag, so these keep force pushes, pushes to production, approvals and forced deletions blocked; deny wins over allow):')
+    for (const r of st.denies) console.log(`  ${r.state.padEnd(8)} ${r.rule}`)
+    console.log(lacking.length || denies.length ? `\nAdd the ${lacking.length} missing allow and ${denies.length} missing deny rules to the project's settings: winston permissions --apply` : '\nNothing is missing.')
     console.log(GATES)
     return 0
   }
   for (const r of skipped) console.log(`${r.state.padEnd(8)} ${r.rule}  — ${r.note}`)
-  if (!lacking.length) {
+  if (!lacking.length && !denies.length) {
     console.log(`Nothing to add: ${st.path} has every rule.`)
     return 0
   }
-  const data = { ...st.data, permissions: { ...st.data.permissions, allow: [...(st.data.permissions?.allow ?? []), ...lacking.map((r) => r.rule)] } }
+  const had = st.data.permissions ?? {}
+  const data = {
+    ...st.data,
+    permissions: {
+      ...had,
+      ...(lacking.length || had.allow ? { allow: [...(had.allow ?? []), ...lacking.map((r) => r.rule)] } : {}),
+      ...(denies.length || had.deny ? { deny: [...(had.deny ?? []), ...denies.map((r) => r.rule)] } : {}),
+    },
+  }
   const indent = st.text?.match(/^([ \t]+)\S/m)?.[1] ?? 2
   mkdirSync(dirname(st.path), { recursive: true })
   // Written beside the file and renamed over it, so a hard link to a file elsewhere is
-  // replaced rather than written through.
+  // replaced rather than written through. The file keeps its mode.
   const tmp = `${st.path}.winston-${process.pid}`
-  writeFileSync(tmp, JSON.stringify(data, null, indent) + (st.text === null || st.text.endsWith('\n') ? '\n' : ''), { flag: 'wx' })
-  renameSync(tmp, st.path)
+  try {
+    writeFileSync(tmp, JSON.stringify(data, null, indent) + (st.text === null || st.text.endsWith('\n') ? '\n' : ''), { flag: 'wx' })
+    if (st.text !== null) chmodSync(tmp, statSync(st.path).mode & 0o7777)
+    renameSync(tmp, st.path)
+  } catch (e) {
+    rmSync(tmp, { force: true })
+    throw new Error(`could not write ${st.path}: ${e.message}. Nothing was changed.`)
+  }
   for (const r of lacking) console.log(`added    ${r.rule}`)
-  console.log(`\n${lacking.length} ${lacking.length === 1 ? 'rule' : 'rules'} added to permissions.allow in ${st.path}. ${GATES}`)
+  if (denies.length) {
+    console.log('\nAdded to permissions.deny, which wins over allow (no existing deny or ask rule was removed or loosened):')
+    for (const r of denies) console.log(`denied   ${r.rule}`)
+  }
+  console.log(`\n${lacking.length} allow and ${denies.length} deny ${lacking.length + denies.length === 1 ? 'rule' : 'rules'} added in ${st.path}. ${GATES}`)
   return 0
 }
 
@@ -344,7 +456,7 @@ function secretSteps({ slug, known, want, boardOwner, wfName }) {
   const repoOwner = slug?.split('/')[0]
   const board = boardOwner || 'the board\'s owner'
   const lines = [known
-    ? `Not set on ${where}: ${want.join(', ')}. Until both secrets exist, new issues are not triaged automatically.`
+    ? `Not set on ${where}: ${want.join(', ')}. Until both secrets exist, new issues are not triaged automatically. (Only the repository's own secrets are checked: one set at organization level does not show here.)`
     : `This account cannot list the secrets of ${where}, so see which exist first: gh secret list${flag}. Then, for each of ${want.join(' and ')} it does not show:`]
   let n = 0
   const step = (text) => lines.push(`  ${++n}. ${text}`)
@@ -369,7 +481,14 @@ function secretSteps({ slug, known, want, boardOwner, wfName }) {
   return lines
 }
 
-const ownerSteps = (list) => list.some((c) => c.steps || c.ownerStep)
+const ownerSteps = (list) => list.some((c) => c.steps || c.ownerStep || c.blanks)
+
+/** The owner's step for a policy with values still to fill in. */
+function printBlanks(file, lines) {
+  if (!lines.length) return
+  console.log(`\nValues to fill in (the owner's to do): ${file} has ${lines.length} ${lines.length === 1 ? 'line' : 'lines'} that say "fill this in", where the config had no value. Open the file and replace each with the real value:`)
+  for (const line of lines) console.log(`  ${line}`)
+}
 
 /** The owner's steps init prints: the workflow's secrets, then the project's allow rules. */
 function printOwnerSteps(list) {
@@ -378,6 +497,8 @@ function printOwnerSteps(list) {
     console.log('\nSecrets the triage workflow needs (the owner\'s to do, in a normal terminal; a token\'s value is never pasted into a chat):')
     for (const line of secrets.steps()) console.log(`  ${line}`)
   }
+  const blanks = list.find((c) => c.blanks)
+  if (blanks) printBlanks(blanks.blanks.file, blanks.blanks.lines)
   const rules = list.find((c) => c.ownerStep)
   if (rules) {
     console.log('\nPermission rules (the owner\'s to do, in one step):')
@@ -461,15 +582,16 @@ export function checks(cwd, planned = null, forInit = false) {
         add({ name: 'board reachable', state: 'ok', detail: `${where}: ${project.title}` })
         const fields = project.fields.nodes.filter((n) => n?.name)
         const status = fields.find((f) => f.name === 'Status')
-        const wanted = config.board.statuses ?? DEFAULT_STATUSES
-        const have = new Set((status?.options ?? []).map((o) => o.name))
-        const lacking = wanted.filter((s) => !have.has(s))
+        const wanted = columns(config.board.statuses)
+        const have = new Map((status?.options ?? []).map((o) => [o.name, o]))
+        const lacking = wanted.filter((c) => !have.has(c.name)).map((c) => c.name)
         add({
           name: 'board Status options', state: lacking.length ? 'missing' : 'ok', detail: lacking.length ? `add: ${lacking.join(', ')}` : '', board: true,
           hand: `add the Status options ${lacking.join(', ')} in the board's settings`,
           fix: lacking.length && status?.id && {
-            plan: `add Status options to the board: ${lacking.join(', ')} (its existing options are kept)`,
-            run: () => setOptions(status.id, [...status.options, ...lacking.map((name) => statusOption(name, wanted.indexOf(name)))]),
+            plan: `add Status columns to the board, in Winston's order: ${lacking.join(', ')} (its existing options are kept as they are)`,
+            // Existing options go back by id, untouched; ones Winston does not know follow.
+            run: () => setOptions(status.id, [...wanted.map((c) => have.get(c.name) ?? c), ...status.options.filter((o) => !wanted.some((c) => c.name === o.name))]),
           },
         })
         const priority = config.board.priorityField ?? 'Priority'
@@ -479,12 +601,25 @@ export function checks(cwd, planned = null, forInit = false) {
           fix: !hasPriority && { plan: `add a single-select ${priority} field to the board (${PRIORITIES.join(', ')})`, run: () => createPriorityField(owner, number, priority) },
         })
       }
-      const hasKanbanView = project.views.nodes.some((v) => v.layout === 'BOARD_LAYOUT' && v.groupByFields.nodes.some((f) => f?.name === 'Status'))
+      const kanban = project.views.nodes.filter(isKanban)
       add({
-        name: 'board kanban view', state: hasKanbanView ? 'ok' : 'missing',
-        detail: hasKanbanView ? '' : 'no BOARD_LAYOUT view grouped by Status', board: true,
-        fix: !hasKanbanView && { plan: 'create a BOARD_LAYOUT view on the board, filtered to a milestone', run: () => createKanbanView(root, project.id) },
+        name: 'board kanban view', state: kanban.length ? 'ok' : 'missing',
+        detail: kanban.length ? '' : 'no board view with Status columns', board: true,
+        fix: !kanban.length && { plan: 'create a board view with Status columns, filtered to a milestone, its cards showing labels', run: () => createKanbanView(root, project) },
       })
+      const labels = project.fields.nodes.find((f) => f?.name === 'Labels')
+      const bare = kanban.filter((v) => !(v.fields?.nodes ?? []).some((f) => f?.name === 'Labels'))
+      if (kanban.length) {
+        add({
+          name: 'kanban cards show labels', state: bare.length ? 'missing' : 'ok',
+          detail: bare.length ? `not shown on: ${bare.map((v) => v.name).join(', ')}` : '', board: true,
+          hand: 'on the view, open View and tick Labels under Fields',
+          fix: bare.length && labels?.id && bare.every((v) => v.id) && {
+            plan: `show Labels on the cards of: ${bare.map((v) => v.name).join(', ')}`,
+            run: () => { for (const v of bare) updateView(v.id, [...v.fields.nodes.filter((f) => f?.id).map((f) => f.id), labels.id]) },
+          },
+        })
+      }
       const hasMilestone = !planned?.noRepo && openMilestones(root).length > 0
       add({
         name: 'starting milestone', state: hasMilestone ? 'ok' : 'missing',
@@ -556,9 +691,20 @@ export function checks(cwd, planned = null, forInit = false) {
       ? { plan: `set triage.policy to ${DEFAULT_POLICY}, which has triage rules, in ${configPath} (${policy} is left as it is)`, run: repoint }
       : starterIs === 'missing' && {
         plan: `write ${starter}, a starter triage policy filled in from the config${andPoint}. Its three (per-repo) sections are generic: the risk tiers must be written for this repo before triage can judge anything (/winston:init can propose them from reading the repo, for the owner to approve), and the file takes effect once committed to the default branch`,
+        starter,
         run: () => { writeStarterPolicy(starter, config); repoint() },
       }),
   })
+
+  const blanks = policyIs === 'ok' ? policyBlanks(resolve(root, policy)) : []
+  if (blanks.length) {
+    add({
+      name: 'triage policy blanks', required: false, state: 'off',
+      detail: `${policy} has ${blanks.length} ${blanks.length === 1 ? 'line' : 'lines'} still to fill in`,
+      problem: `${policy} has ${blanks.length} ${blanks.length === 1 ? 'line' : 'lines'} still to fill in (open the file and replace each "fill this in" or {{placeholder}} with the real value): ${blanks.join('; ')}`,
+      blanks: { file: resolve(root, policy), lines: blanks },
+    })
+  }
 
   const wfName = config.triage?.workflow ?? DEFAULT_TRIAGE_WORKFLOW
   const wf = join(root, '.github', 'workflows', wfName)
@@ -606,14 +752,16 @@ export function checks(cwd, planned = null, forInit = false) {
   } catch (e) {
     perms = { error: e.message }
   }
-  const lackingRules = perms.rules?.filter((r) => r.state === 'missing') ?? []
+  const lackingRules = [...(perms.rules ?? []), ...(perms.denies ?? [])].filter((r) => r.state === 'missing')
+  const lackingAllow = lackingRules.filter((r) => !r.deny).length
+  const lackingText = `${lackingAllow} allow and ${lackingRules.length - lackingAllow} deny rules Winston runs use are not in ${perms.path}`
   add({
     name: 'project permission rules', required: false, state: perms.error ? 'unknown' : lackingRules.length ? 'off' : 'on',
-    detail: perms.error ?? (lackingRules.length ? `${lackingRules.length} of the ${perms.rules.length} allow rules Winston runs use are not in ${perms.path}: ${lackingRules.map((r) => r.rule).join(', ')} (winston permissions --apply adds them)` : perms.path),
+    detail: perms.error ?? (lackingRules.length ? `${lackingText}${lackingRules.length > 3 ? '' : `: ${lackingRules.map((r) => r.rule).join(', ')}`} (winston permissions --apply adds them)` : perms.path),
     ownerStep: lackingRules.length > 0 && [
-      `${lackingRules.length} of the ${perms.rules.length} allow rules Winston runs use are not in ${perms.path}, so those actions prompt during a run.`,
+      `${lackingText}, so routine actions prompt during a run and the risky forms of them are not blocked.`,
       'Run it yourself, once: winston permissions --apply   (winston permissions lists them first)',
-      `It adds to the project's permissions.allow and changes nothing else. ${GATES}`,
+      `It adds to the project's permissions.allow and permissions.deny and changes nothing else. ${GATES}`,
     ],
   })
 
@@ -648,8 +796,22 @@ function printSteps(items) {
   }
 }
 
+/** The installed version against the latest, asked now. Never a required check: a stale Winston still works. */
+function versionCheck(cwd) {
+  const have = installedVersion()
+  const asked = run(process.execPath, [join(ROOT, 'lib', 'update.mjs')], { timeout: 8000 })
+  let latest = null
+  try {
+    latest = JSON.parse(asked.out).latest
+  } catch {}
+  if (!latest) return { name: 'Winston version', required: false, state: 'off', detail: `${have} installed; could not reach GitHub to check for a newer one` }
+  if (!newer(latest, have)) return { name: 'Winston version', required: false, state: 'ok', detail: `${have}, the latest` }
+  return { name: 'Winston version', required: false, state: 'old', detail: `${have} installed, ${latest} available`, update: updateSteps('claude', installScope(cwd)) }
+}
+
 function doctor(cwd) {
-  const list = checks(cwd)
+  const version = versionCheck(cwd)
+  const list = [version, ...checks(cwd)]
   for (const c of list) console.log(`${c.state.padEnd(8)} ${c.name}${c.detail ? `  — ${c.detail}` : ''}`)
   const bad = missing(list)
   printSteps(bad.filter((c) => !c.fix && c.hand))
@@ -660,6 +822,7 @@ function doctor(cwd) {
   }
   if (bad.some((c) => c.unconfigured)) console.log('\nNot set up for Winston here. winston init asks which setup fits: join, new or adopt.')
   else if (bad.some((c) => c.fix)) console.log('\nFix: winston init --mode adopt')
+  if (version.update) console.log(`\nUpdate Winston: ${version.update}.`)
   return bad.length ? 1 : 0
 }
 
@@ -800,19 +963,20 @@ function bootstrap(cwd, sit, opts) {
 
   const steps = []
   if (!sit.root) steps.push({ plan: `git init in ${root}, on branch ${production}`, run: () => must(run('git', ['init', '-q', '-b', production, root]), 'git init') })
-  // A new project's own workflows point at two of its default options: "Item added to
-  // project" at Todo, and the closing ones at Done. Renaming Todo in place (same id) makes
-  // the first set the intake status; Done stays; In Progress goes.
+  // A new project's own workflows point at its default options: "Item added to project" at
+  // Todo, and the closing ones at Done. Each stock option is kept by id under the column
+  // that takes its place, so Todo becomes the intake column and that workflow sets it.
   const configureNewBoard = () => {
     const status = fetchBoard(ghOwner, config.board.number).project?.fields.nodes.find((f) => f?.name === 'Status')
     if (!status?.id) throw new Error('cannot read the new project\'s Status field')
-    const stock = (n) => status.options.find((o) => o.name === n)
-    setOptions(status.id, [{ ...statusOption(statuses[0], 0), id: stock('Todo')?.id }, ...statuses.slice(1).map((n, i) => statusOption(n, i + 1)), ...(stock('Done') ? [stock('Done')] : [])])
+    const stock = (n) => status.options.find((o) => o.name === n)?.id
+    setOptions(status.id, columns(statuses).map((c, i) => ({ ...c, id: stock(i === 0 ? 'Todo' : c.name) })))
     createPriorityField(ghOwner, config.board.number, 'Priority')
+    for (const name of DATE_FIELDS) createDateField(ghOwner, config.board.number, name)
   }
   if (newBoard) {
     steps.push({
-      plan: `create a private GitHub Project "${name}" under ${ghOwner}, with Status ${statuses.join(' / ')} and a Priority field (${PRIORITIES.join(', ')})`,
+      plan: `create a private GitHub Project "${name}" under ${ghOwner}, with Status columns ${columns(statuses).map((c) => c.name).join(' / ')}, a Priority field (${PRIORITIES.join(', ')}) and Start and Target date fields`,
       run: () => {
         const made = run('gh', ['project', 'create', '--owner', ghOwner, '--title', name, '--format', 'json'])
         must(made, 'gh project create')
@@ -918,9 +1082,11 @@ function setup(cwd, sit, opts) {
   // The config exists now, so the checks read the real repo and board.
   const after = boot ? checks(cwd, null, true) : list
   let failed = 0
+  let written = null
   for (const c of missing(after).filter((c) => c.fix)) {
     try {
       c.fix.run()
+      if (c.fix.starter) written = c.fix.starter
       console.log(`done     ${c.fix.plan}`)
     } catch (e) {
       failed++
@@ -928,6 +1094,7 @@ function setup(cwd, sit, opts) {
     }
   }
   printHand(missing(after).filter((c) => !c.fix))
+  if (written) printBlanks(written, policyBlanks(written))
   printOwnerSteps(after)
   for (const n of boot?.notes ?? []) console.log(`\nNote: ${n}`)
   return failed ? 1 : 0

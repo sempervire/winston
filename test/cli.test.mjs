@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { loadConfig, loadLayers } from '../lib/config.mjs';
-import { coveredBy, permissionRules, policyState } from '../bin/winston';
+import { coveredBy, permissionRules, policyBlanks, policyState } from '../bin/winston';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const CLI = join(ROOT, 'bin/winston');
@@ -20,7 +20,8 @@ function sandbox(t) {
   execFileSync('git', ['init', '-q', repo]);
   const bin = join(tmp, 'bin');
   mkdirSync(bin);
-  const env = { ...process.env, WINSTON_HOME: home, CODEX_HOME: join(tmp, 'codex'), PATH: `${bin}:${process.env.PATH}` };
+  // No test asks the network for the latest version: the lookup reads a file that is absent unless a test writes it.
+  const env = { ...process.env, WINSTON_HOME: home, CODEX_HOME: join(tmp, 'codex'), CLAUDE_CONFIG_DIR: join(tmp, 'claude'), WINSTON_UPDATE_URL: `file://${join(tmp, 'latest.json')}`, PATH: `${bin}:${process.env.PATH}` };
   const cli = (args, cwd = repo) => spawnSync(process.execPath, [CLI, ...args], { cwd, env, encoding: 'utf8' });
   const fake = (name, script) => { writeFileSync(join(bin, name), `#!/bin/sh\n${script}\n`); chmodSync(join(bin, name), 0o755); };
   return { tmp, home, repo, env, cli, fake };
@@ -99,8 +100,8 @@ test('doctor finds a missing kanban view and starting milestone; init creates th
     data: { repositoryOwner: { projectV2: {
       id: 'PROJECT1', title: 'Acme board',
       fields: { nodes: [
-        { name: 'Status', options: [{ name: 'New' }, { name: 'Ready' }, { name: 'Verify' }, { name: 'Verified' }] },
-        { name: 'Priority' },
+        { id: 'STATUS1', name: 'Status', options: [{ name: 'New' }, { name: 'Ready' }, { name: 'In Progress' }, { name: 'Verify' }, { name: 'Verified' }, { name: 'Done' }] },
+        { id: 'PRIO1', name: 'Priority' }, { id: 'TITLE1', name: 'Title' }, { id: 'LABELS1', name: 'Labels' },
       ] },
       views: { nodes: [] },
     } } } };
@@ -110,8 +111,8 @@ test('doctor finds a missing kanban view and starting milestone; init creates th
     "label list") printf "risk: low\\nrisk: medium\\nrisk: high\\nauto-merge\\nauto-verify\\nhuman-verify\\n";;
     "label create") exit 0;;
     "api graphql") case "$*" in
-      *createProjectV2View*) echo "$*" >> "${s.tmp}/view-create-calls"; echo '{"data":{"createProjectV2View":{"view":{"id":"VIEW1"}}}}';;
-      *updateProjectV2View*) echo "$*" >> "${s.tmp}/view-filter-calls"; echo '{"data":{"updateProjectV2View":{"view":{"id":"VIEW1"}}}}';;
+      *createProjectV2View*) echo "$*" >> "${s.tmp}/view-create-calls"; echo '{"data":{"createProjectV2View":{"projectV2View":{"id":"VIEW1"}}}}';;
+      *updateProjectV2View*) echo "$*" >> "${s.tmp}/view-filter-calls"; echo '{"data":{"updateProjectV2View":{"projectV2View":{"id":"VIEW1"}}}}';;
       *) cat "${s.tmp}/board.json";;
       esac;;
     "api --method") cat "${s.tmp}/milestones" 2>/dev/null; true;;
@@ -121,7 +122,7 @@ test('doctor finds a missing kanban view and starting milestone; init creates th
 
   const doc = s.cli(['doctor']);
   assert.match(doc.stdout, /^ok\s+board reachable/m);
-  assert.match(doc.stdout, /^missing\s+board kanban view\s+— no BOARD_LAYOUT view grouped by Status/m);
+  assert.match(doc.stdout, /^missing\s+board kanban view\s+— no board view with Status columns/m);
   assert.match(doc.stdout, /^missing\s+starting milestone\s+— no open milestone/m);
   // Neither new check needs the owner's input, so init can create both on its own.
     assert.match(doc.stdout, /Fix: winston init/);
@@ -129,9 +130,9 @@ test('doctor finds a missing kanban view and starting milestone; init creates th
   const made = s.cli(['init', '--mode', 'adopt', '--yes']);
   assert.equal(made.status, 0, made.stdout);
   assert.match(made.stdout, /done\s+create milestone "Phase 1\.0" on the repo/);
-  assert.match(made.stdout, /done\s+create a BOARD_LAYOUT view on the board, filtered to a milestone/);
+  assert.match(made.stdout, /done\s+create a board view with Status columns, filtered to a milestone, its cards showing labels/);
   assert.equal(readFileSync(join(s.tmp, 'milestone-create-calls'), 'utf8').trim().split('\n').length, 1, 'the milestone is created exactly once, not once per check');
-  assert.match(readFileSync(join(s.tmp, 'view-filter-calls'), 'utf8'), /filter=milestone:"Phase 1\.0"/);
+  assert.match(readFileSync(join(s.tmp, 'view-filter-calls'), 'utf8'), /filter:"milestone:\\"Phase 1\.0\\""/);
 });
 
 test('init creates the kanban view against an existing milestone instead of making a new one', (t) => {
@@ -143,8 +144,8 @@ test('init creates the kanban view against an existing milestone instead of maki
     data: { repositoryOwner: { projectV2: {
       id: 'PROJECT1', title: 'Acme board',
       fields: { nodes: [
-        { name: 'Status', options: [{ name: 'New' }, { name: 'Ready' }, { name: 'Verify' }, { name: 'Verified' }] },
-        { name: 'Priority' },
+        { id: 'STATUS1', name: 'Status', options: [{ name: 'New' }, { name: 'Ready' }, { name: 'In Progress' }, { name: 'Verify' }, { name: 'Verified' }, { name: 'Done' }] },
+        { id: 'PRIO1', name: 'Priority' }, { id: 'TITLE1', name: 'Title' }, { id: 'LABELS1', name: 'Labels' },
       ] },
       views: { nodes: [] },
     } } } };
@@ -154,8 +155,8 @@ test('init creates the kanban view against an existing milestone instead of maki
     "label list") printf "risk: low\\nrisk: medium\\nrisk: high\\nauto-merge\\nauto-verify\\nhuman-verify\\n";;
     "label create") exit 0;;
     "api graphql") case "$*" in
-      *createProjectV2View*) echo "$*" >> "${s.tmp}/view-create-calls"; echo '{"data":{"createProjectV2View":{"view":{"id":"VIEW1"}}}}';;
-      *updateProjectV2View*) echo "$*" >> "${s.tmp}/view-filter-calls"; echo '{"data":{"updateProjectV2View":{"view":{"id":"VIEW1"}}}}';;
+      *createProjectV2View*) echo "$*" >> "${s.tmp}/view-create-calls"; echo '{"data":{"createProjectV2View":{"projectV2View":{"id":"VIEW1"}}}}';;
+      *updateProjectV2View*) echo "$*" >> "${s.tmp}/view-filter-calls"; echo '{"data":{"updateProjectV2View":{"projectV2View":{"id":"VIEW1"}}}}';;
       *) cat "${s.tmp}/board.json";;
       esac;;
     "api --method") cat "${s.tmp}/milestones" 2>/dev/null; true;;
@@ -165,7 +166,7 @@ test('init creates the kanban view against an existing milestone instead of maki
 
   const made = s.cli(['init', '--mode', 'adopt', '--yes']);
   assert.equal(made.status, 0, made.stdout);
-  assert.match(readFileSync(join(s.tmp, 'view-filter-calls'), 'utf8'), /filter=milestone:"Pilot"/);
+  assert.match(readFileSync(join(s.tmp, 'view-filter-calls'), 'utf8'), /filter:"milestone:\\"Pilot\\""/);
   assert.ok(!existsSync(join(s.tmp, 'milestone-create-calls')), 'an existing milestone is reused, not created');
 });
 
@@ -196,7 +197,7 @@ function fakeGh(s) {
     "secret set"|"workflow run") echo "never run by winston" >&2; exit 1;;
     "run list") cat "${s.tmp}/runs" 2>/dev/null || exit 1;;
     "api graphql") case "$*" in
-      *createProjectV2View*) echo '{"data":{"createProjectV2View":{"view":{"id":"VIEW1"}}}}';;
+      *createProjectV2View*) echo '{"data":{"createProjectV2View":{"projectV2View":{"id":"VIEW1"}}}}';;
       *updateProjectV2View*) echo '{}';;
       *updateProjectV2Field*) echo '{}'; if [ -f "${s.tmp}/board-after.json" ]; then cp "${s.tmp}/board-after.json" "${s.tmp}/board.json"; fi;;
       *projectsV2*) cat "${s.tmp}/linked.json";;
@@ -211,17 +212,20 @@ function fakeGh(s) {
   s.git = (...args) => execFileSync('git', ['-C', s.repo, ...args], { env: s.env, encoding: 'utf8' }).trim();
 }
 
-const boardJson = ({ options = ['New', 'Ready', 'Verify', 'Verified'], priority = true, workflows = [], views = [] } = {}) => JSON.stringify({
+const boardJson = ({ options = ['New', 'Ready', 'In Progress', 'Verify', 'Verified', 'Done'], priority = true, workflows = [], views = [] } = {}) => JSON.stringify({
   data: { repositoryOwner: { projectV2: {
     id: 'PROJECT1', title: 'Acme board',
     fields: { nodes: [
       { id: 'STATUS1', name: 'Status', options: options.map((name, i) => ({ id: `opt${i}`, name, color: 'GRAY', description: '' })) },
       ...(priority ? [{ id: 'PRIO1', name: 'Priority' }] : []),
+      { id: 'TITLE1', name: 'Title' }, { id: 'LABELS1', name: 'Labels' }, { id: 'LINKED1', name: 'Linked pull requests' },
     ] },
     workflows: { nodes: workflows.map((name) => ({ name, enabled: true })) },
     views: { nodes: views },
   } } } });
-const KANBAN = [{ layout: 'BOARD_LAYOUT', groupByFields: { nodes: [{ name: 'Status' }] } }];
+// As GitHub returns a board view: the columns are the vertical grouping, groupByFields is empty.
+const KANBAN = [{ id: 'VIEW9', name: 'Pilot', layout: 'BOARD_LAYOUT', fields: { nodes: [{ id: 'TITLE1', name: 'Title' }, { id: 'LABELS1', name: 'Labels' }] }, groupByFields: { nodes: [] }, verticalGroupByFields: { nodes: [{ name: 'Status' }] } }];
+const KANBAN_NO_LABELS = [{ ...KANBAN[0], fields: { nodes: [{ id: 'TITLE1', name: 'Title' }] } }];
 const INTAKE = ['Auto-add to project', 'Item added to project'];
 const linkedJson = (boards) => JSON.stringify({ data: { repository: { projectsV2: { nodes: boards.map(([login, number, title]) => ({ number, title, closed: false, owner: { login } })) } } } });
 
@@ -270,7 +274,7 @@ test('init --mode new creates the repo, both branches, the board and the config,
   fakeGh(s);
   // A new project as GitHub makes it: stock statuses, no Priority, "Item added" already on.
   writeFileSync(join(s.tmp, 'new-board.json'), boardJson({ options: ['Todo', 'In Progress', 'Done'], priority: false, workflows: ['Item added to project'] }));
-  writeFileSync(join(s.tmp, 'board-after.json'), boardJson({ options: ['New', 'Ready', 'Verify', 'Verified', 'Done'], workflows: ['Item added to project'] }));
+  writeFileSync(join(s.tmp, 'board-after.json'), boardJson({ workflows: ['Item added to project'] }));
   s.git('symbolic-ref', 'HEAD', 'refs/heads/main');
   s.git('config', 'user.name', 'Pat');
   writeFileSync(join(s.repo, 'notes.txt'), 'not Winston\'s to commit');
@@ -296,14 +300,16 @@ test('init --mode new creates the repo, both branches, the board and the config,
   assert.deepEqual(originHeads(s), ['main', 'staging']);
   assert.deepEqual(s.git('show', '--name-only', '--format=', 'HEAD').split('\n').sort(), ['.github/workflows/triage-on-new-issue.yml', '.winston/config.json'], 'the first commit holds only what init wrote');
   const calls = s.calls();
-  assert.match(calls, /updateProjectV2Field[^\n]*\{id:"opt0",name:"New",color:GRAY[^\n]*name:"Verified",color:GREEN[^\n]*id:"opt2",name:"Done"/, 'Todo is renamed in place so the board\'s own workflow sets New');
-  assert.doesNotMatch(calls, /In Progress/);
+  assert.match(calls, /updateProjectV2Field[^\n]*\[\{id:"opt0",name:"New",color:BLUE,description:"Issues That Need To Be Evaluated"\},\{name:"Ready",color:GREEN[^\n]*\{id:"opt1",name:"In Progress",color:YELLOW[^\n]*\{name:"Verify",color:RED[^\n]*\{name:"Verified",color:GRAY[^\n]*\{id:"opt2",name:"Done",color:PURPLE/, 'six columns in order; each stock option kept by id, Todo as New so the board\'s own workflow sets it');
+  assert.match(calls, /project field-create 7 --owner pat --name Start date --data-type DATE/);
+  assert.match(calls, /project field-create 7 --owner pat --name Target date --data-type DATE/);
+  assert.match(calls, /updateProjectV2View\(input:\{viewId:\$viewId,configuration:\{visibleFieldIds:\["TITLE1","STATUS1","LABELS1","LINKED1"\]\},filter:"milestone:\\"Phase 1\.0\\""\}/, 'the new view shows labels on its cards');
   assert.equal(calls.match(/updateProjectV2Field/g).length, 1);
   assert.match(calls, /project field-create 7 --owner pat --name Priority/);
   assert.match(calls, /project link 7 --owner pat --repo repo$/m);
   assert.ok(calls.indexOf('project create') < calls.indexOf('repo create') && calls.indexOf('repo create') < calls.indexOf('project link'));
   assert.match(readFileSync(join(s.tmp, 'labels'), 'utf8'), /^risk: high$/m);
-  assert.match(made.stdout, /done\s+create a BOARD_LAYOUT view/);
+  assert.match(made.stdout, /done\s+create a board view with Status columns/);
   assert.match(made.stdout, /In the browser[^]*open https:\/\/github\.com\/users\/pat\/projects\/7\/workflows, choose "Auto-add to project", click Edit, pick this repository and set the filter to is:issue/);
 });
 
@@ -312,13 +318,14 @@ test('init --mode adopt fits the config to the repo and adds to its board withou
   fakeGh(s);
   existingRepo(s);
   writeFileSync(join(s.tmp, 'linked.json'), linkedJson([['acme', 3, 'Roadmap']]));
-  writeFileSync(join(s.tmp, 'board.json'), boardJson({ options: ['Todo', 'Ready'], priority: false, workflows: INTAKE, views: KANBAN }));
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ options: ['Todo', 'Ready'], priority: false, workflows: INTAKE, views: KANBAN_NO_LABELS }));
   writeFileSync(join(s.tmp, 'milestones'), 'Pilot\n');
 
   const plan = s.cli(['init', '--mode', 'adopt']);
   assert.equal(plan.status, 0, plan.stderr);
   assert.match(plan.stdout, /production main, integration staging, board acme project 3, process docs AGENTS\.md/);
-  assert.match(plan.stdout, /add Status options to the board: New, Verify, Verified \(its existing options are kept\)/);
+  assert.match(plan.stdout, /add Status columns to the board, in Winston's order: New, In Progress, Verify, Verified, Done \(its existing options are kept as they are\)/);
+  assert.match(plan.stdout, /show Labels on the cards of: Pilot/);
   assert.match(plan.stdout, /add a single-select Priority field/);
   assert.match(plan.stdout, /Note: Commit .*config\.json and .*triage-on-new-issue\.yml to main/);
   assert.match(plan.stdout, /write .*TRIAGE\.md, a starter triage policy filled in from the config\. Its three \(per-repo\) sections are generic: the risk tiers must be written for this repo/);
@@ -335,7 +342,8 @@ test('init --mode adopt fits the config to the repo and adds to its board withou
   assert.deepEqual(originHeads(s), ['main', 'staging']);
   const calls = s.calls();
   assert.doesNotMatch(calls, /project create|repo create/);
-  assert.match(calls, /updateProjectV2Field[^\n]*id:"opt0",name:"Todo"[^\n]*id:"opt1",name:"Ready"[^\n]*\{name:"New",color:GRAY/, 'existing options are passed back with their ids');
+  assert.match(calls, /updateProjectV2Field[^\n]*\[\{name:"New",color:BLUE[^\n]*\{id:"opt1",name:"Ready",color:GRAY,description:""\},\{name:"In Progress"[^\n]*\{name:"Done",color:PURPLE[^\n]*\{id:"opt0",name:"Todo",color:GRAY,description:""\}\]/, 'existing options go back by id, unchanged; unknown ones follow');
+  assert.match(calls, /updateProjectV2View\(input:\{viewId:\$viewId,configuration:\{visibleFieldIds:\["TITLE1","LABELS1"\]\}\}/, 'Labels is added to what the view already shows; its filter is not touched');
   assert.match(calls, /project field-create 3 --owner acme --name Priority/);
   assert.equal(s.git('rev-list', '--count', 'HEAD'), '1', 'an existing repo is not committed to');
 
@@ -532,6 +540,33 @@ test('the triage workflow template skips, rather than fails, without its secrets
   for (const step of gated) assert.match(step, /if: steps\.secrets\.outputs\.ready == 'true'/);
 });
 
+test('doctor says when a newer Winston is out, with the command, and stays quiet otherwise', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  const have = JSON.parse(readFileSync(join(ROOT, '.claude-plugin/plugin.json'), 'utf8')).version;
+  const latest = (v) => writeFileSync(join(s.tmp, 'latest.json'), JSON.stringify({ version: v }));
+
+  const unknown = s.cli(['doctor']);
+  assert.match(unknown.stdout, new RegExp(`^off\\s+Winston version\\s+— ${have} installed; could not reach GitHub`, 'm'));
+  assert.doesNotMatch(unknown.stdout, /Update Winston/);
+
+  latest(have);
+  const current = s.cli(['doctor']);
+  assert.match(current.stdout, new RegExp(`^ok\\s+Winston version\\s+— ${have}, the latest$`, 'm'));
+  assert.doesNotMatch(current.stdout, /Update Winston/);
+
+  latest('99.0.0');
+  const old = s.cli(['doctor']);
+  assert.match(old.stdout, new RegExp(`^old\\s+Winston version\\s+— ${have} installed, 99\\.0\\.0 available$`, 'm'));
+  assert.match(old.stdout, /\nUpdate Winston: run `claude plugin marketplace update winston && claude plugin update winston@winston`, then restart Claude Code/);
+  assert.equal(old.status, unknown.status, 'an old Winston is reported, never a failed check');
+
+  latest('0.0.1');
+  assert.match(s.cli(['doctor']).stdout, /^ok\s+Winston version/m, 'an older "latest" is not an update');
+  latest('not-a-version; rm -rf');
+  assert.match(s.cli(['doctor']).stdout, /^off\s+Winston version/m, 'a manifest that is not a version is ignored');
+});
+
 test('a policy has triage rules when a heading names triage or it carries a risk tier', (t) => {
   const s = sandbox(t);
   const state = (text) => { writeFileSync(join(s.tmp, 'doc.md'), text); return policyState(join(s.tmp, 'doc.md')); };
@@ -577,7 +612,9 @@ test('doctor flags a policy with no triage rules; init writes a starter, repoint
   assert.match(starter, /only issues that are open and in status `New` or `Ready` are evaluated/);
   assert.match(starter, /\*\*Owner\*\*: `Dana`\.\n- \*\*Board\*\*: project `1` of `acme`/);
   assert.match(starter, /work lands on `staging`; `main` is/);
-  assert.deepEqual(starter.match(/\{\{[^}]*\}\}/g), ['{{key}}'], 'only the placeholder its own comment explains is left');
+  assert.equal(starter.match(/\{\{[^}]*\}\}/g), null, 'no placeholder is left');
+  assert.deepEqual(policyBlanks(join(s.repo, 'TRIAGE.md')), []);
+  assert.doesNotMatch(made.stdout, /Values to fill in/);
   assert.match(starter, /## Risk tiers \(per-repo\)/);
   assert.equal(readFileSync(join(s.repo, 'AGENTS.md'), 'utf8'), '# Rules\n');
   const after = JSON.parse(readFileSync(configPath, 'utf8'));
@@ -586,6 +623,26 @@ test('doctor flags a policy with no triage rules; init writes a starter, repoint
   const ok = s.cli(['doctor']);
   assert.equal(ok.status, 0, ok.stdout);
   assert.match(ok.stdout, /^ok\s+triage policy\s+— TRIAGE\.md$/m);
+
+  // A config without an owner, branches or a board number: plain "fill this in" lines,
+  // listed by init as the owner's step and flagged by doctor until they are gone.
+  rmSync(join(s.repo, 'TRIAGE.md'));
+  writeFileSync(configPath, JSON.stringify({ board: { owner: 'acme', statuses: ['Inbox'] }, triage: { policy: 'AGENTS.md' } }));
+  const sparse = s.cli(['init', '--mode', 'adopt', '--yes']);
+  const filled = readFileSync(join(s.repo, 'TRIAGE.md'), 'utf8');
+  assert.equal(filled.match(/\{\{[^}]*\}\}/g), null, 'never a raw placeholder');
+  assert.match(filled, /in status `Inbox` or `fill this in: the status that means ready to work` are evaluated/);
+  assert.match(filled, /\*\*Owner\*\*: `fill this in: the name of the person who approves and decides`\./);
+  assert.match(filled, /project `fill this in: the board's project number` of `acme`/);
+  assert.match(filled, /work lands on `fill this in: the branch work lands on`; `fill this in: the branch that is released` is/);
+  assert.match(sparse.stdout, /\nValues to fill in \(the owner's to do\): .*TRIAGE\.md has \d+ lines that say "fill this in"[^\n]*\n  line \d+: [^\n]*fill this in: /);
+  const flagged = s.cli(['doctor']);
+  assert.match(flagged.stdout, new RegExp(`^off\\s+triage policy blanks\\s+— TRIAGE\\.md has ${policyBlanks(join(s.repo, 'TRIAGE.md')).length} lines still to fill in$`, 'm'));
+  assert.match(flagged.stdout, /TRIAGE\.md has \d+ lines still to fill in \(open the file and replace each "fill this in" or \{\{placeholder\}\} with the real value\): line \d+: /);
+  writeFileSync(join(s.repo, 'TRIAGE.md'), '# Triage\n\nOwner: {{owner}}\n');
+  assert.match(s.cli(['doctor']).stdout, /^off\s+triage policy blanks\s+— TRIAGE\.md has 1 line still to fill in$/m);
+  writeFileSync(join(s.repo, 'TRIAGE.md'), '# Triage\n\nOwner: Dana\n');
+  assert.doesNotMatch(s.cli(['doctor']).stdout, /triage policy blanks/);
 
   // A policy file that is not there at all.
   write('docs/POLICY.md');
@@ -610,60 +667,95 @@ test('doctor flags a policy with no triage rules; init writes a starter, repoint
   assert.equal(readFileSync(join(s.repo, 'TRIAGE.md'), 'utf8'), 'notes to self\n');
 });
 
-test('permission rules come from the config, and a rule is covered by an equal or wider entry only', () => {
-  const rules = permissionRules({ branches: { integration: 'develop' }, board: { number: 4 }, permissions: { allow: ['Bash(npm test*)'] } }, ['Bash(make lint*)', 'Bash(npm test*)']);
-  for (const r of ['Bash(git worktree*)', 'Bash(git rebase origin/develop*)', 'Bash(gh project item-list 4*)', 'Bash(gh pr review*)', 'Bash(npm test*)', 'Bash(make lint*)']) assert.ok(rules.includes(r), r);
-  assert.equal(new Set(rules).size, rules.length, 'no rule twice');
-  assert.ok(!rules.includes('Bash(gh pr merge*)'), 'merging is listed only where the deploy gate guards merges');
-  assert.ok(permissionRules({ deployGate: { guarded: [{ kind: 'pr-merge', base: 'main' }] } }).includes('Bash(gh pr merge*)'));
-  assert.equal(coveredBy('Bash(git push origin*)', ['Bash(git push*--force*)']), null, 'a narrower deny is no conflict');
-  assert.equal(coveredBy('Bash(git push origin*)', ['Bash(git push *)']), 'Bash(git push *)');
-  assert.equal(coveredBy('Bash(git push origin*)', ['Bash(git push:*)']), 'Bash(git push:*)');
+test('permission rules come from the config: a narrow allow list and a deny list for what a pattern cannot leave out', () => {
+  const { allow, deny } = permissionRules({ branches: { integration: 'develop', production: 'main' }, board: { number: 4 }, permissions: { allow: ['Bash(npm test*)', 'mcp__claude-in-chrome__navigate'] } }, ['Bash(make lint*)', 'Bash(npm test*)']);
+  for (const r of ['Bash(git worktree add *)', 'Bash(git rebase origin/develop*)', 'Bash(git switch develop)', 'Bash(gh project item-list 4*)', 'Bash(gh pr review * --comment*)', 'Bash(git commit -m *)', 'Bash(npm test*)', 'Bash(make lint*)', 'mcp__claude-in-chrome__navigate']) assert.ok(allow.includes(r), r);
+  assert.equal(new Set(allow).size, allow.length, 'no rule twice');
+  // Nothing that takes every form of a command that has a dangerous one.
+  for (const wide of ['Bash(git branch*)', 'Bash(git worktree*)', 'Bash(git commit*)', 'Bash(git push origin*)', 'Bash(gh pr review*)', 'Bash(gh pr edit*)', 'Bash(git switch*)']) assert.ok(!allow.includes(wide), wide);
+  assert.ok(!allow.some((r) => r.startsWith('Bash(gh pr merge')), 'merging is listed only where the deploy gate guards merges');
+  assert.ok(permissionRules({ deployGate: { guarded: [{ kind: 'pr-merge', base: 'main' }] } }).allow.includes('Bash(gh pr merge *)'));
+  // What `git push origin *` and `gh pr review * --comment*` would otherwise let through.
+  const blocked = (command) => deny.some((d) => coveredBy(`Bash(${command})`, [d]));
+  for (const command of ['git push origin feat/x --force', 'git push --force-with-lease origin feat/x', 'git push -f origin feat/x', 'git push origin main', 'git push origin HEAD:main', 'git push origin feat/x:refs/heads/main', 'git push origin --all', 'git push --mirror origin', 'git push -u origin main --tags', 'git push origin --delete feat/x', 'gh pr review 5 --comment -b ok --approve', 'gh pr review 5 -a', 'git branch -D feat/x', 'git branch --delete --force feat/x', 'git worktree remove --force ../wt', 'git worktree remove -f ../wt']) assert.ok(blocked(command), command);
+  for (const command of ['git push origin feat/x', 'git push -u origin feat/maintenance', 'gh pr review 5 --comment -b ok', 'git branch --list', 'git worktree remove ../wt']) assert.ok(!blocked(command), command);
+  assert.ok(!permissionRules({}).deny.some((d) => d.includes('undefined')), 'no production branch, no production rule');
+  assert.ok(!deny.some((d) => /:\*\)$/.test(d)), 'no deny rule ends in Claude Code\'s prefix syntax, which would deny the whole command');
+
+  assert.equal(coveredBy('Bash(git push origin *)', ['Bash(git push*--force*)']), null, 'a narrower deny is no conflict');
+  assert.equal(coveredBy('Bash(git push origin *)', ['Bash(git push *)']), 'Bash(git push *)');
+  assert.equal(coveredBy('Bash(git push origin *)', ['Bash(git push:*)']), 'Bash(git push:*)');
   assert.equal(coveredBy('Bash(git status*)', ['Bash']), 'Bash');
   assert.equal(coveredBy('Bash(git status*)', ['Read', 'Bash(gh *)']), null);
+  assert.equal(coveredBy('mcp__claude-in-chrome__navigate', ['mcp__claude-in-chrome__navigate']), 'mcp__claude-in-chrome__navigate');
 });
 
 test('winston permissions lists the rules; --apply adds only the missing ones and keeps everything else', (t) => {
   const s = sandbox(t);
   mkdirSync(join(s.repo, '.winston'));
-  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 2 } }));
+  const config = { branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 2 }, permissions: { allow: ['mcp__claude-in-chrome__navigate'] } };
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify(config));
+  const want = permissionRules(config);
   const file = join(s.repo, '.claude/settings.json');
   const userFile = join(s.tmp, 'home/.claude/settings.json');
   mkdirSync(join(s.tmp, 'home/.claude'), { recursive: true });
   writeFileSync(userFile, '{"permissions":{"allow":[]}}');
   s.env.HOME = join(s.tmp, 'home');
 
-  // No file yet: listing changes nothing, --apply creates it.
+  // No file yet: listing changes nothing, --apply creates it with both lists.
   const listed = s.cli(['permissions']);
   assert.equal(listed.status, 0, listed.stderr);
-  assert.match(listed.stdout, /^  missing  Bash\(git worktree\*\)$/m);
+  assert.match(listed.stdout, /^Allow \(these stop prompting\):\n  missing  Bash\(git status\*\)$/m);
   assert.match(listed.stdout, /^  missing  Bash\(gh project item-list 2\*\)$/m);
-  assert.match(listed.stdout, /winston permissions --apply\nAn allow rule only removes a prompt: deny and ask rules, hooks, production approval and secret grants still apply\./);
+  assert.match(listed.stdout, /^Deny \([^\n]*deny wins over allow\):\n  missing  Bash\(git push\*--force\*\)$/m);
+  assert.match(listed.stdout, /^  missing  Bash\(git push\* main\)$/m);
+  assert.match(listed.stdout, /winston permissions --apply\nAn allow rule only removes a prompt, and deny wins over allow: deny and ask rules, hooks, production approval and secret grants still apply\./);
   assert.ok(!existsSync(file));
   const created = s.cli(['permissions', '--apply']);
   assert.equal(created.status, 0, created.stderr);
-  const all = JSON.parse(readFileSync(file, 'utf8')).permissions.allow;
-  assert.deepEqual(all, permissionRules({ branches: { integration: 'staging' }, board: { number: 2 } }));
-  assert.equal(created.stdout.match(/^added    /gm).length, all.length, 'it prints exactly what it added');
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).permissions, { allow: want.allow, deny: want.deny });
+  assert.deepEqual(created.stdout.match(/^added    (.*)$/gm).map((l) => l.slice(9)), want.allow, 'it prints exactly what it added');
+  // The deny additions are printed apart, with the reason.
+  assert.match(created.stdout, /\nAdded to permissions\.deny, which wins over allow \(no existing deny or ask rule was removed or loosened\):\ndenied   Bash\(git push\*--force\*\)\n/);
+  assert.deepEqual(created.stdout.match(/^denied   (.*)$/gm).map((l) => l.slice(9)), want.deny);
+  // A hyphenated tool name is recognised the second time: nothing is appended again.
+  const second = s.cli(['permissions', '--apply']);
+  assert.match(second.stdout, /^Nothing to add/);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).permissions.allow.filter((r) => r === 'mcp__claude-in-chrome__navigate').length, 1);
+  assert.match(s.cli(['permissions']).stdout, /^  have     mcp__claude-in-chrome__navigate$/m);
 
-  // An existing file: its rules, deny and ask lists, other keys, tabs and missing final newline are kept.
-  const before = { env: { TZ: 'UTC' }, permissions: { allow: ['Bash(make *)', 'Bash(git status*)', 'Bash(gh pr comment *)', 'Bash(git push origin main)'], deny: ['Bash(git push*--force*)', 'Bash(gh issue edit *)'], ask: ['Bash(gh pr create*)'] }, hooks: {} };
+  // An existing file: its rules, deny and ask lists, other keys, tabs, mode and missing final newline are kept.
+  const before = {
+    env: { TZ: 'UTC' },
+    permissions: {
+      allow: ['Bash(make *)', 'Bash(git status*)', 'Bash(gh pr comment *)', 'Bash(git push origin feat/*)', 'mcp__claude-in-chrome__navigate'],
+      deny: ['Bash(git push*--force*)', 'Bash(gh issue edit *)', 'Bash(rm -rf *)'],
+      ask: ['Bash(gh pr create*)'],
+    },
+    hooks: {},
+  };
   writeFileSync(file, JSON.stringify(before, null, '\t'));
+  chmodSync(file, 0o600);
   const applied = s.cli(['permissions', '--apply', '--add', 'Bash(npm test*)']);
   assert.equal(applied.status, 0, applied.stderr);
   const text = readFileSync(file, 'utf8');
   const after = JSON.parse(text);
   assert.match(text, /^\t"env"/m);
   assert.ok(!text.endsWith('\n'));
-  assert.deepEqual(after.permissions.allow.slice(0, 4), before.permissions.allow, 'existing rules first, untouched');
-  assert.deepEqual({ ...after, permissions: { ...after.permissions, allow: null } }, { ...before, permissions: { ...before.permissions, allow: null } });
-  const added = after.permissions.allow.slice(4);
-  assert.equal(new Set(after.permissions.allow).size, after.permissions.allow.length, 'no duplicate entries');
-  assert.ok(added.includes('Bash(npm test*)') && added.includes('Bash(git worktree*)'));
-  for (const not of ['Bash(git status*)', 'Bash(gh pr comment*)', 'Bash(gh issue edit*)', 'Bash(git push origin*)']) assert.ok(!added.includes(not), not);
-  assert.match(applied.stdout, /^denied   Bash\(gh issue edit\*\)  — not added: the deny rule Bash\(gh issue edit \*\) covers it$/m);
-  assert.match(applied.stdout, /^narrower Bash\(git push origin\*\)  — not added: the project allows a narrower form, Bash\(git push origin main\)$/m);
+  assert.equal(statSync(file).mode & 0o777, 0o600, 'the file keeps its mode');
+  assert.deepEqual(Object.keys(after), Object.keys(before));
+  assert.deepEqual([after.env, after.hooks, after.permissions.ask], [before.env, before.hooks, before.permissions.ask]);
+  assert.deepEqual(after.permissions.allow.slice(0, 5), before.permissions.allow, 'existing allow rules first, untouched');
+  assert.deepEqual(after.permissions.deny.slice(0, 3), before.permissions.deny, 'existing deny rules first, none removed or loosened');
+  for (const list of [after.permissions.allow, after.permissions.deny]) assert.equal(new Set(list).size, list.length, 'no duplicate entries');
+  const added = after.permissions.allow.slice(5);
+  assert.ok(added.includes('Bash(npm test*)') && added.includes('Bash(git worktree add *)'));
+  for (const not of ['Bash(git status*)', 'Bash(gh pr comment *)', 'Bash(gh issue edit * --add-label *)', 'Bash(git push origin *)', 'Bash(gh pr create *)']) assert.ok(!added.includes(not), not);
+  assert.match(applied.stdout, /^denied   Bash\(gh issue edit \* --add-label \*\)  — not added: the deny rule Bash\(gh issue edit \*\) covers it$/m);
+  assert.match(applied.stdout, /^narrower Bash\(git push origin \*\)  — not added: the project allows a narrower form, Bash\(git push origin feat\/\*\)$/m);
+  assert.match(applied.stdout, /^asks     Bash\(gh pr create \*\)  — not added: the ask rule Bash\(gh pr create\*\) covers it, so it still prompts$/m);
   assert.deepEqual(applied.stdout.match(/^added    (.*)$/gm).map((l) => l.slice(9)), added);
+  assert.deepEqual(after.permissions.deny.slice(3), want.deny.filter((d) => d !== 'Bash(git push*--force*)'));
 
   // Idempotent.
   const again = s.cli(['permissions', '--apply', '--add', 'Bash(npm test*)']);
@@ -671,6 +763,17 @@ test('winston permissions lists the rules; --apply adds only the missing ones an
   assert.equal(readFileSync(file, 'utf8'), text);
   assert.match(s.cli(['doctor']).stdout, /^on\s+project permission rules/m);
   assert.equal(readFileSync(userFile, 'utf8'), '{"permissions":{"allow":[]}}', 'user-level settings are never touched');
+
+  // A rule that would allow every shell command is refused, from --add or from the config.
+  for (const wide of ['Bash', 'Bash(*)', 'Bash(:*)']) {
+    const refused = s.cli(['permissions', '--apply', '--add', wide]);
+    assert.equal(refused.status, 1, wide);
+    assert.match(refused.stderr, /would allow every shell command, so Winston does not add it[^]*Nothing was changed/);
+  }
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ ...config, permissions: { allow: ['Bash(*)'] } }));
+  assert.equal(s.cli(['permissions', '--apply']).status, 1);
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify(config));
+  assert.equal(readFileSync(file, 'utf8'), text);
 
   // A file that is not valid JSON, or not the shape Claude Code reads: stop, change nothing.
   for (const broken of ['{ "permissions": { "allow": [ ', '{"permissions":{"allow":"Bash(ls)"}}', '[]']) {
@@ -688,7 +791,15 @@ test('winston permissions lists the rules; --apply adds only the missing ones an
   assert.equal(readFileSync(userFile, 'utf8'), '{"permissions":{"allow":[]}}');
   assert.ok(JSON.parse(readFileSync(file, 'utf8')).permissions.allow.length > 0);
   assert.deepEqual(readdirSync(join(s.repo, '.claude')), ['settings.json'], 'no temporary file is left');
-  // A settings file that is a link out of the repository is not followed.
+  // A link to a file inside the repository is followed: the real file is written, the link stays.
+  rmSync(file);
+  mkdirSync(join(s.repo, 'shared'));
+  writeFileSync(join(s.repo, 'shared/settings.json'), '{}\n');
+  symlinkSync(join(s.repo, 'shared/settings.json'), file);
+  assert.equal(s.cli(['permissions', '--apply']).status, 0);
+  assert.ok(lstatSync(file).isSymbolicLink());
+  assert.deepEqual(JSON.parse(readFileSync(join(s.repo, 'shared/settings.json'), 'utf8')).permissions.deny, want.deny);
+  // A link that leads out of the repository is not followed.
   rmSync(file);
   symlinkSync(userFile, file);
   const linked = s.cli(['permissions', '--apply']);
@@ -703,7 +814,8 @@ test('winston permissions lists the rules; --apply adds only the missing ones an
 test('doctor reports the permission rules the project lacks', (t) => {
   const s = sandbox(t);
   s.fake('gh', 'exit 1');
+  const { allow, deny } = permissionRules({});
   mkdirSync(join(s.repo, '.claude'));
-  writeFileSync(join(s.repo, '.claude/settings.json'), JSON.stringify({ permissions: { allow: permissionRules({}).filter((r) => r !== 'Bash(gh pr review*)') } }));
-  assert.match(s.cli(['doctor']).stdout, /^off\s+project permission rules\s+— 1 of the \d+ allow rules Winston runs use are not in .*settings\.json: Bash\(gh pr review\*\) \(winston permissions --apply adds them\)$/m);
+  writeFileSync(join(s.repo, '.claude/settings.json'), JSON.stringify({ permissions: { allow: allow.filter((r) => r !== 'Bash(gh pr comment *)'), deny: deny.slice(1) } }));
+  assert.match(s.cli(['doctor']).stdout, /^off\s+project permission rules\s+— 1 allow and 1 deny rules Winston runs use are not in .*settings\.json: Bash\(gh pr comment \*\), Bash\(git push\*--force\*\) \(winston permissions --apply adds them\)$/m);
 });

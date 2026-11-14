@@ -16,7 +16,7 @@ function sandbox(t) {
   const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'winston-hooks-')));
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const home = join(tmp, 'winston');
-  const env = { ...process.env, WINSTON_HOME: home };
+  const env = { ...process.env, WINSTON_HOME: home, CLAUDE_CONFIG_DIR: join(tmp, 'claude'), WINSTON_UPDATE_URL: `file://${join(tmp, 'latest.json')}` };
   delete env.CLAUDE_SKIP_TAB_GUARD;
   const run = (hook, input, extra = {}, args = []) => {
     const r = spawnSync(process.execPath, [join(HOOKS, hook), ...args], { input: input === undefined ? '' : JSON.stringify(input), env: { ...env, ...extra }, encoding: 'utf8' });
@@ -216,4 +216,180 @@ echo '{"ok":true,"claims":[{"resource":"resource:orchestrator","session_id":"win
   assert.equal(stop({ transcript_path: join(s.tmp, 'missing') }), '', 'unreadable transcript fails open');
   assert.equal(stop({ turn_id: 'x' }).decision, 'block', 'Codex gets a block');
   assert.equal(stop({}, { ...env, WINSTON_SKIP_PARALLELISM_CHECK: '1' }), '');
+});
+
+// ---- start-branch
+
+function repoWithOrigin(t, config = { branches: { integration: 'staging', production: 'main' } }) {
+  const r = repoWithWorktree(t, config);
+  const origin = join(r.tmp, 'origin.git');
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+  r.git(r.main, 'remote', 'add', 'origin', origin);
+  r.git(r.main, 'push', '-q', 'origin', 'main', 'main:staging');
+  r.git(r.main, 'fetch', '-q', 'origin');
+  r.git(r.main, 'branch', '-q', '--track', 'staging', 'origin/staging');
+  // A commit that reaches origin/staging from elsewhere, as a merged pull request does.
+  r.advance = () => {
+    r.git(r.wt, 'commit', '-q', '--allow-empty', '-m', 'merged elsewhere');
+    r.git(r.wt, 'push', '-q', 'origin', 'HEAD:staging');
+    return r.git(r.wt, 'rev-parse', 'HEAD');
+  };
+  r.start = (cwd = r.main, extra = {}, input = {}) => {
+    const out = r.run('start-branch.mjs', { hook_event_name: 'SessionStart', source: 'startup', cwd, ...input }, { CI: '', GITHUB_ACTIONS: '', ...extra });
+    return out ? out.hookSpecificOutput.additionalContext : '';
+  };
+  return r;
+}
+
+test('start-branch: a clean main checkout on production moves to integration and fast-forwards', (t) => {
+  const r = repoWithOrigin(t);
+  const tip = r.advance();
+  assert.match(r.start(), /switched this checkout from main to staging \(fast-forwarded to [0-9a-f]{7}\)/);
+  assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'staging');
+  assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), tip);
+  assert.equal(r.start(), '', 'already on integration and current: silent');
+  const next = r.advance();
+  assert.match(r.start(), /^start-branch: staging fast-forwarded to/);
+  assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), next);
+});
+
+test('start-branch: leaves uncommitted changes, other branches, worktrees and opted-out repos alone', (t) => {
+  const r = repoWithOrigin(t);
+  writeFileSync(join(r.main, '.gitignore'), 'edited\n');
+  assert.match(r.start(), /on main with uncommitted changes, so it was left there/);
+  assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'main');
+  r.git(r.main, 'checkout', '-q', '--', '.gitignore');
+
+  r.git(r.main, 'switch', '-q', '-c', 'feature');
+  assert.equal(r.start(), '', 'a branch someone chose is not second-guessed');
+  assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'feature');
+  r.git(r.main, 'switch', '-q', 'main');
+
+  assert.equal(r.start(r.main, { GITHUB_ACTIONS: 'true' }), '', 'a CI checkout is the ref the workflow chose');
+  assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'main');
+
+  for (const source of ['resume', 'clear', 'compact']) assert.equal(r.start(r.main, {}, { source }), '', `${source} is the same session going on`);
+  assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'main');
+
+  // A linked worktree that is itself on production, clean: still never switched.
+  r.git(r.main, 'switch', '-q', '--detach');
+  r.git(r.wt, 'switch', '-q', 'main');
+  assert.equal(r.start(r.wt), '', 'a linked worktree is never switched');
+  assert.equal(r.git(r.wt, 'symbolic-ref', '--short', 'HEAD'), 'main');
+  assert.equal(r.start(), '', 'a detached HEAD is left alone');
+  r.git(r.wt, 'switch', '-q', 'worktree-thing');
+  r.git(r.main, 'switch', '-q', 'main');
+
+  // Staged-only changes count as uncommitted; an untracked file in the way stops the switch and survives.
+  writeFileSync(join(r.main, '.gitignore'), 'staged\n');
+  r.git(r.main, 'add', '.gitignore');
+  assert.match(r.start(), /uncommitted changes, so it was left there/);
+  r.git(r.main, 'reset', '-q', '--hard');
+
+  writeFileSync(join(r.main, '.winston/config.json'), JSON.stringify({ branches: { integration: 'staging', production: 'main' }, startBranch: false }));
+  r.git(r.main, 'commit', '-qam', 'opt out');
+  assert.equal(r.start(), '');
+  assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'main');
+});
+
+test('start-branch: a branch name from config never reaches git as an option', (t) => {
+  for (const integration of ['--upload-pack=touch PWNED;', '--detach', '-f', 'a..b', 7]) {
+    const r = repoWithOrigin(t, { branches: { integration, production: 'main' } });
+    assert.match(r.start(), /not a plain branch name, so nothing was done/, String(integration));
+    assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'main');
+    assert.ok(!existsSync(join(r.main, 'PWNED')));
+  }
+});
+
+test('start-branch: says what it could not do, and why', (t) => {
+  const r = repoWithOrigin(t);
+  r.git(r.main, 'remote', 'set-url', 'origin', join(r.tmp, 'gone.git'));
+  assert.match(r.start(), /switched this checkout from main to staging \(origin could not be reached, so it may be behind\)/);
+  r.git(r.main, 'remote', 'set-url', 'origin', join(r.tmp, 'origin.git'));
+
+  // An untracked file where an incoming commit adds one: not "diverged", and the file survives.
+  r.git(r.wt, 'switch', '-q', '--detach', 'origin/staging');
+  writeFileSync(join(r.wt, 'incoming.txt'), 'theirs\n');
+  r.git(r.wt, 'add', 'incoming.txt');
+  r.git(r.wt, 'commit', '-qm', 'adds a file');
+  r.git(r.wt, 'push', '-q', 'origin', 'HEAD:staging');
+  writeFileSync(join(r.main, 'incoming.txt'), 'mine\n');
+  const blocked = r.start();
+  assert.match(blocked, /behind origin and could not be fast-forwarded: /);
+  assert.doesNotMatch(blocked, /diverged/);
+  assert.equal(readFileSync(join(r.main, 'incoming.txt'), 'utf8'), 'mine\n');
+});
+
+test('start-branch: local commits on integration are never rewritten', (t) => {
+  const r = repoWithOrigin(t);
+  r.git(r.main, 'switch', '-q', 'staging');
+  r.git(r.main, 'commit', '-q', '--allow-empty', '-m', 'local only');
+  const local = r.git(r.main, 'rev-parse', 'HEAD');
+  assert.match(r.start(), /^start-branch: staging ahead of origin, with commits not pushed\.$/);
+  assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), local);
+  r.advance();
+  assert.match(r.start(), /staging diverged from origin\/staging, left as is/);
+  assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), local);
+});
+
+// ---- update-check
+
+function updates(t) {
+  const s = sandbox(t);
+  const have = JSON.parse(readFileSync(resolve(HOOKS, '../.claude-plugin/plugin.json'), 'utf8')).version;
+  const latest = (v) => writeFileSync(join(s.tmp, 'latest.json'), JSON.stringify({ version: v }));
+  const start = (input = {}, extra = {}) => s.run('update-check.mjs', { hook_event_name: 'SessionStart', source: 'startup', cwd: s.tmp, ...input }, { CI: '', GITHUB_ACTIONS: '', ...extra });
+  const cache = join(s.home, 'state/update-check/latest.json');
+  return { ...s, have, latest, start, cache };
+}
+
+test('update-check: a new session is told a newer Winston is out and how to get it', (t) => {
+  const u = updates(t);
+  u.latest('99.0.0');
+  const out = u.start();
+  assert.equal(out.systemMessage, `Winston 99.0.0 is available; ${u.have} is installed. To update, run \`claude plugin marketplace update winston && claude plugin update winston@winston\`, then restart Claude Code (inside a session, type it after \`!\`, or use /plugin).`);
+  assert.ok(out.hookSpecificOutput.additionalContext.startsWith(out.systemMessage));
+  assert.match(out.hookSpecificOutput.additionalContext, /Tell the user this, with the exact update steps/);
+  assert.match(u.start({ turn_id: 't1' }).systemMessage, /run `codex plugin marketplace upgrade winston`, then `codex plugin add winston@winston`/, 'Codex gets Codex\'s commands');
+});
+
+test('update-check: this project\'s own install is updated at project scope', (t) => {
+  const u = updates(t);
+  u.latest('99.0.0');
+  mkdirSync(join(u.tmp, 'claude/plugins'), { recursive: true });
+  const entry = (scope, projectPath) => ({ scope, projectPath, installPath: resolve(HOOKS, '..') });
+  writeFileSync(join(u.tmp, 'claude/plugins/installed_plugins.json'), JSON.stringify({ plugins: { 'winston@winston': [entry('user'), entry('project', join(u.tmp, 'proj'))] } }));
+  assert.doesNotMatch(u.start().systemMessage, /--scope project/, 'another project\'s install does not count');
+  assert.match(u.start({ cwd: join(u.tmp, 'proj/sub') }).systemMessage, /claude plugin update winston@winston --scope project` from this project's directory/);
+});
+
+test('update-check: silent when current, unknown, not a new session, in CI or turned off', (t) => {
+  const u = updates(t);
+  assert.equal(u.start(), '', 'latest unknown');
+  rmSync(u.cache);
+  u.latest(u.have);
+  assert.equal(u.start(), '', 'current');
+  rmSync(u.cache);
+  u.latest('99.0.0');
+  for (const source of ['resume', 'clear', 'compact']) assert.equal(u.start({ source }), '', source);
+  assert.equal(u.start({}, { GITHUB_ACTIONS: 'true' }), '', 'CI');
+  u.userConfig({ updateCheck: false });
+  assert.equal(u.start(), '', 'updateCheck: false');
+  assert.ok(!existsSync(u.cache), 'none of those asked for the latest version');
+});
+
+test('update-check: asks for the latest version once, then answers from the cache', (t) => {
+  const u = updates(t);
+  u.latest('99.0.0');
+  assert.match(u.start().systemMessage, /99\.0\.0/);
+  u.latest('100.0.0');
+  assert.match(u.start().systemMessage, /99\.0\.0/, 'under a day old: the cached answer');
+  const stale = (latest, ageMs) => writeFileSync(u.cache, JSON.stringify({ checkedAt: Date.now() - ageMs, latest }));
+  stale('99.0.0', 25 * 60 * 60 * 1000);
+  assert.match(u.start().systemMessage, /100\.0\.0/, 'over a day old: asked again');
+  // A failed lookup is remembered for an hour, so an offline machine is not asked every session.
+  stale(null, 10 * 60 * 1000);
+  assert.equal(u.start(), '');
+  stale(null, 61 * 60 * 1000);
+  assert.match(u.start().systemMessage, /100\.0\.0/);
 });

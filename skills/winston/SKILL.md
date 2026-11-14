@@ -271,8 +271,13 @@ In order:
    step 7 found rules to add, show them here too, as one step for the owner: the single
    command `winston permissions --apply` (with the `--add` rules from step 7), which the
    owner runs themselves, in their terminal or with the `!` prefix. It adds the missing
-   rules to `permissions.allow` in the project's `.claude/settings.json`, prints exactly
-   what it added, and keeps every existing rule and the deny and ask lists. Never run
+   rules to `permissions.allow` in the project's `.claude/settings.json`, and a short
+   `permissions.deny` list beside them: an allow pattern cannot leave out a flag, so
+   `git push origin *` alone would also cover a force push, a push to the production
+   branch and a branch deletion, and `gh pr review * --comment*` an approval. Deny wins
+   over allow, so those stay blocked. It prints the allow and the deny additions
+   separately, keeps every existing rule, and never removes or loosens a deny or ask
+   entry. Never run
    `--apply` yourself, never edit a settings file to grant yourself a permission, and never
    hand the owner a multi-line block to paste into `/permissions`: that dialog takes a
    pasted block as one rule, which matches nothing.

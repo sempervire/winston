@@ -25,6 +25,13 @@ absent or has no triage rules, so a triage run changes nothing; `/winston:init` 
 workflow line means this account cannot see them, not that they are missing. Never create a token or
 set a secret yourself.
 
-`off` on `project permission rules` lists the allow rules a Winston run uses that the
-project's `.claude/settings.json` lacks. The fix is one command the owner runs,
+`off` on `triage policy blanks` means the policy still has lines that say "fill this in"
+or hold a `{{placeholder}}`; the owner writes those values.
+
+`off` on `project permission rules` counts the allow and deny rules a Winston run uses that
+the project's `.claude/settings.json` lacks (deny wins over allow). The fix is one command the owner runs,
 `winston permissions --apply`; relay it, never run it yourself.
+
+When the output ends with an **Update Winston:** line, a newer version is out. Give the
+user that line as it stands, command included: they run it and restart. Do not run the
+update yourself; it replaces the hooks and skills this session is running on.

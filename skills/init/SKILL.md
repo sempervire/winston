@@ -77,8 +77,15 @@ It runs in five steps and never skips the first two.
 of the Claude Code allow rules a Winston run uses, so those actions would prompt mid-run.
 Relay its one command, `winston permissions --apply`, for the owner to run themselves (in
 their terminal, or with the `!` prefix). Never run `--apply` yourself or edit a settings
-file to grant yourself a permission. It writes only the project's `.claude/settings.json`;
-an allow rule never clears a deny or ask rule, a hook, production approval or a secret grant.
+file to grant yourself a permission. It writes only the project's `.claude/settings.json`:
+the allow rules, and a short deny list for what an allow pattern cannot leave out (force
+pushes, pushes to the production branch, PR approvals, forced deletions). Deny wins over
+allow, and an allow rule never clears a deny or ask rule, a hook, production approval or a
+secret grant.
+
+**Values to fill in** lists lines of the new `TRIAGE.md` that say "fill this in", where
+the config had no value (an owner, a branch, a board number). They are the owner's to
+write; relay the lines.
 
 A plan line that writes `TRIAGE.md` means the repo's triage policy (config `triage.policy`)
 is missing or holds no triage rules: no heading that names triage and no `risk:` tier. The
