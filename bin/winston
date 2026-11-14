@@ -182,6 +182,11 @@ function writeTriageWorkflow(wf) {
   copyFileSync(join(ROOT, 'templates', 'triage-on-new-issue.yml'), wf)
 }
 
+function writeTriagePolicy(policyPath) {
+  mkdirSync(dirname(policyPath), { recursive: true })
+  copyFileSync(join(ROOT, 'templates', 'TRIAGE.md'), policyPath)
+}
+
 /**
  * Every check, in report order: { name, state: ok|missing|on|off, detail, required, fix?, hand?, scope? }.
  * `planned` is init's proposal for a repo with no config yet: { config, newBoard, noRepo, firstCommit }.
@@ -360,6 +365,17 @@ export function checks(cwd, planned = null) {
       detail: !secrets.ok ? 'cannot list the repo\'s secrets from this account' : lacking.length ? `not set: ${lacking.join(', ')} — new issues are not triaged automatically until they are` : 'new issues are triaged automatically',
     })
   }
+
+  const policyPath = join(root, config.triage?.policy ?? 'TRIAGE.md')
+  // init's first commit, when it makes one, writes the policy itself.
+  const hasPolicy = existsSync(policyPath) || !!planned?.firstCommit
+  add({
+    name: 'triage policy', state: hasPolicy ? 'ok' : 'missing', detail: policyPath,
+    fix: !hasPolicy && {
+      plan: `write ${policyPath} from the starter template (/winston:triage does not run without one)`,
+      run: () => writeTriagePolicy(policyPath),
+    },
+  })
 
   // Optional: features that use these degrade cleanly without them.
   add({ name: 'codex CLI', required: false, state: onPath('codex') ? 'on' : 'off', detail: 'Rex, /winston:codex' })
@@ -549,6 +565,7 @@ function bootstrap(cwd, sit, opts) {
   }
   const configPath = join(root, '.winston', 'config.json')
   const wf = join(root, '.github', 'workflows', DEFAULT_TRIAGE_WORKFLOW)
+  const policyPath = join(root, config.triage.policy)
   const must = (r, what) => { if (!r.ok) throw new Error(`${what}: ${r.err || r.out}`) }
 
   const steps = []
@@ -585,12 +602,15 @@ function bootstrap(cwd, sit, opts) {
     run: () => { mkdirSync(dirname(configPath), { recursive: true }); writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n') },
   })
   if (!sit.hasCommits) {
+    const writePolicy = !present(config.triage.policy)
     steps.push({
-      plan: 'make the first commit: the Winston config and the triage workflow, nothing else',
+      plan: `make the first commit: the Winston config, the triage workflow${writePolicy ? ` and a starter ${config.triage.policy}` : ''}, nothing else`,
       run: () => {
         writeTriageWorkflow(wf)
-        must(git('add', '--', configPath, wf), 'git add')
-        must(git('commit', '-q', '-m', 'Add Winston configuration', '--', configPath, wf), 'git commit')
+        const files = [configPath, wf]
+        if (writePolicy) { writeTriagePolicy(policyPath); files.push(policyPath) }
+        must(git('add', '--', ...files), 'git add')
+        must(git('commit', '-q', '-m', 'Add Winston configuration', '--', ...files), 'git commit')
       },
     })
   }
@@ -617,8 +637,11 @@ function bootstrap(cwd, sit, opts) {
   }
 
   const notes = []
-  if (sit.hasCommits) notes.push(`Commit ${configPath} and ${wf} to ${production}: GitHub runs the triage workflow from the default branch only.`)
-  if (!present(config.triage.policy)) notes.push(`There is no ${config.triage.policy}: /winston:triage does not run without a policy. Write one, or point triage.policy in the config at the doc that holds your triage rules.`)
+  if (sit.hasCommits) {
+    const files = [configPath, wf, ...(present(config.triage.policy) ? [] : [policyPath])]
+    const list = files.length > 2 ? `${files.slice(0, -1).join(', ')} and ${files.at(-1)}` : files.join(' and ')
+    notes.push(`Commit ${list} to ${production}: GitHub runs the triage workflow from the default branch only.`)
+  }
   notes.push(`No deploy gate is set. If merges into ${production} deploy, add deployGate to the config (see the README).`)
   return { steps, notes, planned: { config, newBoard, noRepo, firstCommit: !sit.hasCommits } }
 }

@@ -87,6 +87,7 @@ test('doctor on a repo with no config says it is not set up and points at init',
   assert.match(doc.stdout, /^missing\s+repo config/m);
   assert.match(doc.stdout, /^missing\s+triage labels\s+— missing: risk: low/m);
   assert.match(doc.stdout, /^missing\s+triage-on-new-issue workflow/m);
+  assert.match(doc.stdout, /^missing\s+triage policy/m);
   assert.match(doc.stdout, /^(on|off)\s+codex CLI/m);
   assert.match(doc.stdout, /Not set up for Winston here\. winston init asks which setup fits: join, new or adopt\.\n$/);
 });
@@ -282,7 +283,9 @@ test('init --mode new creates the repo, both branches, the board and the config,
   assert.match(plan.stdout, /create the private GitHub repository pat\/repo/);
   assert.match(plan.stdout, /create branch staging on origin from main/);
   assert.match(plan.stdout, /create labels: risk: low/);
+  assert.match(plan.stdout, /make the first commit: the Winston config, the triage workflow and a starter TRIAGE\.md, nothing else/);
   assert.doesNotMatch(plan.stdout, /write .*triage-on-new-issue\.yml from the template/, 'the first commit writes the workflow; it is not planned twice');
+  assert.doesNotMatch(plan.stdout, /write .*TRIAGE\.md from the starter template/, 'the first commit writes the policy; it is not planned twice');
   assert.match(plan.stdout, /In the browser[^]*open the new board's Workflows page, choose "Auto-add to project"/);
   assert.doesNotMatch(plan.stdout, /set Status to New/, 'a new project already has "Item added" on, and init points it at New');
   assert.ok(!existsSync(join(s.repo, '.winston')), 'no --yes, no change');
@@ -295,7 +298,8 @@ test('init --mode new creates the repo, both branches, the board and the config,
   assert.deepEqual(config.board, { owner: 'pat', number: 7, statuses: ['New', 'Ready', 'Verify', 'Verified'], priorityField: 'Priority' });
   assert.equal(config.owner, 'Pat');
   assert.deepEqual(originHeads(s), ['main', 'staging']);
-  assert.deepEqual(s.git('show', '--name-only', '--format=', 'HEAD').split('\n').sort(), ['.github/workflows/triage-on-new-issue.yml', '.winston/config.json'], 'the first commit holds only what init wrote');
+  assert.deepEqual(s.git('show', '--name-only', '--format=', 'HEAD').split('\n').sort(), ['.github/workflows/triage-on-new-issue.yml', '.winston/config.json', 'TRIAGE.md'], 'the first commit holds only what init wrote');
+  assert.equal(readFileSync(join(s.repo, 'TRIAGE.md'), 'utf8'), readFileSync(join(ROOT, 'templates/TRIAGE.md'), 'utf8'), 'a from-scratch setup leaves a working policy, with no manual step');
   const calls = s.calls();
   assert.match(calls, /updateProjectV2Field[^\n]*\[\{id:"opt0",name:"New",color:BLUE,description:"Issues That Need To Be Evaluated"\},\{name:"Ready",color:GREEN[^\n]*\{id:"opt1",name:"In Progress",color:YELLOW[^\n]*\{name:"Verify",color:RED[^\n]*\{name:"Verified",color:GRAY[^\n]*\{id:"opt2",name:"Done",color:PURPLE/, 'six columns in order; each stock option kept by id, Todo as New so the board\'s own workflow sets it');
   assert.match(calls, /project field-create 7 --owner pat --name Start date --data-type DATE/);
@@ -324,8 +328,8 @@ test('init --mode adopt fits the config to the repo and adds to its board withou
   assert.match(plan.stdout, /add Status columns to the board, in Winston's order: New, In Progress, Verify, Verified, Done \(its existing options are kept as they are\)/);
   assert.match(plan.stdout, /show Labels on the cards of: Pilot/);
   assert.match(plan.stdout, /add a single-select Priority field/);
-  assert.match(plan.stdout, /Note: Commit .*config\.json and .*triage-on-new-issue\.yml to main/);
-  assert.match(plan.stdout, /Note: There is no TRIAGE\.md/);
+  assert.match(plan.stdout, /write .*TRIAGE\.md from the starter template \(\/winston:triage does not run without one\)/);
+  assert.match(plan.stdout, /Note: Commit .*config\.json, .*triage-on-new-issue\.yml and .*TRIAGE\.md to main/);
   assert.doesNotMatch(plan.stdout, /In the browser|By hand/, 'both intake workflows are on');
   assert.ok(!existsSync(join(s.repo, '.winston')));
 
@@ -341,6 +345,14 @@ test('init --mode adopt fits the config to the repo and adds to its board withou
   assert.match(calls, /updateProjectV2View\(input:\{viewId:\$viewId,configuration:\{visibleFieldIds:\["TITLE1","LABELS1"\]\}\}/, 'Labels is added to what the view already shows; its filter is not touched');
   assert.match(calls, /project field-create 3 --owner acme --name Priority/);
   assert.equal(s.git('rev-list', '--count', 'HEAD'), '1', 'an existing repo is not committed to');
+  assert.equal(readFileSync(join(s.repo, 'TRIAGE.md'), 'utf8'), readFileSync(join(ROOT, 'templates/TRIAGE.md'), 'utf8'), 'adopt also ends with a working policy, uncommitted');
+
+  // An existing policy is never overwritten.
+  writeFileSync(join(s.repo, 'TRIAGE.md'), 'Our own rules.\n');
+  rmSync(join(s.repo, '.winston'), { recursive: true });
+  assert.doesNotMatch(s.cli(['init', '--mode', 'adopt']).stdout, /TRIAGE\.md/, 'an existing policy needs no fix and no note');
+  s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.equal(readFileSync(join(s.repo, 'TRIAGE.md'), 'utf8'), 'Our own rules.\n', 'adopt on a repo with an existing policy leaves it untouched');
 
   // An existing staging-like branch is used, not a new one made.
   rmSync(join(s.repo, '.winston'), { recursive: true });
@@ -405,6 +417,7 @@ test('init --mode join reports access as the joiner\'s, repo gaps as the owner\'
   writeFileSync(join(s.tmp, 'labels'), 'risk: low\nrisk: medium\nrisk: high\nauto-merge\nauto-verify\nhuman-verify\n');
   mkdirSync(join(s.repo, '.github/workflows'), { recursive: true });
   writeFileSync(join(s.repo, '.github/workflows/triage-on-new-issue.yml'), '');
+  writeFileSync(join(s.repo, 'TRIAGE.md'), '# Rules\n');
   s.git('push', '-q', 'origin', 'main:staging');
   const ready = s.cli(['init', '--mode', 'join', '--yes']);
   assert.equal(ready.status, 0, ready.stdout);

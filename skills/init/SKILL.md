@@ -76,8 +76,7 @@ It runs in five steps and never skips the first two.
      `gh secret set CLAUDE_CODE_OAUTH_TOKEN` yourself once they give you the values. Without
      browser control, give them those same two lines to do by hand and wait.
 
-Anything under **By hand** needs a person: access someone else grants, or a missing policy
-file. Relay it as it stands.
+Anything under **By hand** needs a person: access someone else grants. Relay it as it stands.
 
 If the `winston` command is not on PATH, run it by its path inside the plugin
 (`<plugin root>/bin/winston`, the plugin root being two directories above this skill's
