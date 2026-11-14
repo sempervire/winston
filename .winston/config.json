@@ -15,9 +15,7 @@
     ],
     "priorityField": "Priority"
   },
-  "processDocs": [
-    "AGENTS.md"
-  ],
+  "processDocs": [],
   "triage": {
     "policy": "TRIAGE.md",
     "workflow": "triage-on-new-issue.yml",
