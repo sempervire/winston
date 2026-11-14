@@ -5,7 +5,7 @@ import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, rea
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { loadConfig, loadLayers } from '../lib/config.mjs';
-import { coveredBy, DOCTOR_POINTER, permissionRules, policyBlanks, policyState, tokenUrl } from '../bin/winston';
+import { coveredBy, DOCTOR_POINTER, firesOnNewIssue, permissionRules, policyBlanks, policyState, tokenUrl } from '../bin/winston';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const CLI = join(ROOT, 'bin/winston');
@@ -200,11 +200,14 @@ function fakeGh(s) {
     "secret list") if [ -f "${s.tmp}/secrets-denied" ]; then echo "HTTP 403: Resource not accessible" >&2; exit 1; fi; cat "${s.tmp}/secrets" 2>/dev/null; true;;
     "secret set"|"workflow run") echo "never run by winston" >&2; exit 1;;
     "run list") cat "${s.tmp}/runs" 2>/dev/null || exit 1;;
+    "issue list") if [ -f "${s.tmp}/issues-denied" ]; then exit 1; fi; cat "${s.tmp}/issues-bare" 2>/dev/null; true;;
+    "issue edit") : > "${s.tmp}/issues-bare";;
     "api graphql") case "$*" in
       *createProjectV2View*) echo '{"data":{"createProjectV2View":{"projectV2View":{"id":"VIEW1"}}}}';;
       *updateProjectV2View*) echo '{}';;
       *updateProjectV2Field*) echo '{}'; if [ -f "${s.tmp}/board-after.json" ]; then cp "${s.tmp}/board-after.json" "${s.tmp}/board.json"; fi;;
       *projectsV2*) cat "${s.tmp}/linked.json";;
+      *timelineItems*) cat "${s.tmp}/timeline.json" 2>/dev/null || echo '{"data":{"repository":{"issues":{"nodes":[]}}}}';;
       *) cat "${s.tmp}/board.json" 2>/dev/null || exit 1;;
       esac;;
     "api --method") case "$4" in
@@ -236,6 +239,9 @@ const boardJson = ({ options = ['New', 'Ready', 'In Progress', 'Verify', 'Verifi
 const KANBAN = [{ id: 'VIEW9', name: 'Pilot', layout: 'BOARD_LAYOUT', fields: { nodes: [{ id: 'TITLE1', name: 'Title' }, { id: 'LABELS1', name: 'Labels' }] }, groupByFields: { nodes: [] }, verticalGroupByFields: { nodes: [{ name: 'Status' }] } }];
 const KANBAN_NO_LABELS = [{ ...KANBAN[0], fields: { nodes: [{ id: 'TITLE1', name: 'Title' }] } }];
 const INTAKE = ['Auto-add to project', 'Item added to project'];
+// Recent issues with their project events: [number, [[type, actor, board owner, board number], ...]].
+const BOT = 'github-project-automation';
+const timelineJson = (issues) => JSON.stringify({ data: { repository: { issues: { nodes: issues.map(([number, events]) => ({ number, timelineItems: { nodes: events.map(([type, login, owner, n]) => ({ __typename: type === 'add' ? 'AddedToProjectV2Event' : 'ProjectV2ItemStatusChangedEvent', actor: { login }, project: { number: n, owner: { login: owner } } })) } })) } } } });
 const linkedJson = (boards) => JSON.stringify({ data: { repository: { projectsV2: { nodes: boards.map(([login, number, title]) => ({ number, title, closed: false, owner: { login } })) } } } });
 
 // An existing repo: one commit holding AGENTS.md on main, pushed to a bare origin.
@@ -366,6 +372,274 @@ test('init --mode adopt fits the config to the repo and adds to its board withou
   assert.doesNotMatch(s.cli(['init', '--mode', 'adopt', '--integration', 'develop']).stdout, /create branch/);
 });
 
+test('with a config already here, init creates the integration branch it names when origin lacks it', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  existingRepo(s);
+  mkdirSync(join(s.repo, '.winston'));
+  const write = (branches) => writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ branches, board: { owner: 'acme', number: 1 }, phase: false }));
+  write({ integration: 'staging', production: 'main' });
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
+  writeFileSync(join(s.tmp, 'milestones'), 'Pilot\n');
+  writeFileSync(join(s.tmp, 'labels'), 'risk: low\nrisk: medium\nrisk: high\nauto-merge\nauto-verify\nhuman-verify\n');
+  writeFileSync(join(s.repo, 'TRIAGE.md'), '# Triage policy\n');
+  mkdirSync(join(s.repo, '.github/workflows'), { recursive: true });
+  writeFileSync(join(s.repo, '.github/workflows/triage-on-new-issue.yml'), '');
+
+  assert.match(s.cli(['doctor']).stdout, /\d\. integration branch on origin\n   Why: [^\n]+\n   Fix:\n     winston init --mode adopt   \([^\n]*create branch staging on origin from main\)/);
+  const plan = s.cli(['init', '--mode', 'adopt']);
+  assert.match(plan.stdout, /would:\n\s+- create branch staging on origin from main\n/);
+  assert.doesNotMatch(plan.stdout, /By hand/);
+  assert.deepEqual(originHeads(s), ['main'], 'a plan changes nothing');
+
+  const made = s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.equal(made.status, 0, made.stdout + made.stderr);
+  assert.match(made.stdout, /done\s+create branch staging on origin from main/);
+  assert.deepEqual(originHeads(s), ['main', 'staging']);
+  assert.match(s.cli(['doctor']).stdout, /^done\s+integration branch on origin\s+— staging$/m);
+
+  // join changes nothing on GitHub: the gap stays the owner's.
+  write({ integration: 'develop', production: 'main' });
+  assert.match(s.cli(['init', '--mode', 'join', '--yes']).stdout, /They are [^\n]* to close[^]*- integration branch on origin — develop/);
+  assert.deepEqual(originHeads(s), ['main', 'staging']);
+
+  // A production branch origin lacks is a wrong config, not something to create.
+  write({ integration: 'develop', production: 'release' });
+  const wrong = s.cli(['init', '--mode', 'adopt']);
+  assert.doesNotMatch(wrong.stdout, /create branch/);
+  assert.match(wrong.stdout, /By hand:\n(\s+- [^\n]+\n)*\s+- integration branch on origin: develop\n/);
+});
+
+test('a workflow fires on a new issue when its on: names issues, with opened or with no types', () => {
+  const yes = [
+    'on: issues\n',
+    'on: [push, issues]\n',
+    'on:\n  issues:\n    types: [opened]\njobs: {}\n',
+    'on:\n  issues:\n    types:\n      - edited\n      - opened\n',
+    'on:\n  issues:\n  push:\n',
+    'on:\n  - issues\n',
+    '"on":\n  issues: { types: [opened, reopened] }\n',
+    'name: x\n# on: nothing\non:\n  workflow_dispatch:\n  issues:\n    types: [opened] # new ones\n',
+    'on:\n- issues\n- push\njobs: {}\n',
+    'on: {issues: {types: [opened]}, pull_request: {types: [closed]}}\n',
+    'on: {push: {}, issues}\n',
+    'on:\r\n  issues:\r\n    types: [opened]\r\n',
+  ];
+  const no = [
+    'on: push\n',
+    'on:\n  issues:\n    types: [closed, labeled]\n',
+    'on:\n  issue_comment:\n    types: [created]\n',
+    'on:\n  push:\njobs:\n  issues:\n    types: [opened]\n',
+    'jobs: {}\n',
+    'on: {issues: {types: [labeled]}, pull_request: {types: [opened]}}\n',
+    'on:\n  workflow_dispatch:\n    inputs:\n      issues:\n        description: how many\n',
+    'on:\n  push:\n    branches:\n      - issues\n',
+    'on:\n- push\n- pull_request\n',
+  ];
+  for (const text of yes) assert.equal(firesOnNewIssue(text), true, text);
+  for (const text of no) assert.equal(firesOnNewIssue(text), false, text);
+  assert.equal(firesOnNewIssue(readFileSync(join(ROOT, 'templates/triage-on-new-issue.yml'), 'utf8')), true);
+});
+
+test('a second workflow that triages new issues is the owner\'s choice: doctor reports it, init asks before writing', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  existingRepo(s);
+  s.git('push', '-q', 'origin', 'main:staging');
+  mkdirSync(join(s.repo, '.winston'));
+  const configPath = join(s.repo, '.winston/config.json');
+  const base = { branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, phase: false };
+  const reset = () => writeFileSync(configPath, JSON.stringify(base));
+  const config = () => JSON.parse(readFileSync(configPath, 'utf8'));
+  reset();
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
+  writeFileSync(join(s.tmp, 'milestones'), 'Pilot\n');
+  writeFileSync(join(s.tmp, 'labels'), 'risk: low\nrisk: medium\nrisk: high\nauto-merge\nauto-verify\nhuman-verify\n');
+  writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
+  writeFileSync(join(s.repo, 'TRIAGE.md'), '# Triage policy\n');
+  const dir = join(s.repo, '.github/workflows');
+  mkdirSync(dir, { recursive: true });
+  const ours = join(dir, 'triage-on-new-issue.yml');
+  const theirs = join(dir, 'auto-triage.yml');
+  const rival = () => writeFileSync(theirs, 'name: auto-triage\non:\n  issues:\n    types: [opened]\njobs:\n  triage:\n    steps:\n      - run: echo "risk: high"\n');
+  // Runs on a new issue and does not triage; a workflow that triages and runs on something else.
+  writeFileSync(join(dir, 'greet.yml'), 'on:\n  issues:\n    types: [opened]\njobs:\n  hello:\n    steps:\n      - run: echo welcome\n');
+  writeFileSync(join(dir, 'label.yml'), 'name: Label new issues\non:\n  issues:\n    types: [opened]\njobs:\n  label:\n    steps:\n      - run: gh issue edit "$N" --add-label needs-triage\n');
+  writeFileSync(join(dir, 'weekly.yml'), 'on:\n  schedule:\n    - cron: "0 6 * * 1"\njobs:\n  triage:\n    steps:\n      - run: echo sweep\n');
+
+  // Only Winston's: nothing new.
+  writeFileSync(ours, '');
+  assert.doesNotMatch(s.cli(['doctor']).stdout, /triage workflow conflicts/);
+  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /very required check passes\. Nothing was changed/);
+
+  // Both on disk: doctor reports it, and init asks rather than guess.
+  rival();
+  const doc = s.cli(['doctor']);
+  assert.match(doc.stdout, /^needs you\s+triage workflow conflicts\s+— auto-triage\.yml also triages every new issue$/m);
+  assert.match(doc.stdout, /\d\. triage workflow conflicts\n   Why: Two workflows[^\n]+\n   Fix:\n     auto-triage\.yml and triage-on-new-issue\.yml would both triage every new issue[^\n]*--triage keep[^\n]*--triage replace[^\n]*--triage both/);
+  assert.doesNotMatch(doc.stdout, /greet\.yml|weekly\.yml|label\.yml/);
+  const asked = s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.equal(asked.status, 0, asked.stdout);
+  assert.match(asked.stdout, /Triage workflow, your choice: auto-triage\.yml also triages every new issue, and Winston's would too\. Rerun with one of:\n  --triage keep  [^\n]+\n  --triage replace [^\n]+\n  --triage both  [^\n]+\nUntil you choose, init leaves the triage workflows as they are\./);
+  assert.ok(existsSync(ours) && existsSync(theirs), 'nothing is deleted without the choice');
+  assert.equal(s.cli(['init', '--mode', 'adopt', '--triage', 'sometimes']).status, 2);
+
+  // replace: Winston's stays, the other goes.
+  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace']).stdout, /would:\n\s+- make Winston's workflow the only triage: delete .*auto-triage\.yml/);
+  assert.ok(existsSync(theirs), 'a plan changes nothing');
+  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace', '--yes']).stdout, /done\s+make Winston's workflow the only triage[^]*Note: Commit the deletion of .*auto-triage\.yml to main: until then it still runs on every new issue/);
+  assert.ok(existsSync(ours) && !existsSync(theirs) && existsSync(join(dir, 'greet.yml')));
+  assert.doesNotMatch(s.cli(['doctor']).stdout, /triage workflow conflicts/);
+
+  // both: recorded, so it is asked once.
+  rival();
+  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'both', '--yes']).stdout, /done\s+keep both, knowingly: record auto-triage\.yml under triage\.alongside/);
+  assert.deepEqual(config().triage, { alongside: ['auto-triage.yml'] });
+  assert.ok(existsSync(ours) && existsSync(theirs));
+  assert.doesNotMatch(s.cli(['doctor']).stdout, /triage workflow conflicts/);
+
+  // keep: the other stays, Winston's goes, and doctor stops asking for it.
+  reset();
+  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'keep', '--yes']).stdout, /done\s+keep auto-triage\.yml as this repository's triage: delete .*triage-on-new-issue\.yml, and set triage\.workflow to false/);
+  assert.ok(!existsSync(ours) && existsSync(theirs));
+  assert.equal(config().triage.workflow, false);
+  const kept = s.cli(['doctor']);
+  assert.match(kept.stdout, /^off\s+triage-on-new-issue workflow\s+— not installed, by choice/m);
+  assert.doesNotMatch(kept.stdout, /triage workflow (conflicts|secrets|runs)/);
+  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /very required check passes\. Nothing was changed/);
+
+  // The other one first, Winston's not yet written: it is not written until the owner chooses.
+  reset();
+  const held = s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.match(held.stdout, /Triage workflow, your choice/);
+  assert.doesNotMatch(held.stdout, /Secrets the triage workflow needs|claude setup-token/, 'no secrets steps for a workflow that is not being written');
+  assert.ok(!existsSync(ours));
+  assert.match(s.cli(['doctor']).stdout, /^off\s+triage-on-new-issue workflow\s+— not written: auto-triage\.yml already triages new issues$/m);
+  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace', '--yes']).stdout, /done\s+make Winston's workflow the only triage: write .*triage-on-new-issue\.yml from the template, and delete/);
+  assert.ok(existsSync(ours) && !existsSync(theirs));
+});
+
+test('a new issue gets the current phase\'s milestone: doctor reports hidden issues, init sets the phase and installs the workflow', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  existingRepo(s);
+  s.git('push', '-q', 'origin', 'main:staging');
+  mkdirSync(join(s.repo, '.winston'));
+  const configPath = join(s.repo, '.winston/config.json');
+  const write = (extra = {}) => writeFileSync(configPath, JSON.stringify({ branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, ...extra }));
+  const config = () => JSON.parse(readFileSync(configPath, 'utf8'));
+  const filtered = (...names) => names.map((name, i) => ({ ...KANBAN[0], id: `VIEW${i}`, name, filter: `milestone:"${name}" is:open` }));
+  write();
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: filtered('Pilot') }));
+  writeFileSync(join(s.tmp, 'milestones'), 'Pilot\nLater\n');
+  writeFileSync(join(s.tmp, 'labels'), 'risk: low\nrisk: medium\nrisk: high\nauto-merge\nauto-verify\nhuman-verify\n');
+  writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
+  writeFileSync(join(s.repo, 'TRIAGE.md'), '# Triage policy\n');
+  const dir = join(s.repo, '.github/workflows');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'triage-on-new-issue.yml'), '');
+  writeFileSync(join(s.tmp, 'issues-bare'), '7\n13\n');
+  const wf = join(dir, 'set-issue-phase.yml');
+
+  const doc = s.cli(['doctor']);
+  assert.equal(doc.status, 1);
+  assert.match(doc.stdout, /^needs you\s+issue phase\s+— new issues get no milestone, so a board view filtered to "Pilot" never shows them$/m);
+  assert.match(doc.stdout, /^needs you\s+issues without a milestone\s+— 2 open issues have no milestone and are hidden from a board view filtered to "Pilot"$/m);
+  assert.match(doc.stdout, /\d\. issue phase\n   Why: A board view filtered to a milestone hides[^\n]+\n   Fix:\n     winston init --mode adopt   \([^\n]*give every new issue the milestone "Pilot"/);
+
+  const plan = s.cli(['init', '--mode', 'adopt']);
+  assert.match(plan.stdout, /- give every new issue the milestone "Pilot": set "phase" to it in .*config\.json, and write .*set-issue-phase\.yml \(it takes effect once it and the config are committed to the default branch/);
+  assert.match(plan.stdout, /- set the milestone "Pilot" on the 2 open issues that have none \(#7, #13\), so the board view shows them; an issue that has a milestone is not touched/);
+  assert.ok(!existsSync(wf) && config().phase === undefined, 'a plan changes nothing');
+  assert.doesNotMatch(s.calls(), /issue edit/);
+
+  const made = s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.equal(made.status, 0, made.stdout + made.stderr);
+  assert.equal(config().phase, 'Pilot');
+  assert.match(made.stdout, /Note: Commit .*config\.json and .*set-issue-phase\.yml to main: GitHub runs the phase workflow from the default branch only/);
+  assert.match(plan.stdout, /Note: Commit .*set-issue-phase\.yml to main/);
+  assert.deepEqual(config().board, { owner: 'acme', number: 1 }, 'the rest of the config is as it was');
+  assert.equal(readFileSync(wf, 'utf8'), readFileSync(join(ROOT, 'templates/set-issue-phase.yml'), 'utf8'));
+  assert.match(s.calls(), /issue edit 7 --milestone Pilot\n[^]*issue edit 13 --milestone Pilot\n/);
+  const after = s.cli(['doctor']);
+  assert.match(after.stdout, /^done\s+issue phase\s+— new issues get the milestone "Pilot" once set-issue-phase\.yml and the config are committed to the default branch$/m);
+  s.git('add', '.winston', '.github');
+  s.git('commit', '-q', '-m', 'setup');
+  assert.match(s.cli(['doctor']).stdout, /^done\s+issue phase\s+— new issues get the milestone "Pilot"$/m);
+  assert.doesNotMatch(after.stdout, /issues without a milestone|triage workflow conflicts/, 'nothing reported when none is hidden; the phase workflow is not a second triage');
+  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /very required check passes\. Nothing was changed/);
+
+  // The phase is one line: a milestone that is not open is the owner's to correct.
+  write({ phase: 'Gone' });
+  assert.match(s.cli(['doctor']).stdout, /^needs you\s+issue phase\s+— phase is "Gone", which is not an open milestone$/m);
+  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /By hand:\n\s+- issue phase: set "phase" in .*config\.json to the current milestone \(open: Pilot, Later\), or to false/);
+
+  // Views filtered to several milestones: which is current is the owner's to say.
+  write();
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: filtered('Pilot', 'Later') }));
+  const several = s.cli(['doctor']);
+  assert.match(several.stdout, /^needs you\s+issue phase\s+— the board's views filter to several milestones \(Pilot, Later\) and none is named as current$/m);
+  assert.match(several.stdout, /add "phase": "<one of Pilot, Later>" to /);
+  assert.doesNotMatch(s.cli(['init', '--mode', 'adopt', '--yes']).stdout, /give every new issue/);
+  write({ phase: 'Later' });
+  assert.match(s.cli(['doctor']).stdout, /^done\s+issue phase\s+— new issues get the milestone "Later" once /m);
+
+  // A view that filters nothing, excludes a milestone, or names a closed one hides no
+  // issue a phase could show: nothing is proposed, and no issue is touched.
+  write();
+  rmSync(wf);
+  writeFileSync(join(s.tmp, 'issues-bare'), '7\n');
+  rmSync(join(s.tmp, 'gh-calls'));
+  for (const filter of [undefined, '-milestone:"Pilot"', 'milestone:"Closed one"', 'no:milestone']) {
+    writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: [{ ...KANBAN[0], filter }] }));
+    assert.doesNotMatch(s.cli(['doctor']).stdout, /issue phase|issues without a milestone/, String(filter));
+    assert.doesNotMatch(s.cli(['init', '--mode', 'adopt', '--yes']).stdout, /give every new issue|set the milestone/, String(filter));
+  }
+  assert.doesNotMatch(s.calls(), /issue edit/);
+  assert.ok(!existsSync(wf) && config().phase === undefined);
+  // A phase with no open milestone behind it is never called done.
+  writeFileSync(join(s.tmp, 'milestones'), '');
+  write({ phase: 'Phase 9' });
+  assert.match(s.cli(['doctor']).stdout, /^needs you\s+issue phase\s+— phase is "Phase 9", which is not an open milestone$/m);
+  writeFileSync(join(s.tmp, 'milestones'), 'Pilot\nLater\n');
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: filtered('Pilot', 'Later') }));
+  write({ phase: 'Later' });
+
+  // Issues that cannot be listed are unknown, never clean; phase: false goes without.
+  writeFileSync(join(s.tmp, 'issues-denied'), '');
+  assert.match(s.cli(['doctor']).stdout, /^could not check\s+issues without a milestone/m);
+  write({ phase: false });
+  assert.doesNotMatch(s.cli(['doctor']).stdout, /issue phase|issues without a milestone/);
+});
+
+test('with no board view yet, the phase is the milestone init is about to filter the new view to', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  existingRepo(s);
+  s.git('push', '-q', 'origin', 'main:staging');
+  mkdirSync(join(s.repo, '.winston'));
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 } }));
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE }));
+  writeFileSync(join(s.tmp, 'issues-bare'), '4\n');
+  const made = s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.equal(made.status, 0, made.stdout + made.stderr);
+  assert.match(made.stdout, /done\s+create a board view with Status columns, filtered to a milestone/);
+  assert.match(made.stdout, /done\s+give every new issue the milestone "Phase 1\.0"/);
+  assert.match(made.stdout, /done\s+set the milestone "Phase 1\.0" on the 1 open issue that has none \(#4\), so the board view shows it/);
+  assert.equal(JSON.parse(readFileSync(join(s.repo, '.winston/config.json'), 'utf8')).phase, 'Phase 1.0');
+  assert.match(s.calls(), /issue edit 4 --milestone Phase 1\.0\n/);
+});
+
+test('the phase workflow runs on a new issue and daily, needs no secret, and never changes a set milestone', () => {
+  const text = readFileSync(join(ROOT, 'templates/set-issue-phase.yml'), 'utf8');
+  assert.equal(firesOnNewIssue(text), true);
+  assert.match(text, /schedule:\n\s+- cron:/);
+  assert.match(text, /permissions:\n\s+contents: read\n\s+issues: write\n/);
+  assert.doesNotMatch(text, /secrets\./);
+  assert.match(text, /if \[ -z "\$has" \]; then\n\s+gh issue edit "\$n" --milestone "\$phase"/);
+  assert.doesNotMatch(text.slice(text.indexOf('run: |')), /\$\{\{/, 'nothing is interpolated into the script');
+});
+
 test('init --mode adopt asks which board when several are linked, and refuses a repo with no origin', (t) => {
   const s = sandbox(t);
   fakeGh(s);
@@ -396,7 +670,7 @@ test('init --mode join reports access as the joiner\'s, repo gaps as the owner\'
   assert.equal(s.cli(['init', '--mode', 'join']).status, 1, 'no config: not a Winston repo');
   existingRepo(s);
   mkdirSync(join(s.repo, '.winston'));
-  const repoConfig = JSON.stringify({ owner: 'Dana', branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 } });
+  const repoConfig = JSON.stringify({ owner: 'Dana', branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, phase: false });
   writeFileSync(join(s.repo, '.winston/config.json'), repoConfig);
 
   const plan = s.cli(['init', '--mode', 'join']);
@@ -438,9 +712,8 @@ test('doctor checks the board\'s two intake workflows and the triage workflow\'s
   writeFileSync(join(s.repo, '.github/workflows/triage-on-new-issue.yml'), '');
   writeFileSync(join(s.tmp, 'board.json'), boardJson({ options: ['Inbox', 'Ready', 'Verify', 'Verified'], workflows: ['Item added to project'], views: KANBAN }));
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\n');
-  // An issue exists, but github-project-automation[bot] never touched it: both sources agree it is off.
-  writeFileSync(join(s.tmp, 'issues'), '9\n');
-  writeFileSync(join(s.tmp, 'timeline-9'), 'commented\n');
+  // An issue exists, but the projects automation never touched it: both sources agree it is off.
+  writeFileSync(join(s.tmp, 'timeline.json'), timelineJson([[9, []]]));
   const off = s.cli(['doctor']);
   assert.equal(off.status, 1);
   assert.match(off.stdout, /^needs you\s+board auto-adds new issues\s+— the board's "Auto-add to project" workflow is off/m);
@@ -458,7 +731,7 @@ test('doctor checks the board\'s two intake workflows and the triage workflow\'s
   assert.doesNotMatch(on.stdout, /\d\. (board auto-adds|board sets|triage workflow)/);
 });
 
-test('doctor trusts github-project-automation[bot]\'s timeline over a stale workflows listing, and says "could not check" with no issues to read one from (#45)', (t) => {
+test('doctor takes the projects automation\'s events on this board as proof its intake runs, never another board\'s or a person\'s (#45)', (t) => {
   const s = sandbox(t);
   fakeGh(s);
   mkdirSync(join(s.repo, '.winston'));
@@ -466,8 +739,17 @@ test('doctor trusts github-project-automation[bot]\'s timeline over a stale work
   // The API's workflows listing omits "Auto-add to project" entirely (not merely disabled),
   // the exact shape #45 reports, yet the bot's own timeline on a recent issue shows it ran.
   writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: ['Item added to project'], views: KANBAN }));
-  writeFileSync(join(s.tmp, 'issues'), '44\n43\n');
-  writeFileSync(join(s.tmp, 'timeline-44'), 'added_to_project_v2\nproject_v2_item_status_changed\n');
+  // Another project auto-adds the repo's issues, and someone added them to this board by
+  // hand: the shape #45 found. Neither says this board's workflows are on.
+  writeFileSync(join(s.tmp, 'timeline.json'), timelineJson([
+    [43, [['add', BOT, 'acme', 1], ['status', BOT, 'acme', 1]]],
+    [44, [['add', BOT, 'acme', 1], ['status', BOT, 'acme', 1], ['add', 'pat', 'acme', 6], ['status', 'pat', 'acme', 6], ['add', BOT, 'other', 6]]],
+  ]));
+  const elsewhere = s.cli(['doctor']);
+  assert.match(elsewhere.stdout, /^needs you\s+board auto-adds new issues\s+— the board's "Auto-add to project" workflow is off$/m);
+  assert.match(elsewhere.stdout, /\d\. board auto-adds new issues\n/);
+  // The automation's own event on this board is.
+  writeFileSync(join(s.tmp, 'timeline.json'), timelineJson([[43, [['add', BOT, 'acme', 6]]], [44, [['add', BOT, 'acme', 6], ['status', BOT, 'acme', 6]]]]));
   const confirmed = s.cli(['doctor']);
   assert.match(confirmed.stdout, /^done\s+board auto-adds new issues\s+— on \(confirmed by issue #44's timeline\)$/m);
   assert.match(confirmed.stdout, /^done\s+board sets New on added items\s+— on; GitHub's API does not show which Status it sets$/m);
@@ -479,12 +761,12 @@ test('doctor trusts github-project-automation[bot]\'s timeline over a stale work
   rmSync(join(s.tmp, 'gh-calls'));
   const already = s.cli(['doctor']);
   assert.match(already.stdout, /^done\s+board auto-adds new issues$/m);
-  assert.doesNotMatch(s.calls(), /issues\/\d+\/timeline/, 'both workflows already read as on: the timeline is never consulted');
+  assert.doesNotMatch(s.calls(), /timelineItems/, 'both workflows already read as on: the timeline is never consulted');
 
   // No issues at all yet: neither source can be trusted over the other, so doctor says so
   // rather than sending the owner to redo a step that may already be on.
   writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: ['Item added to project'], views: KANBAN }));
-  rmSync(join(s.tmp, 'issues'));
+  rmSync(join(s.tmp, 'timeline.json'));
   const blind = s.cli(['doctor']);
   assert.match(blind.stdout, /^could not check {2}board auto-adds new issues\s+— could not check — file one test issue and rerun doctor$/m);
   assert.doesNotMatch(blind.stdout, /\d\. board auto-adds new issues/, 'not a required step: never counted as missing');
@@ -650,7 +932,7 @@ test('doctor flags a policy with no triage rules; init writes a starter, repoint
   s.git('push', '-q', 'origin', 'main:staging');
   mkdirSync(join(s.repo, '.winston'));
   const configPath = join(s.repo, '.winston/config.json');
-  const write = (policy) => writeFileSync(configPath, JSON.stringify({ owner: 'Dana', branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, triage: { policy, workflow: 'triage-on-new-issue.yml' } }));
+  const write = (policy) => writeFileSync(configPath, JSON.stringify({ owner: 'Dana', branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, phase: false, triage: { policy, workflow: 'triage-on-new-issue.yml' } }));
 
   // The repo's rules doc is named as the policy and says nothing about triage.
   write('AGENTS.md');
@@ -897,7 +1179,7 @@ function gappedRepo(s) {
   writeFileSync(join(s.repo, '.github/workflows/triage-on-new-issue.yml'), '');
   s.git('push', '-q', 'origin', 'main:staging');
   mkdirSync(join(s.repo, '.winston'));
-  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ owner: 'Dana', branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, triage: { policy: 'AGENTS.md', workflow: 'triage-on-new-issue.yml' } }));
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ owner: 'Dana', branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, phase: false, triage: { policy: 'AGENTS.md', workflow: 'triage-on-new-issue.yml' } }));
 }
 const lastLine = (out) => out.trimEnd().split('\n').at(-1);
 

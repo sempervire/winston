@@ -27,6 +27,14 @@ It runs in five steps and never skips the first two.
    `--board new`). Other choices the user may state: `--integration <branch>`,
    `--owner <name>`, and for a new project `--repo <owner>/<name>` and `--public` (the
    repository is private unless they ask otherwise).
+   If the plan has a **Triage workflow, your choice** block, the repo already has a
+   workflow that triages every new issue, and Winston's would be a second one. Ask the
+   user in a question box, in plain words, with the block's three lines as the options:
+   **keep** theirs (Winston installs none), **replace** it with Winston's (theirs is
+   deleted), or **both** (every new issue is triaged twice). Never pick for them. Rerun
+   the plan with `--triage <keep|replace|both>` and show it again before confirming. A
+   deleted workflow keeps running until the deletion is committed to the default branch:
+   offer to commit it with the config.
 3. **Confirm, then apply.** Ask the user to confirm in a question box, with the plan's
    actions as the question text. Silence or a general go-ahead given earlier is not
    confirmation. Only after an explicit yes, rerun the same command with `--yes`, show its
@@ -146,6 +154,19 @@ hold data, auth, money or release machinery), draft the three rows naming real p
 show them to the user; write them into `TRIAGE.md` only after an explicit yes. Then tell
 the user to review the file and commit it to the default branch, where the workflow reads
 it. init never overwrites an existing `TRIAGE.md` or edits the doc the config pointed at.
+
+A plan line that gives every new issue a milestone is the **issue phase**. The board view
+is filtered to one milestone, and a new issue has none, so without this it reaches the
+board and never appears in that view. init sets `phase` in the config to that milestone
+and writes `.github/workflows/set-issue-phase.yml`, which sets it on each new issue and
+once a day on any open issue with none; it needs no secret and never changes a milestone
+that is set. A second line sets the milestone on the open issues that have none now. Say
+in plain words that both only take effect once the workflow and the config are committed
+to the default branch, and offer to commit them. To move to the next phase the owner
+edits that one `phase` line. If doctor says the board's views filter to several
+milestones, ask the user which is the current one in a question box, write it as `phase`
+in `.winston/config.json` after their answer, and rerun the plan. `"phase": false` means
+the owner chose to go without.
 
 Anything under **By hand** needs a person: access someone else grants, or a missing policy
 file. Relay it as it stands.

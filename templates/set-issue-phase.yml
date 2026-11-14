@@ -1,0 +1,64 @@
+# Give every new issue the current phase's milestone, so a board view filtered to that
+# milestone shows it. Without this a new issue has no milestone, reaches the board, and is
+# hidden from the view everyone looks at.
+#
+# Installed by `winston init` as .github/workflows/set-issue-phase.yml. The current phase
+# is the `phase` key in .winston/config.json: the title of an open milestone. To move to
+# the next phase, edit that one line and commit it.
+#
+# Takes effect only from the DEFAULT branch, and reads the config from it: `issues` and
+# `schedule` are repository-level events, which GitHub runs from the default branch alone.
+#
+# It needs no secret: the workflow's own token sets a milestone. An issue that already
+# has a milestone is never changed. The daily run catches issues the `opened` event
+# missed (Actions down, or the workflow not yet installed when they were filed).
+name: Set a new issue's phase
+
+on:
+  issues:
+    types: [opened]
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: set-issue-phase-${{ github.event.issue.number || 'sweep' }}
+  cancel-in-progress: false
+
+jobs:
+  stamp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      # Through the environment, never interpolated into the script.
+      ISSUE: ${{ github.event.issue.number }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: .winston
+          sparse-checkout-cone-mode: false
+      - name: Set the milestone where there is none
+        run: |
+          phase=$(jq -r 'if (.phase | type) == "string" then .phase else "" end' .winston/config.json 2>/dev/null || true)
+          if [ -z "$phase" ]; then
+            echo "::notice::No phase is set in .winston/config.json, so there is nothing to do."
+            exit 0
+          fi
+          if [ -n "$ISSUE" ]; then
+            numbers=$ISSUE
+          else
+            numbers=$(gh issue list --state open --limit 500 --json number,milestone --jq '.[] | select(.milestone == null) | .number')
+          fi
+          for n in $numbers; do
+            has=$(gh issue view "$n" --json milestone --jq '.milestone.title // ""')
+            if [ -z "$has" ]; then
+              gh issue edit "$n" --milestone "$phase"
+              echo "#$n: $phase"
+            fi
+          done
