@@ -64,7 +64,9 @@ until they are done.
 | `/winston:doctor`, `/winston:init` | Check the setup Winston needs; join, create or adopt it. |
 
 Hooks: a production-deploy gate (blocks configured deploy actions until the owner types the
-approval phrase in that session), a secret-handling grant, session titles, worktree setup, a
+approval phrase in that session), a secret-handling grant, session titles, a starting-branch check (a session opened in the
+main checkout on the production branch is moved to the integration branch and
+fast-forwarded, when the checkout is clean), worktree setup, a
 browser-tab guard, and a once-per-turn Parallelism check nudge in Winston sessions (those
 holding chattr's `resource:orchestrator` claim).
 
@@ -92,6 +94,7 @@ Top-level keys merge shallowly; the repo wins. See `templates/config.sample.json
 | `advisors` | Repo-specific agent names for Debbie, Sheldon and Radar. |
 | `deployGate` | Approval phrase and the guarded actions (`pr-merge` into a base, `workflow-run`). |
 | `secretGrant` | The phrase that grants secret handling for one session. |
+| `startBranch` | `false` leaves the main checkout on whatever branch it is on at session start. |
 | `worktree`, `launcher` | Files copied or linked into new worktrees; the repo the launchers open. |
 
 The repo's process docs always win over Winston where they conflict.

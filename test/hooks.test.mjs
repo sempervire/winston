@@ -217,3 +217,117 @@ echo '{"ok":true,"claims":[{"resource":"resource:orchestrator","session_id":"win
   assert.equal(stop({ turn_id: 'x' }).decision, 'block', 'Codex gets a block');
   assert.equal(stop({}, { ...env, WINSTON_SKIP_PARALLELISM_CHECK: '1' }), '');
 });
+
+// ---- start-branch
+
+function repoWithOrigin(t, config = { branches: { integration: 'staging', production: 'main' } }) {
+  const r = repoWithWorktree(t, config);
+  const origin = join(r.tmp, 'origin.git');
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+  r.git(r.main, 'remote', 'add', 'origin', origin);
+  r.git(r.main, 'push', '-q', 'origin', 'main', 'main:staging');
+  r.git(r.main, 'fetch', '-q', 'origin');
+  r.git(r.main, 'branch', '-q', '--track', 'staging', 'origin/staging');
+  // A commit that reaches origin/staging from elsewhere, as a merged pull request does.
+  r.advance = () => {
+    r.git(r.wt, 'commit', '-q', '--allow-empty', '-m', 'merged elsewhere');
+    r.git(r.wt, 'push', '-q', 'origin', 'HEAD:staging');
+    return r.git(r.wt, 'rev-parse', 'HEAD');
+  };
+  r.start = (cwd = r.main, extra = {}, input = {}) => {
+    const out = r.run('start-branch.mjs', { hook_event_name: 'SessionStart', source: 'startup', cwd, ...input }, { CI: '', GITHUB_ACTIONS: '', ...extra });
+    return out ? out.hookSpecificOutput.additionalContext : '';
+  };
+  return r;
+}
+
+test('start-branch: a clean main checkout on production moves to integration and fast-forwards', (t) => {
+  const r = repoWithOrigin(t);
+  const tip = r.advance();
+  assert.match(r.start(), /switched this checkout from main to staging \(fast-forwarded to [0-9a-f]{7}\)/);
+  assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'staging');
+  assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), tip);
+  assert.equal(r.start(), '', 'already on integration and current: silent');
+  const next = r.advance();
+  assert.match(r.start(), /^start-branch: staging fast-forwarded to/);
+  assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), next);
+});
+
+test('start-branch: leaves uncommitted changes, other branches, worktrees and opted-out repos alone', (t) => {
+  const r = repoWithOrigin(t);
+  writeFileSync(join(r.main, '.gitignore'), 'edited\n');
+  assert.match(r.start(), /on main with uncommitted changes, so it was left there/);
+  assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'main');
+  r.git(r.main, 'checkout', '-q', '--', '.gitignore');
+
+  r.git(r.main, 'switch', '-q', '-c', 'feature');
+  assert.equal(r.start(), '', 'a branch someone chose is not second-guessed');
+  assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'feature');
+  r.git(r.main, 'switch', '-q', 'main');
+
+  assert.equal(r.start(r.main, { GITHUB_ACTIONS: 'true' }), '', 'a CI checkout is the ref the workflow chose');
+  assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'main');
+
+  for (const source of ['resume', 'clear', 'compact']) assert.equal(r.start(r.main, {}, { source }), '', `${source} is the same session going on`);
+  assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'main');
+
+  // A linked worktree that is itself on production, clean: still never switched.
+  r.git(r.main, 'switch', '-q', '--detach');
+  r.git(r.wt, 'switch', '-q', 'main');
+  assert.equal(r.start(r.wt), '', 'a linked worktree is never switched');
+  assert.equal(r.git(r.wt, 'symbolic-ref', '--short', 'HEAD'), 'main');
+  assert.equal(r.start(), '', 'a detached HEAD is left alone');
+  r.git(r.wt, 'switch', '-q', 'worktree-thing');
+  r.git(r.main, 'switch', '-q', 'main');
+
+  // Staged-only changes count as uncommitted; an untracked file in the way stops the switch and survives.
+  writeFileSync(join(r.main, '.gitignore'), 'staged\n');
+  r.git(r.main, 'add', '.gitignore');
+  assert.match(r.start(), /uncommitted changes, so it was left there/);
+  r.git(r.main, 'reset', '-q', '--hard');
+
+  writeFileSync(join(r.main, '.winston/config.json'), JSON.stringify({ branches: { integration: 'staging', production: 'main' }, startBranch: false }));
+  r.git(r.main, 'commit', '-qam', 'opt out');
+  assert.equal(r.start(), '');
+  assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'main');
+});
+
+test('start-branch: a branch name from config never reaches git as an option', (t) => {
+  for (const integration of ['--upload-pack=touch PWNED;', '--detach', '-f', 'a..b', 7]) {
+    const r = repoWithOrigin(t, { branches: { integration, production: 'main' } });
+    assert.match(r.start(), /not a plain branch name, so nothing was done/, String(integration));
+    assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'main');
+    assert.ok(!existsSync(join(r.main, 'PWNED')));
+  }
+});
+
+test('start-branch: says what it could not do, and why', (t) => {
+  const r = repoWithOrigin(t);
+  r.git(r.main, 'remote', 'set-url', 'origin', join(r.tmp, 'gone.git'));
+  assert.match(r.start(), /switched this checkout from main to staging \(origin could not be reached, so it may be behind\)/);
+  r.git(r.main, 'remote', 'set-url', 'origin', join(r.tmp, 'origin.git'));
+
+  // An untracked file where an incoming commit adds one: not "diverged", and the file survives.
+  r.git(r.wt, 'switch', '-q', '--detach', 'origin/staging');
+  writeFileSync(join(r.wt, 'incoming.txt'), 'theirs\n');
+  r.git(r.wt, 'add', 'incoming.txt');
+  r.git(r.wt, 'commit', '-qm', 'adds a file');
+  r.git(r.wt, 'push', '-q', 'origin', 'HEAD:staging');
+  writeFileSync(join(r.main, 'incoming.txt'), 'mine\n');
+  const blocked = r.start();
+  assert.match(blocked, /behind origin and could not be fast-forwarded: /);
+  assert.doesNotMatch(blocked, /diverged/);
+  assert.equal(readFileSync(join(r.main, 'incoming.txt'), 'utf8'), 'mine\n');
+});
+
+test('start-branch: local commits on integration are never rewritten', (t) => {
+  const r = repoWithOrigin(t);
+  r.git(r.main, 'switch', '-q', 'staging');
+  r.git(r.main, 'commit', '-q', '--allow-empty', '-m', 'local only');
+  const local = r.git(r.main, 'rev-parse', 'HEAD');
+  assert.match(r.start(), /^start-branch: staging ahead of origin, with commits not pushed\.$/);
+  assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), local);
+  r.advance();
+  assert.match(r.start(), /staging diverged from origin\/staging, left as is/);
+  assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), local);
+});
