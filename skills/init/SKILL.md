@@ -61,13 +61,13 @@ It runs in five steps and never skips the first two.
 
 5. **Carry the plan's notes through as help, not status.** `winston init`'s output can end
    with `Note:` lines and a **Secrets the triage workflow needs** list, and `winston doctor`
-   can report `triage workflow secrets` as `off` — all are non-blocking, so don't present
+   can report `triage workflow secrets` as `needs you` — all are non-blocking, so don't present
    them as bare facts or errors; say what to do about them, and always offer the next step.
    - **A note to commit the config and workflow:** it names the exact files and the reason
      (GitHub runs the triage workflow from the default branch only). Relay that reason, and
      offer to commit those two files yourself now (`git add` and `git commit` them) rather
      than leaving the user to work out why they're uncommitted.
-   - **`triage workflow secrets: off`, or the Secrets list:** the workflow skips cleanly
+   - **`triage workflow secrets` under Needs you, or the Secrets list:** the workflow skips cleanly
      without them, so frame this as an optional next step, not a problem; until it is done,
      new issues are not triaged automatically. Explain both secrets in plain terms: `GH_PAT`
      is a token over this repo with Issues read/write and Projects read/write on the board
@@ -88,7 +88,7 @@ It runs in five steps and never skips the first two.
      secret-grant phrase (config `secretGrant.phrase`); that phrase governs an agent
      handling secrets, and here no agent does.
    - **When they say it is done,** run `winston doctor`: `triage workflow secrets` should
-     read `on`, and after the proving run in the steps `triage workflow runs` should show
+     read `done`, and after the proving run in the steps `triage workflow runs` should show
      `last run: success`. In **join** the secrets are the repo owner's; say so and stop.
 
 **Permission rules** in the output is one more step for the owner: the project lacks some
