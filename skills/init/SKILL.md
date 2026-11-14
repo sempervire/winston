@@ -80,20 +80,28 @@ It runs in five steps and never skips the first two.
      because GitHub's fine-grained tokens cannot reach a user's projects.
    - **Help create the token, as far as possible.** The first step is a link that opens
      GitHub's token form with the fields filled in (scopes for a classic token; name,
-     resource owner, expiration and the two permissions for a fine-grained one).
-     - **With browser control** (Claude in Chrome), offer to do the form with them: open
-       that link in a new tab in their signed-in browser, check each field against the
-       steps, and fill in what the link could not (the Note on a classic token; "Only
-       select repositories" and this repository on a fine-grained one). Then **stop
-       before the Generate button** and say so. The owner clicks Generate, answers any
-       password or two-factor prompt themselves, and copies the token. Do not click
-       Generate, do not read, screenshot or copy the page once the token is shown, and
-       never type a password or a two-factor code. A token is a credential: it stays
-       with the owner. Where the secret-grant hook stops the page, the owner types the
-       phrase (config `secretGrant.phrase`) or opens the link themselves. With chattr,
-       claim `resource:chrome` first and release it after.
+     resource owner, expiration and the two permissions for a fine-grained one). In order
+     of preference:
+     1. **The owner opens the link themselves**, in their own signed-in browser. You
+        explain each field from the numbered steps, including what the link cannot fill
+        (the Note on a classic token; "Only select repositories" and this repository on a
+        fine-grained one), and answer questions as they go. This is the default.
+     2. **Only if the owner asks for browser help** (Claude in Chrome): open that link in
+        a new tab in their signed-in browser, check each field against the steps, and
+        fill in what the link could not. Never click Generate, and never type a password
+        or a two-factor code. Once the fields are filled, say so, and take **no further
+        browser action in that tab or window** – no screenshot, no page read, no
+        navigation, no close – until the owner says in chat that the token is copied and
+        the tab is closed (or tells you to close it after they have navigated away). The
+        owner clicks Generate and answers any password or two-factor prompt; GitHub then
+        shows the token in that same tab, which is why you do not look. A token is a
+        credential: it stays with the owner. With chattr, claim `resource:chrome` first
+        and release it after.
+     - **If the harness or a hook stops you from opening that page, that is the stop.**
+       Do not ask the owner to type a grant phrase for this. Go back to 1: the owner
+       opens the link, and you give the numbered directions.
      - **The page shows a sign-in form, or the form does not match the steps:** say so
-       and fall back to the numbered directions; never sign in for them.
+       and go back to 1 with the numbered directions; never sign in for them.
      - **No browser control:** give them the link and the numbered directions, which
        name every field and value, and wait.
    - **The token's value stays with the owner.** They run `claude setup-token` and the two
@@ -101,9 +109,9 @@ It runs in five steps and never skips the first two.
      value. For `claude setup-token`, explain what each prompt is for (it opens a browser
      to sign in to Claude, they approve, it prints a long-lived token to copy); do not run
      it. Never create a token, never ask for a token's value in chat, and never run
-     `gh secret set` with a value yourself. The owner doing it by hand needs no
-     secret-grant phrase; that phrase governs an agent handling secrets, and here no agent
-     does.
+     `gh secret set` yourself; the owner runs it in their own terminal. The owner doing it
+     by hand needs no secret-grant phrase (config `secretGrant.phrase`); that phrase
+     governs an agent handling secrets, and here no agent does.
    - **When they say it is done,** run `winston doctor`: `triage workflow secrets` should
      read `done`, and after the proving run in the steps `triage workflow runs` should show
      `last run: success`. In **join** the secrets are the repo owner's; say so and stop.

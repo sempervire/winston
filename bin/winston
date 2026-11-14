@@ -479,10 +479,11 @@ export function policyState(file) {
  */
 /**
  * The page that creates GH_PAT, with the form filled in as far as GitHub lets a link fill
- * it. Only parameters GitHub documents are used: `scopes` on the classic form; `name`,
- * `description`, `target_name`, `expires_in` and one parameter per permission on the
- * fine-grained form. A link carries no secret: the token exists only after the owner
- * clicks Generate.
+ * it. The fine-grained form's parameters are the ones GitHub documents: `name`,
+ * `description`, `target_name`, `expires_in` and one per permission. The classic form's
+ * `scopes=repo,project` is best effort: GitHub's token page documents no prefill for
+ * it, so the printed directions always name both scopes to tick. A link carries no
+ * secret: the token exists only after the owner clicks Generate.
  */
 export function tokenUrl({ fineGrained, slug, boardOwner }) {
   if (!fineGrained) return `https://github.com/settings/tokens/new?scopes=${['repo', 'project'].map(encodeURIComponent).join(',')}`
@@ -517,13 +518,13 @@ function secretSteps({ slug, known, want, boardOwner, wfName }) {
       : type !== 'Organization' ? `gh could not tell whether ${board} is a user or an organization, so this is a classic token, which reaches the projects of either`
         : !fineGrained ? `the board is ${boardOwner}'s and the repository is not, and a fine-grained token covers one owner, so this is a classic token`
           : `${boardOwner} is an organization, so this is a fine-grained token`
-    step(`Open this link while signed in to GitHub; it fills in the form (${why}): ${url}`)
+    step(`Open this link while signed in to GitHub; it ${fineGrained ? 'fills in the form' : 'opens the form, and should tick the two scopes'} (${why}): ${url}`)
     if (fineGrained) {
       step(`Check the form: Token name (filled in), Resource owner ${boardOwner}, Expiration 90 days (change it if you like). Under Repository access choose "Only select repositories" and pick ${slug}; the link cannot fill that in. Under Permissions: Repository permissions "Issues: Read and write", Organization permissions "Projects: Read and write"`)
       step(`If the form came up empty: github.com, your picture, Settings, Developer settings, Personal access tokens, Fine-grained tokens, "Generate new token", and enter the values from the step above`)
       step(`Click "Generate token" yourself and copy the token; GitHub shows it once. If ${boardOwner} requires approval for fine-grained tokens, one of its owners approves it before it works`)
     } else {
-      step('Check the form: Note is empty, so type a name such as "winston triage" (the link cannot fill it in). Expiration: your choice; 90 days is a reasonable one. Under Select scopes, "repo" and "project" are ticked, and nothing else needs to be')
+      step('Check the form: Note is empty, so type a name such as "winston triage" (the link cannot fill it in). Expiration: your choice; 90 days is a reasonable one. Under Select scopes, "repo" and "project" must be ticked: tick them if the link did not, and nothing else needs to be')
       step('If the form came up empty: github.com, your picture, Settings, Developer settings, Personal access tokens, Tokens (classic), "Generate new token (classic)", then the Note, the Expiration, and tick "repo" and "project"')
       step('Click "Generate token" yourself and copy the token; GitHub shows it once')
     }

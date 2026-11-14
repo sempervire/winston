@@ -35,12 +35,16 @@ Who does what:
   does through browser control: offer that rather than leaving it with the user.
 - **triage workflow secrets** and **triage workflow runs** mean the installed triage
   workflow is not triaging. Say so plainly, since nothing else reports it, and relay the
-  numbered steps; the first is a link that opens GitHub's token form filled in. With
-  browser control, offer to open it and check or fill the fields with the user, stopping
-  before the Generate button, as `/winston:init` step 5 describes. The owner clicks
-  Generate and types the token into `gh secret set` in their own terminal. Never click
-  Generate, read the page once a token is shown, or handle a token's value: it is a
-  credential and stays with the owner.
+  numbered steps; the first is a link that opens GitHub's token form filled in. By
+  default the owner opens it themselves and you explain the fields. Only if they ask for
+  browser help do you open it and check or fill the fields, as `/winston:init` step 5
+  describes; if the harness or a hook stops you from opening the page, that is the stop,
+  and you do not ask for a grant phrase. Never click Generate. Once the fields are filled,
+  say so, and take no further browser action in that tab or window – no screenshot, no
+  page read, no navigation, no close – until the owner says in chat that the token is
+  copied and the tab is closed (or tells you to close it after they have navigated away).
+  The owner types the token into `gh secret set` in their own terminal; never run
+  `gh secret set` yourself. A token is a credential and stays with the owner.
 - **triage policy**: the policy file is absent or has no triage rules, so a triage run
   changes nothing; `/winston:init` offers a `TRIAGE.md` starter. **triage policy blanks**:
   lines that still say "fill this in". **triage risk tiers**: the starter's example tiers

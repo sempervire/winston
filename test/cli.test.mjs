@@ -498,8 +498,8 @@ test('init walks the owner through the triage workflow\'s missing secrets, by wh
   const plan = s.cli(['init', '--mode', 'adopt']);
   assert.match(plan.stdout, /Secrets the triage workflow needs \(the owner's to do[^]*Not set on acme\/thing: GH_PAT\./);
   // The prefilled link first, then every field by name for when the link fills nothing in.
-  assert.match(plan.stdout, /1\. Open this link while signed in to GitHub; it fills in the form \(acme is a user account, and a fine-grained token cannot reach a user's projects, so this is a classic token\): https:\/\/github\.com\/settings\/tokens\/new\?scopes=repo,project\n/);
-  assert.match(plan.stdout, /2\. Check the form: Note is empty, so type a name[^\n]*"repo" and "project" are ticked[^\n]*\n\s+3\. If the form came up empty: [^\n]*Tokens \(classic\), "Generate new token \(classic\)"[^\n]*\n\s+4\. Click "Generate token" yourself and copy the token[^\n]*\n\s+5\. In your own terminal: gh secret set GH_PAT --repo acme\/thing /);
+  assert.match(plan.stdout, /1\. Open this link while signed in to GitHub; it opens the form, and should tick the two scopes \(acme is a user account, and a fine-grained token cannot reach a user's projects, so this is a classic token\): https:\/\/github\.com\/settings\/tokens\/new\?scopes=repo,project\n/);
+  assert.match(plan.stdout, /2\. Check the form: Note is empty, so type a name[^\n]*"repo" and "project" must be ticked: tick them if the link did not[^\n]*\n\s+3\. If the form came up empty: [^\n]*Tokens \(classic\), "Generate new token \(classic\)"[^\n]*\n\s+4\. Click "Generate token" yourself and copy the token[^\n]*\n\s+5\. In your own terminal: gh secret set GH_PAT --repo acme\/thing /);
   assert.match(plan.stdout, /6\. gh workflow run triage-on-new-issue\.yml --repo acme\/thing -f issue=<[^\n]*\n\s+7\. gh run list --workflow triage-on-new-issue\.yml --repo acme\/thing --limit 1/);
   assert.doesNotMatch(plan.stdout, /claude setup-token/, 'a secret that exists is not walked through');
   assert.match(s.calls(), /^secret list --repo acme\/thing --json name/m);
