@@ -41,6 +41,7 @@ export const REQUIRED_LABELS = [
 
 const DEFAULT_STATUSES = ['New', 'Ready', 'Verify', 'Verified']
 const DEFAULT_TRIAGE_WORKFLOW = 'triage-on-new-issue.yml'
+const DEFAULT_MILESTONE = 'Phase 1.0'
 
 function run(cmd, args, opts = {}) {
   const r = spawnSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000, ...opts })
@@ -67,7 +68,31 @@ const codexSources = () => {
 
 const BOARD_QUERY = `query($owner:String!,$number:Int!){ repositoryOwner(login:$owner){
   ... on Organization{ projectV2(number:$number){ ...F } } ... on User{ projectV2(number:$number){ ...F } } } }
-fragment F on ProjectV2 { title fields(first:100){ nodes{ ... on ProjectV2FieldCommon{ name } ... on ProjectV2SingleSelectField{ options{ name } } } } }`
+fragment F on ProjectV2 { id title fields(first:100){ nodes{ ... on ProjectV2FieldCommon{ name } ... on ProjectV2SingleSelectField{ options{ name } } } }
+  views(first:50){ nodes{ layout groupByFields(first:10){ nodes{ ... on ProjectV2FieldCommon{ name } } } } } }`
+
+const CREATE_VIEW_MUTATION = `mutation($projectId:ID!,$name:String!){ createProjectV2View(input:{projectId:$projectId,name:$name,layout:BOARD_LAYOUT}){ view{ id } } }`
+const FILTER_VIEW_MUTATION = `mutation($viewId:ID!,$filter:String!){ updateProjectV2View(input:{viewId:$viewId,filter:$filter}){ view{ id } } }`
+
+const openMilestones = (root) => run('gh', ['api', '--method', 'GET', 'repos/{owner}/{repo}/milestones', '-f', 'state=open', '--jq', '.[].title'], { cwd: root }).out.split('\n').filter(Boolean)
+
+function createMilestone(root, title) {
+  const r = run('gh', ['api', 'repos/{owner}/{repo}/milestones', '-f', `title=${title}`], { cwd: root })
+  if (!r.ok) throw new Error(`create milestone ${title}: ${r.err}`)
+}
+
+function createKanbanView(root, projectId) {
+  const milestone = openMilestones(root)[0] ?? (createMilestone(root, DEFAULT_MILESTONE), DEFAULT_MILESTONE)
+  const created = run('gh', ['api', 'graphql', '-f', `query=${CREATE_VIEW_MUTATION}`, '-f', `projectId=${projectId}`, '-f', `name=${milestone}`])
+  let viewId
+  try {
+    viewId = JSON.parse(created.out).data.createProjectV2View.view.id
+  } catch {
+    throw new Error(`create view: ${created.err || created.out}`)
+  }
+  const filtered = run('gh', ['api', 'graphql', '-f', `query=${FILTER_VIEW_MUTATION}`, '-f', `viewId=${viewId}`, '-f', `filter=milestone:"${milestone}"`])
+  if (!filtered.ok) throw new Error(`filter view to milestone:"${milestone}": ${filtered.err}`)
+}
 
 /** Every check, in report order: { name, state: ok|missing|on|off, detail, required, fix? }. */
 export function checks(cwd) {
@@ -137,6 +162,18 @@ export function checks(cwd) {
       add({ name: 'board Status options', state: lacking.length ? 'missing' : 'ok', detail: lacking.length ? `add: ${lacking.join(', ')}` : '', board: true })
       const priority = config.board.priorityField ?? 'Priority'
       add({ name: 'board Priority field', state: fields.some((f) => f.name === priority) ? 'ok' : 'missing', detail: priority, board: true })
+      const hasKanbanView = project.views.nodes.some((v) => v.layout === 'BOARD_LAYOUT' && v.groupByFields.nodes.some((f) => f?.name === 'Status'))
+      add({
+        name: 'board kanban view', state: hasKanbanView ? 'ok' : 'missing',
+        detail: hasKanbanView ? '' : 'no BOARD_LAYOUT view grouped by Status', board: true,
+        fix: !hasKanbanView && { plan: 'create a BOARD_LAYOUT view on the board, filtered to a milestone', run: () => createKanbanView(root, project.id) },
+      })
+      const hasMilestone = openMilestones(root).length > 0
+      add({
+        name: 'starting milestone', state: hasMilestone ? 'ok' : 'missing',
+        detail: hasMilestone ? '' : 'no open milestone', board: true,
+        fix: !hasMilestone && { plan: `create milestone "${DEFAULT_MILESTONE}" on the repo`, run: () => { if (!openMilestones(root).length) createMilestone(root, DEFAULT_MILESTONE) } },
+      })
     }
   }
 
@@ -190,7 +227,7 @@ function doctor(cwd) {
   const list = checks(cwd)
   for (const c of list) console.log(`${c.state.padEnd(8)} ${c.name}${c.detail ? `  — ${c.detail}` : ''}`)
   const bad = list.filter((c) => c.required && c.state === 'missing')
-  if (list.some((c) => c.board && c.state === 'missing')) console.log('\nBoard: winston init prints how to set one up; creating it needs the owner\'s decisions.')
+  if (list.some((c) => c.board && c.state === 'missing' && !c.fix)) console.log('\nBoard: winston init prints how to set one up; creating it needs the owner\'s decisions.')
   if (bad.some((c) => c.fix)) console.log('\nFix: winston init')
   return bad.length ? 1 : 0
 }
@@ -198,7 +235,7 @@ function doctor(cwd) {
 function init(cwd, yes) {
   const list = checks(cwd)
   const fixes = list.filter((c) => c.required && c.state === 'missing' && c.fix)
-  const board = list.filter((c) => c.board && c.state === 'missing')
+  const board = list.filter((c) => c.board && c.state === 'missing' && !c.fix)
   const manual = list.filter((c) => c.required && c.state === 'missing' && !c.fix && !c.board)
   if (!fixes.length && !board.length && !manual.length) {
     console.log('Nothing to do: every required check passes.')
@@ -214,6 +251,7 @@ function init(cwd, yes) {
     console.log('  2. Give its Status field the options: ' + DEFAULT_STATUSES.join(', ') + ' (or the repo config\'s board.statuses)')
     console.log('  3. Add a single-select Priority field (or the name in board.priorityField)')
     console.log('  4. Put its owner and number in .winston/config.json as board.owner and board.number')
+    console.log('  5. Add a BOARD_LAYOUT view, columns by Status, filtered to a milestone (e.g. filter: milestone:"Phase 1.0")')
     for (const c of board) console.log(`  now: ${c.name} — ${c.detail}`)
   }
   if (manual.length) {
