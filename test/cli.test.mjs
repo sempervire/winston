@@ -98,8 +98,8 @@ test('doctor finds a missing kanban view and starting milestone; init creates th
     data: { repositoryOwner: { projectV2: {
       id: 'PROJECT1', title: 'Acme board',
       fields: { nodes: [
-        { name: 'Status', options: [{ name: 'New' }, { name: 'Ready' }, { name: 'Verify' }, { name: 'Verified' }] },
-        { name: 'Priority' },
+        { id: 'STATUS1', name: 'Status', options: [{ name: 'New' }, { name: 'Ready' }, { name: 'In Progress' }, { name: 'Verify' }, { name: 'Verified' }, { name: 'Done' }] },
+        { id: 'PRIO1', name: 'Priority' }, { id: 'TITLE1', name: 'Title' }, { id: 'LABELS1', name: 'Labels' },
       ] },
       views: { nodes: [] },
     } } } };
@@ -109,8 +109,8 @@ test('doctor finds a missing kanban view and starting milestone; init creates th
     "label list") printf "risk: low\\nrisk: medium\\nrisk: high\\nauto-merge\\nauto-verify\\nhuman-verify\\n";;
     "label create") exit 0;;
     "api graphql") case "$*" in
-      *createProjectV2View*) echo "$*" >> "${s.tmp}/view-create-calls"; echo '{"data":{"createProjectV2View":{"view":{"id":"VIEW1"}}}}';;
-      *updateProjectV2View*) echo "$*" >> "${s.tmp}/view-filter-calls"; echo '{"data":{"updateProjectV2View":{"view":{"id":"VIEW1"}}}}';;
+      *createProjectV2View*) echo "$*" >> "${s.tmp}/view-create-calls"; echo '{"data":{"createProjectV2View":{"projectV2View":{"id":"VIEW1"}}}}';;
+      *updateProjectV2View*) echo "$*" >> "${s.tmp}/view-filter-calls"; echo '{"data":{"updateProjectV2View":{"projectV2View":{"id":"VIEW1"}}}}';;
       *) cat "${s.tmp}/board.json";;
       esac;;
     "api --method") cat "${s.tmp}/milestones" 2>/dev/null; true;;
@@ -120,7 +120,7 @@ test('doctor finds a missing kanban view and starting milestone; init creates th
 
   const doc = s.cli(['doctor']);
   assert.match(doc.stdout, /^ok\s+board reachable/m);
-  assert.match(doc.stdout, /^missing\s+board kanban view\s+— no BOARD_LAYOUT view grouped by Status/m);
+  assert.match(doc.stdout, /^missing\s+board kanban view\s+— no board view with Status columns/m);
   assert.match(doc.stdout, /^missing\s+starting milestone\s+— no open milestone/m);
   // Neither new check needs the owner's input, so init can create both on its own.
     assert.match(doc.stdout, /Fix: winston init/);
@@ -128,9 +128,9 @@ test('doctor finds a missing kanban view and starting milestone; init creates th
   const made = s.cli(['init', '--mode', 'adopt', '--yes']);
   assert.equal(made.status, 0, made.stdout);
   assert.match(made.stdout, /done\s+create milestone "Phase 1\.0" on the repo/);
-  assert.match(made.stdout, /done\s+create a BOARD_LAYOUT view on the board, filtered to a milestone/);
+  assert.match(made.stdout, /done\s+create a board view with Status columns, filtered to a milestone, its cards showing labels/);
   assert.equal(readFileSync(join(s.tmp, 'milestone-create-calls'), 'utf8').trim().split('\n').length, 1, 'the milestone is created exactly once, not once per check');
-  assert.match(readFileSync(join(s.tmp, 'view-filter-calls'), 'utf8'), /filter=milestone:"Phase 1\.0"/);
+  assert.match(readFileSync(join(s.tmp, 'view-filter-calls'), 'utf8'), /filter:"milestone:\\"Phase 1\.0\\""/);
 });
 
 test('init creates the kanban view against an existing milestone instead of making a new one', (t) => {
@@ -142,8 +142,8 @@ test('init creates the kanban view against an existing milestone instead of maki
     data: { repositoryOwner: { projectV2: {
       id: 'PROJECT1', title: 'Acme board',
       fields: { nodes: [
-        { name: 'Status', options: [{ name: 'New' }, { name: 'Ready' }, { name: 'Verify' }, { name: 'Verified' }] },
-        { name: 'Priority' },
+        { id: 'STATUS1', name: 'Status', options: [{ name: 'New' }, { name: 'Ready' }, { name: 'In Progress' }, { name: 'Verify' }, { name: 'Verified' }, { name: 'Done' }] },
+        { id: 'PRIO1', name: 'Priority' }, { id: 'TITLE1', name: 'Title' }, { id: 'LABELS1', name: 'Labels' },
       ] },
       views: { nodes: [] },
     } } } };
@@ -153,8 +153,8 @@ test('init creates the kanban view against an existing milestone instead of maki
     "label list") printf "risk: low\\nrisk: medium\\nrisk: high\\nauto-merge\\nauto-verify\\nhuman-verify\\n";;
     "label create") exit 0;;
     "api graphql") case "$*" in
-      *createProjectV2View*) echo "$*" >> "${s.tmp}/view-create-calls"; echo '{"data":{"createProjectV2View":{"view":{"id":"VIEW1"}}}}';;
-      *updateProjectV2View*) echo "$*" >> "${s.tmp}/view-filter-calls"; echo '{"data":{"updateProjectV2View":{"view":{"id":"VIEW1"}}}}';;
+      *createProjectV2View*) echo "$*" >> "${s.tmp}/view-create-calls"; echo '{"data":{"createProjectV2View":{"projectV2View":{"id":"VIEW1"}}}}';;
+      *updateProjectV2View*) echo "$*" >> "${s.tmp}/view-filter-calls"; echo '{"data":{"updateProjectV2View":{"projectV2View":{"id":"VIEW1"}}}}';;
       *) cat "${s.tmp}/board.json";;
       esac;;
     "api --method") cat "${s.tmp}/milestones" 2>/dev/null; true;;
@@ -164,7 +164,7 @@ test('init creates the kanban view against an existing milestone instead of maki
 
   const made = s.cli(['init', '--mode', 'adopt', '--yes']);
   assert.equal(made.status, 0, made.stdout);
-  assert.match(readFileSync(join(s.tmp, 'view-filter-calls'), 'utf8'), /filter=milestone:"Pilot"/);
+  assert.match(readFileSync(join(s.tmp, 'view-filter-calls'), 'utf8'), /filter:"milestone:\\"Pilot\\""/);
   assert.ok(!existsSync(join(s.tmp, 'milestone-create-calls')), 'an existing milestone is reused, not created');
 });
 
@@ -193,7 +193,7 @@ function fakeGh(s) {
     "label create") echo "$3" >> "${s.tmp}/labels";;
     "secret list") cat "${s.tmp}/secrets" 2>/dev/null; true;;
     "api graphql") case "$*" in
-      *createProjectV2View*) echo '{"data":{"createProjectV2View":{"view":{"id":"VIEW1"}}}}';;
+      *createProjectV2View*) echo '{"data":{"createProjectV2View":{"projectV2View":{"id":"VIEW1"}}}}';;
       *updateProjectV2View*) echo '{}';;
       *updateProjectV2Field*) echo '{}'; if [ -f "${s.tmp}/board-after.json" ]; then cp "${s.tmp}/board-after.json" "${s.tmp}/board.json"; fi;;
       *projectsV2*) cat "${s.tmp}/linked.json";;
@@ -208,17 +208,20 @@ function fakeGh(s) {
   s.git = (...args) => execFileSync('git', ['-C', s.repo, ...args], { env: s.env, encoding: 'utf8' }).trim();
 }
 
-const boardJson = ({ options = ['New', 'Ready', 'Verify', 'Verified'], priority = true, workflows = [], views = [] } = {}) => JSON.stringify({
+const boardJson = ({ options = ['New', 'Ready', 'In Progress', 'Verify', 'Verified', 'Done'], priority = true, workflows = [], views = [] } = {}) => JSON.stringify({
   data: { repositoryOwner: { projectV2: {
     id: 'PROJECT1', title: 'Acme board',
     fields: { nodes: [
       { id: 'STATUS1', name: 'Status', options: options.map((name, i) => ({ id: `opt${i}`, name, color: 'GRAY', description: '' })) },
       ...(priority ? [{ id: 'PRIO1', name: 'Priority' }] : []),
+      { id: 'TITLE1', name: 'Title' }, { id: 'LABELS1', name: 'Labels' }, { id: 'LINKED1', name: 'Linked pull requests' },
     ] },
     workflows: { nodes: workflows.map((name) => ({ name, enabled: true })) },
     views: { nodes: views },
   } } } });
-const KANBAN = [{ layout: 'BOARD_LAYOUT', groupByFields: { nodes: [{ name: 'Status' }] } }];
+// As GitHub returns a board view: the columns are the vertical grouping, groupByFields is empty.
+const KANBAN = [{ id: 'VIEW9', name: 'Pilot', layout: 'BOARD_LAYOUT', fields: { nodes: [{ id: 'TITLE1', name: 'Title' }, { id: 'LABELS1', name: 'Labels' }] }, groupByFields: { nodes: [] }, verticalGroupByFields: { nodes: [{ name: 'Status' }] } }];
+const KANBAN_NO_LABELS = [{ ...KANBAN[0], fields: { nodes: [{ id: 'TITLE1', name: 'Title' }] } }];
 const INTAKE = ['Auto-add to project', 'Item added to project'];
 const linkedJson = (boards) => JSON.stringify({ data: { repository: { projectsV2: { nodes: boards.map(([login, number, title]) => ({ number, title, closed: false, owner: { login } })) } } } });
 
@@ -267,7 +270,7 @@ test('init --mode new creates the repo, both branches, the board and the config,
   fakeGh(s);
   // A new project as GitHub makes it: stock statuses, no Priority, "Item added" already on.
   writeFileSync(join(s.tmp, 'new-board.json'), boardJson({ options: ['Todo', 'In Progress', 'Done'], priority: false, workflows: ['Item added to project'] }));
-  writeFileSync(join(s.tmp, 'board-after.json'), boardJson({ options: ['New', 'Ready', 'Verify', 'Verified', 'Done'], workflows: ['Item added to project'] }));
+  writeFileSync(join(s.tmp, 'board-after.json'), boardJson({ workflows: ['Item added to project'] }));
   s.git('symbolic-ref', 'HEAD', 'refs/heads/main');
   s.git('config', 'user.name', 'Pat');
   writeFileSync(join(s.repo, 'notes.txt'), 'not Winston\'s to commit');
@@ -293,14 +296,16 @@ test('init --mode new creates the repo, both branches, the board and the config,
   assert.deepEqual(originHeads(s), ['main', 'staging']);
   assert.deepEqual(s.git('show', '--name-only', '--format=', 'HEAD').split('\n').sort(), ['.github/workflows/triage-on-new-issue.yml', '.winston/config.json'], 'the first commit holds only what init wrote');
   const calls = s.calls();
-  assert.match(calls, /updateProjectV2Field[^\n]*\{id:"opt0",name:"New",color:GRAY[^\n]*name:"Verified",color:GREEN[^\n]*id:"opt2",name:"Done"/, 'Todo is renamed in place so the board\'s own workflow sets New');
-  assert.doesNotMatch(calls, /In Progress/);
+  assert.match(calls, /updateProjectV2Field[^\n]*\[\{id:"opt0",name:"New",color:BLUE,description:"Issues That Need To Be Evaluated"\},\{name:"Ready",color:GREEN[^\n]*\{id:"opt1",name:"In Progress",color:YELLOW[^\n]*\{name:"Verify",color:RED[^\n]*\{name:"Verified",color:GRAY[^\n]*\{id:"opt2",name:"Done",color:PURPLE/, 'six columns in order; each stock option kept by id, Todo as New so the board\'s own workflow sets it');
+  assert.match(calls, /project field-create 7 --owner pat --name Start date --data-type DATE/);
+  assert.match(calls, /project field-create 7 --owner pat --name Target date --data-type DATE/);
+  assert.match(calls, /updateProjectV2View\(input:\{viewId:\$viewId,configuration:\{visibleFieldIds:\["TITLE1","STATUS1","LABELS1","LINKED1"\]\},filter:"milestone:\\"Phase 1\.0\\""\}/, 'the new view shows labels on its cards');
   assert.equal(calls.match(/updateProjectV2Field/g).length, 1);
   assert.match(calls, /project field-create 7 --owner pat --name Priority/);
   assert.match(calls, /project link 7 --owner pat --repo repo$/m);
   assert.ok(calls.indexOf('project create') < calls.indexOf('repo create') && calls.indexOf('repo create') < calls.indexOf('project link'));
   assert.match(readFileSync(join(s.tmp, 'labels'), 'utf8'), /^risk: high$/m);
-  assert.match(made.stdout, /done\s+create a BOARD_LAYOUT view/);
+  assert.match(made.stdout, /done\s+create a board view with Status columns/);
   assert.match(made.stdout, /In the browser[^]*open https:\/\/github\.com\/users\/pat\/projects\/7\/workflows, choose "Auto-add to project", click Edit, pick this repository and set the filter to is:issue/);
 });
 
@@ -309,13 +314,14 @@ test('init --mode adopt fits the config to the repo and adds to its board withou
   fakeGh(s);
   existingRepo(s);
   writeFileSync(join(s.tmp, 'linked.json'), linkedJson([['acme', 3, 'Roadmap']]));
-  writeFileSync(join(s.tmp, 'board.json'), boardJson({ options: ['Todo', 'Ready'], priority: false, workflows: INTAKE, views: KANBAN }));
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ options: ['Todo', 'Ready'], priority: false, workflows: INTAKE, views: KANBAN_NO_LABELS }));
   writeFileSync(join(s.tmp, 'milestones'), 'Pilot\n');
 
   const plan = s.cli(['init', '--mode', 'adopt']);
   assert.equal(plan.status, 0, plan.stderr);
   assert.match(plan.stdout, /production main, integration staging, board acme project 3, process docs AGENTS\.md/);
-  assert.match(plan.stdout, /add Status options to the board: New, Verify, Verified \(its existing options are kept\)/);
+  assert.match(plan.stdout, /add Status columns to the board, in Winston's order: New, In Progress, Verify, Verified, Done \(its existing options are kept as they are\)/);
+  assert.match(plan.stdout, /show Labels on the cards of: Pilot/);
   assert.match(plan.stdout, /add a single-select Priority field/);
   assert.match(plan.stdout, /Note: Commit .*config\.json and .*triage-on-new-issue\.yml to main/);
   assert.match(plan.stdout, /Note: There is no TRIAGE\.md/);
@@ -330,7 +336,8 @@ test('init --mode adopt fits the config to the repo and adds to its board withou
   assert.deepEqual(originHeads(s), ['main', 'staging']);
   const calls = s.calls();
   assert.doesNotMatch(calls, /project create|repo create/);
-  assert.match(calls, /updateProjectV2Field[^\n]*id:"opt0",name:"Todo"[^\n]*id:"opt1",name:"Ready"[^\n]*\{name:"New",color:GRAY/, 'existing options are passed back with their ids');
+  assert.match(calls, /updateProjectV2Field[^\n]*\[\{name:"New",color:BLUE[^\n]*\{id:"opt1",name:"Ready",color:GRAY,description:""\},\{name:"In Progress"[^\n]*\{name:"Done",color:PURPLE[^\n]*\{id:"opt0",name:"Todo",color:GRAY,description:""\}\]/, 'existing options go back by id, unchanged; unknown ones follow');
+  assert.match(calls, /updateProjectV2View\(input:\{viewId:\$viewId,configuration:\{visibleFieldIds:\["TITLE1","LABELS1"\]\}\}/, 'Labels is added to what the view already shows; its filter is not touched');
   assert.match(calls, /project field-create 3 --owner acme --name Priority/);
   assert.equal(s.git('rev-list', '--count', 'HEAD'), '1', 'an existing repo is not committed to');
 
