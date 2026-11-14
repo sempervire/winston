@@ -24,3 +24,7 @@ absent or has no triage rules, so a triage run changes nothing; `/winston:init` 
 `TRIAGE.md` starter. `unknown` on either
 workflow line means this account cannot see them, not that they are missing. Never create a token or
 set a secret yourself.
+
+`off` on `project permission rules` lists the allow rules a Winston run uses that the
+project's `.claude/settings.json` lacks. The fix is one command the owner runs,
+`winston permissions --apply`; relay it, never run it yourself.

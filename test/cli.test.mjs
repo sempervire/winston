@@ -5,7 +5,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { loadConfig, loadLayers } from '../lib/config.mjs';
-import { policyState } from '../bin/winston';
+import { coveredBy, permissionRules, policyState } from '../bin/winston';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const CLI = join(ROOT, 'bin/winston');
@@ -321,7 +321,7 @@ test('init --mode adopt fits the config to the repo and adds to its board withou
   assert.match(plan.stdout, /add Status options to the board: New, Verify, Verified \(its existing options are kept\)/);
   assert.match(plan.stdout, /add a single-select Priority field/);
   assert.match(plan.stdout, /Note: Commit .*config\.json and .*triage-on-new-issue\.yml to main/);
-  assert.match(plan.stdout, /write .*TRIAGE\.md, a starter triage policy to edit and commit/);
+  assert.match(plan.stdout, /write .*TRIAGE\.md, a starter triage policy filled in from the config\. Its three \(per-repo\) sections are generic: the risk tiers must be written for this repo/);
   assert.doesNotMatch(plan.stdout, /In the browser|By hand/, 'both intake workflows are on');
   assert.ok(!existsSync(join(s.repo, '.winston')));
 
@@ -458,6 +458,8 @@ test('doctor says unknown, not missing, when it cannot list secrets, and flags a
   writeFileSync(join(s.tmp, 'runs'), 'success\nfailure\nfailure\n');
   const fine = s.cli(['doctor']);
   assert.match(fine.stdout, /^on\s+triage workflow runs\s+— last run: success$/m);
+  writeFileSync(join(s.tmp, 'runs'), 'cancelled\nsuccess\n');
+  assert.match(s.cli(['doctor']).stdout, /^off\s+triage workflow runs\s+— last run: cancelled$/m);
   assert.doesNotMatch(fine.stdout, /Triage workflow:/);
   writeFileSync(join(s.tmp, 'runs'), '');
   assert.match(s.cli(['doctor']).stdout, /^off\s+triage workflow runs\s+— no finished runs yet$/m);
@@ -499,7 +501,7 @@ test('init walks the owner through the triage workflow\'s missing secrets, by wh
 
   // Set up already, secrets still missing: init says so rather than "Nothing to do".
   const again = s.cli(['init', '--mode', 'adopt', '--yes']);
-  assert.match(again.stdout, /^Every required check passes\.\n\nSecrets the triage workflow needs/);
+  assert.match(again.stdout, /^Every required check passes\.\n\nSecrets the triage workflow needs[^]*\n\nPermission rules \(the owner's to do, in one step\):\n[^]*Run it yourself, once: winston permissions --apply/);
   // A board under another owner than the repo, or an owner gh cannot look up: classic.
   const config = JSON.parse(readFileSync(join(s.repo, '.winston/config.json'), 'utf8'));
   writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ ...config, board: { ...config.board, owner: 'other-org' } }));
@@ -514,6 +516,8 @@ test('init walks the owner through the triage workflow\'s missing secrets, by wh
   assert.doesNotMatch(blind.stdout, /Not set on/);
   rmSync(join(s.tmp, 'secrets-denied'));
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
+  assert.doesNotMatch(s.cli(['init', '--mode', 'adopt']).stdout, /Secrets the triage workflow needs|Nothing to do/);
+  assert.equal(s.cli(['permissions', '--apply']).status, 0);
   const done = s.cli(['init', '--mode', 'adopt']);
   assert.match(done.stdout, /^Nothing to do: every required check passes\.\n$/);
   assert.doesNotMatch(s.calls(), /^(secret set|workflow run|secret list(?!.*--json name))/m, 'winston lists secret names and nothing else');
@@ -562,11 +566,19 @@ test('doctor flags a policy with no triage rules; init writes a starter, repoint
   assert.match(doc.stdout, /^missing\s+triage policy\s+— AGENTS\.md has no triage rules \(no heading that names triage, no risk: low\/medium\/high tier\): a triage pass under it changes nothing$/m);
   assert.match(doc.stdout, /Fix: winston init --mode adopt/);
   const plan = s.cli(['init', '--mode', 'adopt']);
-  assert.match(plan.stdout, /write .*TRIAGE\.md, a starter triage policy[^\n]*, and set triage\.policy to it in .*config\.json \(AGENTS\.md is left as it is\)/);
+  assert.match(plan.stdout, /write .*TRIAGE\.md, a starter triage policy filled in from the config, and set triage\.policy to it in .*config\.json \(AGENTS\.md is left as it is\)\. Its three \(per-repo\) sections are generic/);
   assert.ok(!existsSync(join(s.repo, 'TRIAGE.md')), 'no --yes, no change');
   const made = s.cli(['init', '--mode', 'adopt', '--yes']);
   assert.equal(made.status, 0, made.stdout + made.stderr);
-  assert.equal(readFileSync(join(s.repo, 'TRIAGE.md'), 'utf8'), readFileSync(join(ROOT, 'templates/TRIAGE.md'), 'utf8'));
+  // The starter is the template with the config's values in place of its {{keys}}.
+  const starter = readFileSync(join(s.repo, 'TRIAGE.md'), 'utf8');
+  const template = readFileSync(join(ROOT, 'templates/TRIAGE.md'), 'utf8');
+  assert.match(template, /\{\{board\.statuses\[0\]\}\}/);
+  assert.match(starter, /only issues that are open and in status `New` or `Ready` are evaluated/);
+  assert.match(starter, /\*\*Owner\*\*: `Dana`\.\n- \*\*Board\*\*: project `1` of `acme`/);
+  assert.match(starter, /work lands on `staging`; `main` is/);
+  assert.deepEqual(starter.match(/\{\{[^}]*\}\}/g), ['{{key}}'], 'only the placeholder its own comment explains is left');
+  assert.match(starter, /## Risk tiers \(per-repo\)/);
   assert.equal(readFileSync(join(s.repo, 'AGENTS.md'), 'utf8'), '# Rules\n');
   const after = JSON.parse(readFileSync(configPath, 'utf8'));
   assert.deepEqual(after.triage, { policy: 'TRIAGE.md', workflow: 'triage-on-new-issue.yml' });
@@ -578,6 +590,10 @@ test('doctor flags a policy with no triage rules; init writes a starter, repoint
   // A policy file that is not there at all.
   write('docs/POLICY.md');
   rmSync(join(s.repo, 'TRIAGE.md'));
+  write('../outside.md');
+  writeFileSync(join(s.tmp, 'outside.md'), '# Triage\n');
+  assert.match(s.cli(['doctor']).stdout, /^missing\s+triage policy\s+— triage\.policy must be a file inside the repository/m);
+  write('docs/POLICY.md');
   assert.match(s.cli(['doctor']).stdout, /^missing\s+triage policy\s+— docs\/POLICY\.md not found: \/winston:triage does not run without a policy$/m);
 
   // A TRIAGE.md with rules already in the repo is pointed at, not rewritten.
@@ -592,4 +608,88 @@ test('doctor flags a policy with no triage rules; init writes a starter, repoint
   const kept = s.cli(['init', '--mode', 'adopt', '--yes']);
   assert.match(kept.stdout, /By hand:\n\s+- triage policy: .*TRIAGE\.md exists and has no triage rules, and Winston does not overwrite it/);
   assert.equal(readFileSync(join(s.repo, 'TRIAGE.md'), 'utf8'), 'notes to self\n');
+});
+
+test('permission rules come from the config, and a rule is covered by an equal or wider entry only', () => {
+  const rules = permissionRules({ branches: { integration: 'develop' }, board: { number: 4 }, permissions: { allow: ['Bash(npm test*)'] } }, ['Bash(make lint*)', 'Bash(npm test*)']);
+  for (const r of ['Bash(git worktree*)', 'Bash(git rebase origin/develop*)', 'Bash(gh project item-list 4*)', 'Bash(gh pr review*)', 'Bash(npm test*)', 'Bash(make lint*)']) assert.ok(rules.includes(r), r);
+  assert.equal(new Set(rules).size, rules.length, 'no rule twice');
+  assert.ok(!rules.includes('Bash(gh pr merge*)'), 'merging is listed only where the deploy gate guards merges');
+  assert.ok(permissionRules({ deployGate: { guarded: [{ kind: 'pr-merge', base: 'main' }] } }).includes('Bash(gh pr merge*)'));
+  assert.equal(coveredBy('Bash(git push origin*)', ['Bash(git push*--force*)']), null, 'a narrower deny is no conflict');
+  assert.equal(coveredBy('Bash(git push origin*)', ['Bash(git push *)']), 'Bash(git push *)');
+  assert.equal(coveredBy('Bash(git push origin*)', ['Bash(git push:*)']), 'Bash(git push:*)');
+  assert.equal(coveredBy('Bash(git status*)', ['Bash']), 'Bash');
+  assert.equal(coveredBy('Bash(git status*)', ['Read', 'Bash(gh *)']), null);
+});
+
+test('winston permissions lists the rules; --apply adds only the missing ones and keeps everything else', (t) => {
+  const s = sandbox(t);
+  mkdirSync(join(s.repo, '.winston'));
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 2 } }));
+  const file = join(s.repo, '.claude/settings.json');
+  const userFile = join(s.tmp, 'home/.claude/settings.json');
+  mkdirSync(join(s.tmp, 'home/.claude'), { recursive: true });
+  writeFileSync(userFile, '{"permissions":{"allow":[]}}');
+  s.env.HOME = join(s.tmp, 'home');
+
+  // No file yet: listing changes nothing, --apply creates it.
+  const listed = s.cli(['permissions']);
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.match(listed.stdout, /^  missing  Bash\(git worktree\*\)$/m);
+  assert.match(listed.stdout, /^  missing  Bash\(gh project item-list 2\*\)$/m);
+  assert.match(listed.stdout, /winston permissions --apply\nAn allow rule only removes a prompt: deny and ask rules, hooks, production approval and secret grants still apply\./);
+  assert.ok(!existsSync(file));
+  const created = s.cli(['permissions', '--apply']);
+  assert.equal(created.status, 0, created.stderr);
+  const all = JSON.parse(readFileSync(file, 'utf8')).permissions.allow;
+  assert.deepEqual(all, permissionRules({ branches: { integration: 'staging' }, board: { number: 2 } }));
+  assert.equal(created.stdout.match(/^added    /gm).length, all.length, 'it prints exactly what it added');
+
+  // An existing file: its rules, deny and ask lists, other keys, tabs and missing final newline are kept.
+  const before = { env: { TZ: 'UTC' }, permissions: { allow: ['Bash(make *)', 'Bash(git status*)', 'Bash(gh pr comment *)', 'Bash(git push origin main)'], deny: ['Bash(git push*--force*)', 'Bash(gh issue edit *)'], ask: ['Bash(gh pr create*)'] }, hooks: {} };
+  writeFileSync(file, JSON.stringify(before, null, '\t'));
+  const applied = s.cli(['permissions', '--apply', '--add', 'Bash(npm test*)']);
+  assert.equal(applied.status, 0, applied.stderr);
+  const text = readFileSync(file, 'utf8');
+  const after = JSON.parse(text);
+  assert.match(text, /^\t"env"/m);
+  assert.ok(!text.endsWith('\n'));
+  assert.deepEqual(after.permissions.allow.slice(0, 4), before.permissions.allow, 'existing rules first, untouched');
+  assert.deepEqual({ ...after, permissions: { ...after.permissions, allow: null } }, { ...before, permissions: { ...before.permissions, allow: null } });
+  const added = after.permissions.allow.slice(4);
+  assert.equal(new Set(after.permissions.allow).size, after.permissions.allow.length, 'no duplicate entries');
+  assert.ok(added.includes('Bash(npm test*)') && added.includes('Bash(git worktree*)'));
+  for (const not of ['Bash(git status*)', 'Bash(gh pr comment*)', 'Bash(gh issue edit*)', 'Bash(git push origin*)']) assert.ok(!added.includes(not), not);
+  assert.match(applied.stdout, /^denied   Bash\(gh issue edit\*\)  — not added: the deny rule Bash\(gh issue edit \*\) covers it$/m);
+  assert.match(applied.stdout, /^narrower Bash\(git push origin\*\)  — not added: the project allows a narrower form, Bash\(git push origin main\)$/m);
+  assert.deepEqual(applied.stdout.match(/^added    (.*)$/gm).map((l) => l.slice(9)), added);
+
+  // Idempotent.
+  const again = s.cli(['permissions', '--apply', '--add', 'Bash(npm test*)']);
+  assert.match(again.stdout, /Nothing to add/);
+  assert.equal(readFileSync(file, 'utf8'), text);
+  assert.match(s.cli(['doctor']).stdout, /^on\s+project permission rules/m);
+  assert.equal(readFileSync(userFile, 'utf8'), '{"permissions":{"allow":[]}}', 'user-level settings are never touched');
+
+  // A file that is not valid JSON, or not the shape Claude Code reads: stop, change nothing.
+  for (const broken of ['{ "permissions": { "allow": [ ', '{"permissions":{"allow":"Bash(ls)"}}', '[]']) {
+    writeFileSync(file, broken);
+    const stopped = s.cli(['permissions', '--apply']);
+    assert.equal(stopped.status, 1, broken);
+    assert.match(stopped.stderr, /settings\.json is not (valid JSON|a settings object)[^]*Nothing was changed/);
+    assert.equal(readFileSync(file, 'utf8'), broken);
+  }
+  assert.match(s.cli(['doctor']).stdout, /^unknown\s+project permission rules\s+— .*settings\.json is not/m);
+  assert.equal(s.cli(['permissions', '--add']).status, 1);
+  assert.equal(s.cli(['permissions', '--add', 'rm -rf']).status, 1);
+  assert.equal(s.cli(['permissions', '--aply']).status, 1);
+});
+
+test('doctor reports the permission rules the project lacks', (t) => {
+  const s = sandbox(t);
+  s.fake('gh', 'exit 1');
+  mkdirSync(join(s.repo, '.claude'));
+  writeFileSync(join(s.repo, '.claude/settings.json'), JSON.stringify({ permissions: { allow: permissionRules({}).filter((r) => r !== 'Bash(gh pr review*)') } }));
+  assert.match(s.cli(['doctor']).stdout, /^off\s+project permission rules\s+— 1 of the \d+ allow rules Winston runs use are not in .*settings\.json: Bash\(gh pr review\*\) \(winston permissions --apply adds them\)$/m);
 });

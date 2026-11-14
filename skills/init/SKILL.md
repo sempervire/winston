@@ -73,12 +73,24 @@ It runs in five steps and never skips the first two.
    `triage workflow runs` should show `last run: success`. In **join** the secrets are the
    repo owner's; say so and stop.
 
+**Permission rules** in the output is one more step for the owner: the project lacks some
+of the Claude Code allow rules a Winston run uses, so those actions would prompt mid-run.
+Relay its one command, `winston permissions --apply`, for the owner to run themselves (in
+their terminal, or with the `!` prefix). Never run `--apply` yourself or edit a settings
+file to grant yourself a permission. It writes only the project's `.claude/settings.json`;
+an allow rule never clears a deny or ask rule, a hook, production approval or a secret grant.
+
 A plan line that writes `TRIAGE.md` means the repo's triage policy (config `triage.policy`)
 is missing or holds no triage rules: no heading that names triage and no `risk:` tier. The
 triage skill takes every rule from that file, so without them a triage run finishes clean
-and changes nothing. The starter is a draft of the owner's policy: after applying, tell the
-user to read it, edit it and commit it to the default branch, where the workflow reads it.
-init never overwrites an existing `TRIAGE.md` or edits the doc the config pointed at.
+and changes nothing. The starter holds the triage behavior, with the config's values filled in, and
+three sections marked **(per-repo)** that are generic. Say plainly that the **Risk tiers**
+section must be written for this repo before triage can judge anything: its rows are an
+example. After applying, offer to propose tiers: read the repo (what it ships, which paths
+hold data, auth, money or release machinery), draft the three rows naming real paths, and
+show them to the user; write them into `TRIAGE.md` only after an explicit yes. Then tell
+the user to review the file and commit it to the default branch, where the workflow reads
+it. init never overwrites an existing `TRIAGE.md` or edits the doc the config pointed at.
 
 Anything under **By hand** needs a person: access someone else grants, or a missing policy
 file. Relay it as it stands.

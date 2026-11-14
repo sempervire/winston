@@ -60,6 +60,13 @@ default). When that file is missing or has no triage rules (no heading that name
 no `risk:` tier), doctor says so and init offers a starter `TRIAGE.md` to edit and commit;
 it never overwrites an existing one.
 
+So that a run does not stop on permission prompts, `winston permissions` lists the Claude
+Code allow rules Winston runs use in the repo and which the project's
+`.claude/settings.json` lacks. The owner runs `winston permissions --apply` once: it adds
+the missing rules to `permissions.allow`, prints what it added, and keeps every existing
+rule and the deny and ask lists. Allow rules never clear deny or ask rules, hooks,
+production approval or secret grants.
+
 ## Commands
 
 | Command | What it does |
@@ -74,6 +81,7 @@ it never overwrites an existing one.
 | `/winston:handoff` | Hand the work to a fresh session. |
 | `/winston:codex`, `/winston:gemini` | Read-only second opinions from other model families. |
 | `/winston:doctor`, `/winston:init` | Check the setup Winston needs; join, create or adopt it. |
+| `winston permissions [--apply]` | List, or add to the project's settings, the allow rules Winston runs use. |
 
 Hooks: a production-deploy gate (blocks configured deploy actions until the owner types the
 approval phrase in that session), a secret-handling grant, session titles, worktree setup, a
@@ -104,6 +112,7 @@ Top-level keys merge shallowly; the repo wins. See `templates/config.sample.json
 | `advisors` | Repo-specific agent names for Debbie, Sheldon and Radar. |
 | `deployGate` | Approval phrase and the guarded actions (`pr-merge` into a base, `workflow-run`). |
 | `secretGrant` | The phrase that grants secret handling for one session. |
+| `permissions.allow` | The repo's own commands, as Claude Code rules (`Bash(npm test*)`), added to what `winston permissions` lists. |
 | `worktree`, `launcher` | Files copied or linked into new worktrees; the repo the launchers open. |
 
 The repo's process docs always win over Winston where they conflict.

@@ -14,6 +14,10 @@
  *               board and docs, and add only what is missing
  *       options: --board <owner>/<number>|new  --integration <branch>  --owner <name>
  *                --repo <owner>/<name>  --public
+ *   winston permissions                list the Claude Code allow rules Winston runs use here,
+ *                                      and which the project's .claude/settings.json lacks
+ *   winston permissions --apply [--add <rule>]...
+ *                                      add the missing ones to that file's permissions.allow
  *   winston install-codex-agents [--force]
  *   winston title <words...>           record this session's title (published on the next prompt)
  *
@@ -28,9 +32,9 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { constants as fsConstants, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadLayers, repoRoot, winstonHome } from '../lib/config.mjs'
 import { recordTitle } from '../hooks/session-title.mjs'
@@ -156,9 +160,148 @@ function createKanbanView(root, projectId) {
   if (!filtered.ok) throw new Error(`filter view to milestone:"${milestone}": ${filtered.err}`)
 }
 
+/**
+ * Write the starter policy, never over an existing file. Each `{{key}}` that names a
+ * value in the config (`{{board.statuses[0]}}`, `{{owner}}`) becomes that value; one the
+ * config does not hold is left for the owner. The (per-repo) sections stay generic.
+ */
+function writeStarterPolicy(file, config) {
+  const filled = { ...config, board: { statuses: DEFAULT_STATUSES, priorityField: 'Priority', ...config.board } }
+  const text = readFileSync(join(ROOT, 'templates', 'TRIAGE.md'), 'utf8').replace(/\{\{([\w.[\]]+)\}\}/g, (whole, key) => {
+    const value = key.split(/[.[\]]+/).filter(Boolean).reduce((v, k) => (v && Object.hasOwn(v, k) ? v[k] : undefined), filled)
+    return typeof value === 'string' || typeof value === 'number' ? String(value) : whole
+  })
+  writeFileSync(file, text, { flag: 'wx' })
+}
+
 function writeTriageWorkflow(wf) {
   mkdirSync(dirname(wf), { recursive: true })
   copyFileSync(join(ROOT, 'templates', 'triage-on-new-issue.yml'), wf)
+}
+
+/**
+ * The Claude Code allow rules a Winston run uses in this repo: the git and gh forms the
+ * skills call, scoped by the config where a rule can be, then the repo's own (config
+ * `permissions.allow`) and any passed with --add. Merging pull requests is listed only
+ * where the deploy-gate hook guards merges, so the rule cannot wave a production merge
+ * through. An allow rule never clears a deny or ask rule, a hook, or any other gate.
+ */
+export function permissionRules(config, extra = []) {
+  const integration = config.branches?.integration
+  const board = config.board?.number
+  const gated = (config.deployGate?.guarded ?? []).some((g) => g?.kind === 'pr-merge')
+  const commands = [
+    'git status', 'git diff', 'git log', 'git show', 'git fetch', 'git branch', 'git worktree', 'git switch',
+    'git add', 'git commit', 'git push origin', 'git push -u origin', ...(integration ? [`git rebase origin/${integration}`] : []),
+    'gh issue view', 'gh issue list', 'gh pr view', 'gh pr list', 'gh pr checks', 'gh pr diff', 'gh run view', 'gh run list', 'gh label list',
+    ...(Number.isInteger(board) ? [`gh project item-list ${board}`] : []),
+    'gh pr create', 'gh pr comment', 'gh pr review', 'gh pr edit', ...(gated ? ['gh pr merge'] : []),
+    'gh issue comment', 'gh issue edit', 'gh project item-edit',
+    'winston config', 'winston doctor', 'winston title',
+  ]
+  const own = [...(Array.isArray(config.permissions?.allow) ? config.permissions.allow : []), ...extra].filter((r) => typeof r === 'string')
+  return [...new Set([...commands.map((c) => `Bash(${c}*)`), ...own])]
+}
+
+const RULE = /^(\w+)(?:\((.+)\))?$/s
+
+const ruleText = (spec = '') => spec.replace(/ ?:?\*$/, '').trim()
+
+/**
+ * The entry of `list` that covers all of what `rule` names, or null: the same rule, the
+ * bare tool, or a pattern that matches the command `rule` starts with. Used against deny
+ * (a rule a deny entry covers is never added; a narrower deny is no conflict, since deny
+ * is evaluated first) and against allow (a rule already covered is not added twice).
+ */
+export function coveredBy(rule, list) {
+  const m = RULE.exec(rule)
+  if (!m) return null
+  const text = ruleText(m[2])
+  return list.find((d) => {
+    if (d === rule || d === m[1]) return true
+    const dm = RULE.exec(d)
+    if (!dm?.[2] || dm[1] !== m[1]) return false
+    const pattern = dm[2].replace(/ ?:?\*$/, '*').split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')
+    return new RegExp(`^${pattern}$`, 's').test(text)
+  }) ?? null
+}
+
+/** An allow entry that is a narrower form of the same command: the owner's choice, left alone. */
+function narrowerIn(rule, allow) {
+  const m = RULE.exec(rule)
+  const text = m && ruleText(m[2])
+  if (!text) return null
+  return allow.find((a) => {
+    const am = RULE.exec(a)
+    return am?.[1] === m[1] && am[2]?.startsWith(text) && /^([ :*]|$)/.test(am[2].slice(text.length))
+  }) ?? null
+}
+
+/**
+ * The project's .claude/settings.json and each expected rule's state in it: have, missing,
+ * denied, or narrower. Throws, having changed nothing, when the file is not the JSON Claude Code reads.
+ */
+function permissionState(root, config, extra = []) {
+  const path = join(root, '.claude', 'settings.json')
+  const text = existsSync(path) ? readFileSync(path, 'utf8') : null
+  const isObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
+  let data = {}
+  if (text !== null) {
+    try {
+      data = JSON.parse(text)
+    } catch (e) {
+      throw new Error(`${path} is not valid JSON (${e.message}). Nothing was changed: fix the file, then rerun.`)
+    }
+  }
+  const lists = isObject(data) && (data.permissions === undefined || (isObject(data.permissions) && ['allow', 'deny', 'ask'].every((k) => data.permissions[k] === undefined || Array.isArray(data.permissions[k]))))
+  if (!lists) throw new Error(`${path} is not a settings object whose permissions.allow, deny and ask are lists. Nothing was changed: fix the file, then rerun.`)
+  const strings = (k) => (data.permissions?.[k] ?? []).filter((r) => typeof r === 'string')
+  const [allow, deny] = [strings('allow'), strings('deny')]
+  const rules = permissionRules(config, extra).map((rule) => {
+    if (coveredBy(rule, allow)) return { rule, state: 'have' }
+    const by = coveredBy(rule, deny)
+    if (by) return { rule, state: 'denied', note: `not added: the deny rule ${by} covers it` }
+    const narrower = narrowerIn(rule, allow)
+    return narrower ? { rule, state: 'narrower', note: `not added: the project allows a narrower form, ${narrower}` } : { rule, state: 'missing' }
+  })
+  return { path, text, data, rules }
+}
+
+const GATES = 'An allow rule only removes a prompt: deny and ask rules, hooks, production approval and secret grants still apply.'
+
+/**
+ * List the rules, or with --apply add the missing ones to the project file. Only
+ * permissions.allow grows: existing rules, the deny and ask lists, every other key, the
+ * file's indentation and its final newline are kept. User-level settings are never touched.
+ */
+function permissions(cwd, opts) {
+  const root = repoRoot(cwd)
+  if (!root) throw new Error(`winston permissions: ${cwd} is not inside a git repository`)
+  const bad = (opts.add ?? []).find((r) => !RULE.test(r))
+  if (bad) throw new Error(`winston permissions: --add takes a Claude Code rule such as 'Bash(npm test*)', got: ${bad}`)
+  const layers = loadLayers(cwd)
+  const st = permissionState(root, { ...layers.user.data, ...layers.repo.data }, opts.add)
+  const lacking = st.rules.filter((r) => r.state === 'missing')
+  const skipped = st.rules.filter((r) => r.note)
+  if (!opts.apply) {
+    console.log(`Claude Code allow rules Winston runs use in this repo, against ${st.path}${st.text === null ? ' (not there yet)' : ''}:`)
+    for (const r of st.rules) console.log(`  ${r.state.padEnd(8)} ${r.rule}${r.note ? `  — ${r.note}` : ''}`)
+    console.log(lacking.length ? `\nAdd the ${lacking.length} missing to the project's permissions.allow: winston permissions --apply` : '\nNothing is missing.')
+    console.log(GATES)
+    return 0
+  }
+  for (const r of skipped) console.log(`${r.state.padEnd(8)} ${r.rule}  — ${r.note}`)
+  if (!lacking.length) {
+    console.log(`Nothing to add: ${st.path} has every rule.`)
+    return 0
+  }
+  const data = { ...st.data, permissions: { ...st.data.permissions, allow: [...(st.data.permissions?.allow ?? []), ...lacking.map((r) => r.rule)] } }
+  const indent = st.text?.match(/^([ \t]+)\S/m)?.[1] ?? 2
+  mkdirSync(dirname(st.path), { recursive: true })
+  writeFileSync(st.path, JSON.stringify(data, null, indent) + (st.text === null || st.text.endsWith('\n') ? '\n' : ''))
+  for (const r of lacking) console.log(`added    ${r.rule}`)
+  console.log(`\n${lacking.length} ${lacking.length === 1 ? 'rule' : 'rules'} added to permissions.allow in ${st.path}. ${GATES}`)
+  return 0
 }
 
 /**
@@ -213,12 +356,20 @@ function secretSteps({ slug, known, want, boardOwner, wfName }) {
   return lines
 }
 
-/** The human step init prints for the secrets; nothing when both exist. */
-function printSecretSteps(list) {
-  const c = list.find((c) => c.steps)
-  if (!c) return
-  console.log('\nSecrets the triage workflow needs (the owner\'s to do, in a normal terminal; a token\'s value is never pasted into a chat):')
-  for (const line of c.steps()) console.log(`  ${line}`)
+const ownerSteps = (list) => list.some((c) => c.steps || c.ownerStep)
+
+/** The owner's steps init prints: the workflow's secrets, then the project's allow rules. */
+function printOwnerSteps(list) {
+  const secrets = list.find((c) => c.steps)
+  if (secrets) {
+    console.log('\nSecrets the triage workflow needs (the owner\'s to do, in a normal terminal; a token\'s value is never pasted into a chat):')
+    for (const line of secrets.steps()) console.log(`  ${line}`)
+  }
+  const rules = list.find((c) => c.ownerStep)
+  if (rules) {
+    console.log('\nPermission rules (the owner\'s to do, in one step):')
+    for (const line of rules.ownerStep) console.log(`  ${line}`)
+  }
 }
 
 /**
@@ -227,7 +378,8 @@ function printSecretSteps(list) {
  * The checks then describe the repo as it will be once init's first steps have run.
  * `forInit` checks the triage workflow's secrets even before the workflow file exists,
  * since init is about to write it. A check with `problem` is one doctor calls out; one
- * with `steps` carries the owner's steps for the secrets.
+ * with `steps` carries the owner's steps for the secrets, one with `ownerStep` the one for
+ * the project's permission rules.
  */
 export function checks(cwd, planned = null, forInit = false) {
   const out = []
@@ -372,7 +524,9 @@ export function checks(cwd, planned = null, forInit = false) {
   // The triage skill is an engine: with no policy it stops, and under a doc with no triage
   // rules it runs and changes nothing. init offers a starter and never overwrites a file.
   const policy = config.triage?.policy ?? DEFAULT_POLICY
-  const policyIs = policyState(resolve(root, policy))
+  // A policy is a doc in the repo: a path that leaves it is not read.
+  const inRepo = typeof policy === 'string' && !isAbsolute(policy) && !relative(root, resolve(root, policy)).startsWith('..')
+  const policyIs = inRepo ? policyState(resolve(root, policy)) : 'outside'
   const starter = join(root, DEFAULT_POLICY)
   const starterIs = policy === DEFAULT_POLICY ? policyIs : policyState(starter)
   const repoint = () => {
@@ -383,13 +537,13 @@ export function checks(cwd, planned = null, forInit = false) {
   const andPoint = policy === DEFAULT_POLICY ? '' : `, and set triage.policy to it in ${configPath} (${policy} is left as it is)`
   add({
     name: 'triage policy', state: policyIs === 'ok' ? 'ok' : 'missing',
-    detail: policyIs === 'ok' ? policy : policyIs === 'missing' ? `${policy} not found: /winston:triage does not run without a policy` : `${policy} has no triage rules (no heading that names triage, no risk: low/medium/high tier): a triage pass under it changes nothing`,
+    detail: policyIs === 'ok' ? policy : policyIs === 'outside' ? `triage.policy must be a file inside the repository, got: ${policy}` : policyIs === 'missing' ? `${policy} not found: /winston:triage does not run without a policy` : `${policy} has no triage rules (no heading that names triage, no risk: low/medium/high tier): a triage pass under it changes nothing`,
     hand: `${starter} exists and has no triage rules, and Winston does not overwrite it: write the rules into it (a starter to copy from: ${join(ROOT, 'templates', 'TRIAGE.md')})${policy === DEFAULT_POLICY ? '' : `, then set triage.policy to ${DEFAULT_POLICY} in ${configPath}`}`,
     fix: policyIs !== 'ok' && (starterIs === 'ok'
       ? { plan: `set triage.policy to ${DEFAULT_POLICY}, which has triage rules, in ${configPath} (${policy} is left as it is)`, run: repoint }
       : starterIs === 'missing' && {
-        plan: `write ${starter}, a starter triage policy to edit and commit (risk tiers, Priority, what triage writes, the report)${andPoint}`,
-        run: () => { copyFileSync(join(ROOT, 'templates', 'TRIAGE.md'), starter, fsConstants.COPYFILE_EXCL); repoint() },
+        plan: `write ${starter}, a starter triage policy filled in from the config${andPoint}. Its three (per-repo) sections are generic: the risk tiers must be written for this repo before triage can judge anything (/winston:init can propose them from reading the repo, for the owner to approve), and the file takes effect once committed to the default branch`,
+        run: () => { writeStarterPolicy(starter, config); repoint() },
       }),
   })
 
@@ -426,11 +580,29 @@ export function checks(cwd, planned = null, forInit = false) {
     const failed = done.findIndex((c) => !FAILED_RUNS.includes(c))
     const n = failed === -1 ? done.length : failed
     add({
-      name: 'triage workflow runs', required: false, state: !runs.ok ? 'unknown' : n ? 'failed' : done.length ? 'on' : 'off',
+      name: 'triage workflow runs', required: false, state: !runs.ok ? 'unknown' : n ? 'failed' : done[0] === 'success' ? 'on' : 'off',
       detail: !runs.ok ? 'cannot list its runs (GitHub knows a workflow only once it is on the default branch)' : n ? `its last ${n} ${n === 1 ? 'run' : 'runs'} failed` : done.length ? `last run: ${done[0]}` : 'no finished runs yet',
       problem: runs.ok && n > 0 && `installed, but its last ${n} ${n === 1 ? 'run' : 'runs'} failed. See why: gh run list --workflow ${wfName} --limit 1, then gh run view <id> --log-failed. A missing, expired or under-scoped secret is the usual cause (winston init --mode adopt prints the steps for a missing one)`,
     })
   }
+
+  // The project's allow rules are the owner's to add, in one step: winston permissions --apply.
+  let perms
+  try {
+    perms = permissionState(root, config)
+  } catch (e) {
+    perms = { error: e.message }
+  }
+  const lackingRules = perms.rules?.filter((r) => r.state === 'missing') ?? []
+  add({
+    name: 'project permission rules', required: false, state: perms.error ? 'unknown' : lackingRules.length ? 'off' : 'on',
+    detail: perms.error ?? (lackingRules.length ? `${lackingRules.length} of the ${perms.rules.length} allow rules Winston runs use are not in ${perms.path}: ${lackingRules.map((r) => r.rule).join(', ')} (winston permissions --apply adds them)` : perms.path),
+    ownerStep: lackingRules.length > 0 && [
+      `${lackingRules.length} of the ${perms.rules.length} allow rules Winston runs use are not in ${perms.path}, so those actions prompt during a run.`,
+      'Run it yourself, once: winston permissions --apply   (winston permissions lists them first)',
+      `It adds to the project's permissions.allow and changes nothing else. ${GATES}`,
+    ],
+  })
 
   // Optional: features that use these degrade cleanly without them.
   add({ name: 'codex CLI', required: false, state: onPath('codex') ? 'on' : 'off', detail: 'Rex, /winston:codex' })
@@ -701,8 +873,8 @@ function setup(cwd, sit, opts) {
   const hand = missing(list).filter((c) => !c.fix)
   const printHand = printSteps
   if (!boot && !fixes.length && !hand.length) {
-    console.log(list.some((c) => c.steps) ? 'Every required check passes.' : 'Nothing to do: every required check passes.')
-    printSecretSteps(list)
+    console.log(ownerSteps(list) ? 'Every required check passes.' : 'Nothing to do: every required check passes.')
+    printOwnerSteps(list)
     return 0
   }
   const plans = [...(boot?.steps ?? []), ...fixes.map((c) => c.fix)]
@@ -712,7 +884,7 @@ function setup(cwd, sit, opts) {
       for (const p of plans) console.log(`  - ${p.plan}`)
     }
     printHand(hand)
-    printSecretSteps(list)
+    printOwnerSteps(list)
     for (const n of boot?.notes ?? []) console.log(`\nNote: ${n}`)
     if (plans.length) console.log('\nRerun with --yes to do these.')
     return 0
@@ -743,7 +915,7 @@ function setup(cwd, sit, opts) {
     }
   }
   printHand(missing(after).filter((c) => !c.fix))
-  printSecretSteps(after)
+  printOwnerSteps(after)
   for (const n of boot?.notes ?? []) console.log(`\nNote: ${n}`)
   return failed ? 1 : 0
 }
@@ -775,6 +947,23 @@ function initOptions(args) {
       const value = args[++i]
       if (value === undefined || value.startsWith('--')) throw new Error(`winston init: ${flag} needs a value`)
       opts[flag.slice(2)] = value
+    }
+  }
+  return opts
+}
+
+const PERMISSION_FLAGS = { '--apply': false, '--add': true }
+
+function permissionOptions(args) {
+  const opts = { add: [] }
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i]
+    if (!(flag in PERMISSION_FLAGS)) throw new Error(`winston permissions: unknown argument ${flag}`)
+    if (!PERMISSION_FLAGS[flag]) opts.apply = true
+    else {
+      const value = args[++i]
+      if (value === undefined || value.startsWith('--')) throw new Error(`winston permissions: ${flag} needs a value`)
+      opts.add.push(value)
     }
   }
   return opts
@@ -820,7 +1009,7 @@ function config(cwd, json) {
   return 0
 }
 
-const USAGE = 'usage: winston config [--json] | doctor | init [--mode join|new|adopt] [--yes] | install-codex-agents [--force] | title <words...>'
+const USAGE = 'usage: winston config [--json] | doctor | init [--mode join|new|adopt] [--yes] | permissions [--apply] [--add <rule>] | install-codex-agents [--force] | title <words...>'
 
 function main(argv) {
   const [cmd, ...rest] = argv
@@ -830,6 +1019,7 @@ function main(argv) {
       case 'config': return config(cwd, rest.includes('--json'))
       case 'doctor': return doctor(cwd)
       case 'init': return init(cwd, initOptions(rest))
+      case 'permissions': return permissions(cwd, permissionOptions(rest))
       case 'install-codex-agents': return installCodexAgents(rest.includes('--force'))
       case 'title':
         if (!recordTitle(rest)) {
