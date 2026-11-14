@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { loadConfig, loadLayers } from '../lib/config.mjs';
@@ -681,6 +681,13 @@ test('winston permissions lists the rules; --apply adds only the missing ones an
     assert.equal(readFileSync(file, 'utf8'), broken);
   }
   assert.match(s.cli(['doctor']).stdout, /^unknown\s+project permission rules\s+— .*settings\.json is not/m);
+  // A settings file that is a link out of the repository is not followed.
+  rmSync(file);
+  symlinkSync(userFile, file);
+  const linked = s.cli(['permissions', '--apply']);
+  assert.equal(linked.status, 1);
+  assert.match(linked.stderr, /is a link that leads outside the repository\. Nothing was changed\./);
+  assert.equal(readFileSync(userFile, 'utf8'), '{"permissions":{"allow":[]}}');
   assert.equal(s.cli(['permissions', '--add']).status, 1);
   assert.equal(s.cli(['permissions', '--add', 'rm -rf']).status, 1);
   assert.equal(s.cli(['permissions', '--aply']).status, 1);
