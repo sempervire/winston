@@ -1,6 +1,6 @@
 ---
 name: init
-description: Create the GitHub setup Winston needs in this repo (board, statuses, priority field, labels, triage workflow template, .winston config), showing the plan first and applying it only after the user confirms. Use when the user runs /winston:init, or after /winston:doctor reports missing setup the user wants created.
+description: Create the GitHub setup Winston needs in this repo (board, statuses, priority field, a kanban view, a starting milestone, labels, triage workflow template, .winston config), showing the plan first and applying it only after the user confirms. Use when the user runs /winston:init, or after /winston:doctor reports missing setup the user wants created.
 ---
 
 # /winston:init

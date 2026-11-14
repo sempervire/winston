@@ -110,6 +110,85 @@ test('doctor reports missing pieces and points at init; init plans, then creates
   assert.doesNotMatch(after.stdout, /would create/);
 });
 
+test('doctor finds a missing kanban view and starting milestone; init creates them', (t) => {
+  const s = sandbox(t);
+  mkdirSync(join(s.repo, '.winston'));
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ board: { owner: 'acme', number: 1 } }));
+  const board = {
+    data: { repositoryOwner: { projectV2: {
+      id: 'PROJECT1', title: 'Acme board',
+      fields: { nodes: [
+        { name: 'Status', options: [{ name: 'New' }, { name: 'Ready' }, { name: 'Verify' }, { name: 'Verified' }] },
+        { name: 'Priority' },
+      ] },
+      views: { nodes: [] },
+    } } } };
+  writeFileSync(join(s.tmp, 'board.json'), JSON.stringify(board));
+  s.fake('gh', `case "$1 $2" in
+    "auth status") echo "project, repo";;
+    "label list") printf "risk: low\\nrisk: medium\\nrisk: high\\nauto-merge\\nauto-verify\\nhuman-verify\\n";;
+    "label create") exit 0;;
+    "api graphql") case "$*" in
+      *createProjectV2View*) echo "$*" >> "${s.tmp}/view-create-calls"; echo '{"data":{"createProjectV2View":{"view":{"id":"VIEW1"}}}}';;
+      *updateProjectV2View*) echo "$*" >> "${s.tmp}/view-filter-calls"; echo '{"data":{"updateProjectV2View":{"view":{"id":"VIEW1"}}}}';;
+      *) cat "${s.tmp}/board.json";;
+      esac;;
+    "api --method") cat "${s.tmp}/milestones" 2>/dev/null; true;;
+    "api repos/{owner}/{repo}/milestones") echo "$*" >> "${s.tmp}/milestone-create-calls"; echo "Phase 1.0" >> "${s.tmp}/milestones";;
+    *) exit 1;;
+  esac`);
+
+  const doc = s.cli(['doctor']);
+  assert.match(doc.stdout, /^ok\s+board reachable/m);
+  assert.match(doc.stdout, /^missing\s+board kanban view\s+— no BOARD_LAYOUT view grouped by Status/m);
+  assert.match(doc.stdout, /^missing\s+starting milestone\s+— no open milestone/m);
+  // Neither new check needs the owner's input, so init can create both on its own.
+  assert.doesNotMatch(doc.stdout, /Board: winston init prints how to set one up/);
+  assert.match(doc.stdout, /Fix: winston init/);
+
+  const made = s.cli(['init', '--yes']);
+  assert.equal(made.status, 0, made.stdout);
+  assert.match(made.stdout, /done\s+create milestone "Phase 1\.0" on the repo/);
+  assert.match(made.stdout, /done\s+create a BOARD_LAYOUT view on the board, filtered to a milestone/);
+  assert.equal(readFileSync(join(s.tmp, 'milestone-create-calls'), 'utf8').trim().split('\n').length, 1, 'the milestone is created exactly once, not once per check');
+  assert.match(readFileSync(join(s.tmp, 'view-filter-calls'), 'utf8'), /filter=milestone:"Phase 1\.0"/);
+});
+
+test('init creates the kanban view against an existing milestone instead of making a new one', (t) => {
+  const s = sandbox(t);
+  mkdirSync(join(s.repo, '.winston'));
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ board: { owner: 'acme', number: 1 } }));
+  writeFileSync(join(s.tmp, 'milestones'), 'Pilot\n');
+  const board = {
+    data: { repositoryOwner: { projectV2: {
+      id: 'PROJECT1', title: 'Acme board',
+      fields: { nodes: [
+        { name: 'Status', options: [{ name: 'New' }, { name: 'Ready' }, { name: 'Verify' }, { name: 'Verified' }] },
+        { name: 'Priority' },
+      ] },
+      views: { nodes: [] },
+    } } } };
+  writeFileSync(join(s.tmp, 'board.json'), JSON.stringify(board));
+  s.fake('gh', `case "$1 $2" in
+    "auth status") echo "project, repo";;
+    "label list") printf "risk: low\\nrisk: medium\\nrisk: high\\nauto-merge\\nauto-verify\\nhuman-verify\\n";;
+    "label create") exit 0;;
+    "api graphql") case "$*" in
+      *createProjectV2View*) echo "$*" >> "${s.tmp}/view-create-calls"; echo '{"data":{"createProjectV2View":{"view":{"id":"VIEW1"}}}}';;
+      *updateProjectV2View*) echo "$*" >> "${s.tmp}/view-filter-calls"; echo '{"data":{"updateProjectV2View":{"view":{"id":"VIEW1"}}}}';;
+      *) cat "${s.tmp}/board.json";;
+      esac;;
+    "api --method") cat "${s.tmp}/milestones" 2>/dev/null; true;;
+    "api repos/{owner}/{repo}/milestones") echo "$*" >> "${s.tmp}/milestone-create-calls"; echo "Phase 1.0" >> "${s.tmp}/milestones";;
+    *) exit 1;;
+  esac`);
+
+  const made = s.cli(['init', '--yes']);
+  assert.equal(made.status, 0, made.stdout);
+  assert.match(readFileSync(join(s.tmp, 'view-filter-calls'), 'utf8'), /filter=milestone:"Pilot"/);
+  assert.ok(!existsSync(join(s.tmp, 'milestone-create-calls')), 'an existing milestone is reused, not created');
+});
+
 test('triage.labels extends the required set', (t) => {
   const s = sandbox(t);
   mkdirSync(join(s.repo, '.winston'));
