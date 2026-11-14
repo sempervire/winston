@@ -37,10 +37,16 @@ changing anything:
 | `new` | A new project. | Creates the GitHub repo, both branches, the board, the config, labels and triage workflow. |
 | `adopt` | An existing repo Winston did not set up. | Fits a config to its default branch, an integration branch, a board already linked to it and its process docs; adds only what is missing. |
 
-`/winston:doctor` checks the result at any time. Two steps are always by hand, because
-GitHub has no API for them: on the board's Workflows page, turn on **Auto-add to project**
-(this repository, filter `is:issue`) and **Item added to project** (set Status to `New`).
-Without them a new issue never reaches the board; doctor reports both.
+`/winston:doctor` checks the result at any time.
+
+Two steps cannot go through GitHub's API, which can delete a project workflow but not
+create or enable one: on the board's Workflows page, **Auto-add to project** (this
+repository, filter `is:issue`) and **Item added to project** (set Status to `New`). Without
+them a new issue never reaches the board. `/winston:init` does both through browser
+control, so have Claude in Chrome ready during setup: install the extension, sign in to
+GitHub in that Chrome, and connect it with `/chrome` (or start with `claude --chrome`).
+Without browser control it prints the two steps for you to do, and doctor reports them
+until they are done.
 
 ## Commands
 
