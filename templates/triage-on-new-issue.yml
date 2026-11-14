@@ -10,6 +10,12 @@
 #                            Projects read/write on the board owner (the board is an
 #                            org/user project, which GITHUB_TOKEN cannot reach).
 #   CLAUDE_CODE_OAUTH_TOKEN  from `claude setup-token`.
+# Until both exist the run skips with a notice and stays green; `winston doctor` reports
+# which are not set.
+#
+# This workflow triages. Putting a new issue on the board at its intake status is the
+# board's own job: its "Auto-add to project" and "Item added to project" workflows, which
+# `winston doctor` checks and only a person can turn on.
 #
 # When Actions is unavailable (budget, outage, a failed run) nothing is stamped and nothing
 # reports itself broken: the issue stays untriaged, with no `risk:` label, which is exactly
@@ -52,8 +58,20 @@ jobs:
           case "$INPUT_ISSUE" in
             ""|*[!0-9]*) echo "not an issue number: $INPUT_ISSUE" >&2; exit 1 ;;
           esac
+      - name: Check the secrets
+        id: secrets
+        env:
+          CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -n "$GH_TOKEN" ] && [ -n "$CLAUDE_TOKEN" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Triage skipped: this repository lacks the GH_PAT or CLAUDE_CODE_OAUTH_TOKEN secret."
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.secrets.outputs.ready == 'true'
       - uses: anthropics/claude-code-action@bd23c076f8423364b3cd8f4240d315cef475a119 # v1
+        if: steps.secrets.outputs.ready == 'true'
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GH_PAT }}

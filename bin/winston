@@ -4,20 +4,31 @@
  *
  *   winston config [--json]            merged config, and which layers loaded
  *   winston doctor                     check the setup; changes nothing
- *   winston init [--yes]               create what doctor found missing (plan only without --yes)
+ *   winston init                       ask which setup this repository needs; changes nothing
+ *   winston init --mode <join|new|adopt> [--yes]
+ *                                      plan that setup; apply it only with --yes
+ *       join    the repo is already set up for Winston: check this person's access, change
+ *               nothing in the repo or on GitHub
+ *       new     a new project: create the GitHub repo, both branches, the board, the config
+ *       adopt   an existing repo Winston did not set up: fit a config to its branches,
+ *               board and docs, and add only what is missing
+ *       options: --board <owner>/<number>|new  --integration <branch>  --owner <name>
+ *                --repo <owner>/<name>  --public
  *   winston install-codex-agents [--force]
  *   winston title <words...>           record this session's title (published on the next prompt)
  *
- * Doctor and init share one list of checks: a check that init can fix carries a
- * `fix`, and init runs exactly those fixes.
+ * Doctor and init share one list of checks. A check init can fix carries a `fix`; one
+ * that only a person can fix (GitHub has no API for it, or it needs access someone else
+ * grants) carries `hand`, the steps. `scope: 'you'` marks what belongs to the person at
+ * the keyboard rather than to the repo's setup.
  */
 
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { loadLayers } from '../lib/config.mjs'
+import { loadLayers, repoRoot, winstonHome } from '../lib/config.mjs'
 import { recordTitle } from '../hooks/session-title.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -40,6 +51,14 @@ export const REQUIRED_LABELS = [
 ]
 
 const DEFAULT_STATUSES = ['New', 'Ready', 'Verify', 'Verified']
+const STATUS_COLORS = ['GRAY', 'BLUE', 'YELLOW', 'GREEN']
+const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
+const TRIAGE_SECRETS = ['GH_PAT', 'CLAUDE_CODE_OAUTH_TOKEN']
+const INTEGRATION_NAMES = ['staging', 'develop', 'dev', 'development']
+const PROCESS_DOCS = ['AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md']
+const MODES = ['join', 'new', 'adopt']
+// A first push of a repo with history outlasts the default 30 seconds.
+const PUSH_TIMEOUT = 600000
 const DEFAULT_TRIAGE_WORKFLOW = 'triage-on-new-issue.yml'
 const DEFAULT_MILESTONE = 'Phase 1.0'
 
@@ -68,11 +87,47 @@ const codexSources = () => {
 
 const BOARD_QUERY = `query($owner:String!,$number:Int!){ repositoryOwner(login:$owner){
   ... on Organization{ projectV2(number:$number){ ...F } } ... on User{ projectV2(number:$number){ ...F } } } }
-fragment F on ProjectV2 { id title fields(first:100){ nodes{ ... on ProjectV2FieldCommon{ name } ... on ProjectV2SingleSelectField{ options{ name } } } }
+fragment F on ProjectV2 { id title fields(first:100){ nodes{ ... on ProjectV2FieldCommon{ id name } ... on ProjectV2SingleSelectField{ options{ id name color description } } } }
+  workflows(first:50){ nodes{ name enabled } }
   views(first:50){ nodes{ layout groupByFields(first:10){ nodes{ ... on ProjectV2FieldCommon{ name } } } } } }`
 
 const CREATE_VIEW_MUTATION = `mutation($projectId:ID!,$name:String!){ createProjectV2View(input:{projectId:$projectId,name:$name,layout:BOARD_LAYOUT}){ view{ id } } }`
 const FILTER_VIEW_MUTATION = `mutation($viewId:ID!,$filter:String!){ updateProjectV2View(input:{viewId:$viewId,filter:$filter}){ view{ id } } }`
+
+const LINKED_BOARDS_QUERY = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ projectsV2(first:50){ nodes{ number title closed
+  owner{ ... on Organization{ login } ... on User{ login } } } } } }`
+
+function fetchBoard(owner, number) {
+  const r = run('gh', ['api', 'graphql', '-f', `query=${BOARD_QUERY}`, '-f', `owner=${owner}`, '-F', `number=${number}`])
+  try {
+    return { project: JSON.parse(r.out).data.repositoryOwner.projectV2, err: r.err }
+  } catch {
+    return { project: null, err: r.err }
+  }
+}
+
+/** The board's web address; an organization's and a user's differ. */
+function boardUrl(owner, number) {
+  const kind = run('gh', ['api', `users/${owner}`, '--jq', '.type']).out === 'Organization' ? 'orgs' : 'users'
+  return `https://github.com/${kind}/${owner}/projects/${number}`
+}
+
+/**
+ * Set a single-select field's options. An option passed with its `id` is kept, items
+ * and all; one left out is deleted. So adding means passing every existing option too.
+ */
+function setOptions(fieldId, options) {
+  const lit = options.map((o) => `{${o.id ? `id:${JSON.stringify(o.id)},` : ''}name:${JSON.stringify(o.name)},color:${o.color || 'GRAY'},description:${JSON.stringify(o.description || '')}}`).join(',')
+  const r = run('gh', ['api', 'graphql', '-f', `query=mutation($fieldId:ID!){ updateProjectV2Field(input:{fieldId:$fieldId,singleSelectOptions:[${lit}]}){ projectV2Field{ ... on ProjectV2SingleSelectField{ id } } } }`, '-f', `fieldId=${fieldId}`])
+  if (!r.ok) throw new Error(`set field options: ${r.err || r.out}`)
+}
+
+const statusOption = (name, i) => ({ name, color: STATUS_COLORS[i] ?? 'GRAY' })
+
+function createPriorityField(owner, number, name) {
+  const r = run('gh', ['project', 'field-create', String(number), '--owner', owner, '--name', name, '--data-type', 'SINGLE_SELECT', '--single-select-options', PRIORITIES.join(',')])
+  if (!r.ok) throw new Error(`create the ${name} field: ${r.err}`)
+}
 
 const openMilestones = (root) => run('gh', ['api', '--method', 'GET', 'repos/{owner}/{repo}/milestones', '-f', 'state=open', '--jq', '.[].title'], { cwd: root }).out.split('\n').filter(Boolean)
 
@@ -94,12 +149,21 @@ function createKanbanView(root, projectId) {
   if (!filtered.ok) throw new Error(`filter view to milestone:"${milestone}": ${filtered.err}`)
 }
 
-/** Every check, in report order: { name, state: ok|missing|on|off, detail, required, fix? }. */
-export function checks(cwd) {
+function writeTriageWorkflow(wf) {
+  mkdirSync(dirname(wf), { recursive: true })
+  copyFileSync(join(ROOT, 'templates', 'triage-on-new-issue.yml'), wf)
+}
+
+/**
+ * Every check, in report order: { name, state: ok|missing|on|off, detail, required, fix?, hand?, scope? }.
+ * `planned` is init's proposal for a repo with no config yet: { config, newBoard, noRepo, firstCommit }.
+ * The checks then describe the repo as it will be once init's first steps have run.
+ */
+export function checks(cwd, planned = null) {
   const out = []
   const add = (c) => out.push({ required: true, detail: '', ...c })
 
-  add({ name: 'claude on PATH', state: onPath('claude') ? 'ok' : 'missing' })
+  add({ name: 'claude on PATH', state: onPath('claude') ? 'ok' : 'missing', scope: 'you', hand: 'install Claude Code, or put `claude` on PATH' })
 
   const auth = run('gh', ['auth', 'status', '--json', 'hosts', '--jq', '.hosts["github.com"][] | select(.active) | .scopes'])
   const scopes = auth.out.split(/,\s*/)
@@ -107,6 +171,7 @@ export function checks(cwd) {
     name: 'gh auth with project scope',
     state: auth.ok && scopes.includes('project') ? 'ok' : 'missing',
     detail: !auth.ok ? 'gh not installed or not logged in' : scopes.includes('project') ? '' : 'run: gh auth refresh -s project',
+    scope: 'you', hand: !auth.ok ? 'run: gh auth login, then: gh auth refresh -s project' : 'run: gh auth refresh -s project',
   })
 
   let layers
@@ -116,19 +181,18 @@ export function checks(cwd) {
     add({ name: 'repo config', state: 'missing', detail: e.message })
     return out
   }
-  const { root, repo } = layers
+  const { repo } = layers
+  const root = layers.root ?? (planned ? cwd : null)
   if (!root) {
-    add({ name: 'git repository', state: 'missing', detail: `${cwd} is not inside a git repository` })
+    add({ name: 'git repository', state: 'missing', detail: `${cwd} is not inside a git repository`, unconfigured: true })
     return out
   }
-  const config = { ...layers.user.data, ...repo.data }
-  const sample = join(ROOT, 'templates', 'config.sample.json')
+  const config = planned ? { ...layers.user.data, ...planned.config } : { ...layers.user.data, ...repo.data }
   const configPath = join(root, '.winston', 'config.json')
-  if (!repo.loaded) {
-    add({
-      name: 'repo config', state: 'missing', detail: `${configPath} not found`,
-      fix: { plan: `write ${configPath} from the sample (then edit it)`, run: () => { mkdirSync(dirname(configPath), { recursive: true }); copyFileSync(sample, configPath) } },
-    })
+  if (planned) {
+    // init's first steps write the config and settle the branches.
+  } else if (!repo.loaded) {
+    add({ name: 'repo config', state: 'missing', detail: `${configPath} not found`, unconfigured: true })
   } else {
     const problems = []
     if (!config.branches?.integration || !config.branches?.production) problems.push('branches.integration and branches.production')
@@ -136,48 +200,81 @@ export function checks(cwd) {
     add({ name: 'repo config', state: problems.length ? 'missing' : 'ok', detail: problems.length ? `needs ${problems.join(', ')}` : configPath })
   }
 
-  for (const role of ['integration', 'production']) {
+  for (const role of planned ? [] : ['integration', 'production']) {
     const branch = config.branches?.[role]
     if (!branch) continue
     const r = run('git', ['-C', root, 'ls-remote', '--exit-code', '--heads', 'origin', branch])
     add({ name: `${role} branch on origin`, state: r.ok ? 'ok' : 'missing', detail: branch })
   }
 
-  if (config.board?.owner && config.board?.number) {
+  if (planned?.newBoard || (config.board?.owner && config.board?.number)) {
     const { owner, number } = config.board
-    const r = run('gh', ['api', 'graphql', '-f', `query=${BOARD_QUERY}`, '-f', `owner=${owner}`, '-F', `number=${number}`])
-    let project = null
-    try {
-      project = JSON.parse(r.out).data.repositoryOwner.projectV2
-    } catch {}
+    // A board init is about to create has none of this yet. Its own step gives it the
+    // Status options and the Priority field, and GitHub turns "Item added to project" on
+    // in every new project.
+    const fetched = planned?.newBoard ? { project: { id: null, fields: { nodes: [] }, views: { nodes: [] }, workflows: { nodes: [{ name: 'Item added to project', enabled: true }] } } } : fetchBoard(owner, number)
+    const project = fetched.project
     const where = `${owner} project ${number}`
     if (!project) {
-      add({ name: 'board reachable', state: 'missing', detail: `${where}: ${r.err || 'not found'}`, board: true })
+      add({
+        name: 'board reachable', state: 'missing', detail: `${where}: ${fetched.err || 'not found, or this account has no access to it'}`, scope: 'you',
+        hand: `a project's access is separate from the repo's: ask ${config.owner || 'the owner'} to add this account at ${boardUrl(owner, number)}/settings/access (if the board is gone, fix board.owner and board.number in ${configPath})`,
+      })
     } else {
-      add({ name: 'board reachable', state: 'ok', detail: `${where}: ${project.title}` })
-      const fields = project.fields.nodes.filter((n) => n?.name)
-      const status = fields.find((f) => f.name === 'Status')
-      const have = new Set((status?.options ?? []).map((o) => o.name))
-      const lacking = (config.board.statuses ?? DEFAULT_STATUSES).filter((s) => !have.has(s))
-      add({ name: 'board Status options', state: lacking.length ? 'missing' : 'ok', detail: lacking.length ? `add: ${lacking.join(', ')}` : '', board: true })
-      const priority = config.board.priorityField ?? 'Priority'
-      add({ name: 'board Priority field', state: fields.some((f) => f.name === priority) ? 'ok' : 'missing', detail: priority, board: true })
+      const url = planned?.newBoard ? 'the new board' : boardUrl(owner, number)
+      if (!planned?.newBoard) {
+        add({ name: 'board reachable', state: 'ok', detail: `${where}: ${project.title}` })
+        const fields = project.fields.nodes.filter((n) => n?.name)
+        const status = fields.find((f) => f.name === 'Status')
+        const wanted = config.board.statuses ?? DEFAULT_STATUSES
+        const have = new Set((status?.options ?? []).map((o) => o.name))
+        const lacking = wanted.filter((s) => !have.has(s))
+        add({
+          name: 'board Status options', state: lacking.length ? 'missing' : 'ok', detail: lacking.length ? `add: ${lacking.join(', ')}` : '', board: true,
+          hand: `add the Status options ${lacking.join(', ')} in the board's settings`,
+          fix: lacking.length && status?.id && {
+            plan: `add Status options to the board: ${lacking.join(', ')} (its existing options are kept)`,
+            run: () => setOptions(status.id, [...status.options, ...lacking.map((name) => statusOption(name, wanted.indexOf(name)))]),
+          },
+        })
+        const priority = config.board.priorityField ?? 'Priority'
+        const hasPriority = fields.some((f) => f.name === priority)
+        add({
+          name: 'board Priority field', state: hasPriority ? 'ok' : 'missing', detail: priority, board: true,
+          fix: !hasPriority && { plan: `add a single-select ${priority} field to the board (${PRIORITIES.join(', ')})`, run: () => createPriorityField(owner, number, priority) },
+        })
+      }
       const hasKanbanView = project.views.nodes.some((v) => v.layout === 'BOARD_LAYOUT' && v.groupByFields.nodes.some((f) => f?.name === 'Status'))
       add({
         name: 'board kanban view', state: hasKanbanView ? 'ok' : 'missing',
         detail: hasKanbanView ? '' : 'no BOARD_LAYOUT view grouped by Status', board: true,
         fix: !hasKanbanView && { plan: 'create a BOARD_LAYOUT view on the board, filtered to a milestone', run: () => createKanbanView(root, project.id) },
       })
-      const hasMilestone = openMilestones(root).length > 0
+      const hasMilestone = !planned?.noRepo && openMilestones(root).length > 0
       add({
         name: 'starting milestone', state: hasMilestone ? 'ok' : 'missing',
         detail: hasMilestone ? '' : 'no open milestone', board: true,
         fix: !hasMilestone && { plan: `create milestone "${DEFAULT_MILESTONE}" on the repo`, run: () => { if (!openMilestones(root).length) createMilestone(root, DEFAULT_MILESTONE) } },
       })
+      // New issues reach the board, at the intake status, through two of the board's own
+      // workflows. GitHub has no API that creates or enables them, so they are hand steps,
+      // and the API shows only whether each is on, not what it is set to do.
+      const intake = (config.board.statuses ?? DEFAULT_STATUSES)[0]
+      const enabled = (name) => (project.workflows?.nodes ?? []).some((w) => w?.enabled && (w.name === name || (name === 'Auto-add to project' && /^Auto-add(?! sub-issues)/.test(w.name))))
+      add({
+        name: 'board auto-adds new issues', state: enabled('Auto-add to project') ? 'ok' : 'missing',
+        detail: enabled('Auto-add to project') ? '' : 'the board\'s "Auto-add to project" workflow is off', board: true,
+        hand: `open ${url}/workflows, choose "Auto-add to project", pick this repository with the filter is:issue, then Save and turn on workflow`,
+      })
+      add({
+        name: `board sets ${intake} on added items`, state: enabled('Item added to project') ? 'ok' : 'missing',
+        detail: enabled('Item added to project') ? `on; GitHub's API does not show which Status it sets` : 'the board\'s "Item added to project" workflow is off', board: true,
+        hand: `open ${url}/workflows, choose "Item added to project", set Status to ${intake}, then Save and turn on workflow`,
+      })
     }
   }
 
-  const labels = run('gh', ['label', 'list', '--limit', '1000', '--json', 'name', '--jq', '.[].name'], { cwd: root })
+  const labels = planned?.noRepo ? { ok: true, out: '' } : run('gh', ['label', 'list', '--limit', '1000', '--json', 'name', '--jq', '.[].name'], { cwd: root })
   if (!labels.ok) {
     add({ name: 'triage labels', state: 'missing', detail: `cannot list labels: ${labels.err}` })
   } else {
@@ -200,13 +297,23 @@ export function checks(cwd) {
 
   const wfName = config.triage?.workflow ?? DEFAULT_TRIAGE_WORKFLOW
   const wf = join(root, '.github', 'workflows', wfName)
+  // init's first commit, when it makes one, writes the workflow itself.
+  const hasWf = existsSync(wf) || !!planned?.firstCommit
   add({
-    name: 'triage-on-new-issue workflow', state: existsSync(wf) ? 'ok' : 'missing', detail: wf,
-    fix: !existsSync(wf) && {
-      plan: `write ${wf} from the template (needs repo secrets GH_PAT and CLAUDE_CODE_OAUTH_TOKEN)`,
-      run: () => { mkdirSync(dirname(wf), { recursive: true }); copyFileSync(join(ROOT, 'templates', 'triage-on-new-issue.yml'), wf) },
+    name: 'triage-on-new-issue workflow', state: hasWf ? 'ok' : 'missing', detail: wf,
+    fix: !hasWf && {
+      plan: `write ${wf} from the template (it skips until the repo has the secrets ${TRIAGE_SECRETS.join(' and ')})`,
+      run: () => writeTriageWorkflow(wf),
     },
   })
+  if (existsSync(wf) && !planned?.noRepo) {
+    const secrets = run('gh', ['secret', 'list', '--json', 'name', '--jq', '.[].name'], { cwd: root })
+    const lacking = TRIAGE_SECRETS.filter((n) => !secrets.out.split('\n').includes(n))
+    add({
+      name: 'triage workflow secrets', required: false, state: secrets.ok && !lacking.length ? 'on' : 'off',
+      detail: !secrets.ok ? 'cannot list the repo\'s secrets from this account' : lacking.length ? `not set: ${lacking.join(', ')} — new issues are not triaged automatically until they are` : 'new issues are triaged automatically',
+    })
+  }
 
   // Optional: features that use these degrade cleanly without them.
   add({ name: 'codex CLI', required: false, state: onPath('codex') ? 'on' : 'off', detail: 'Rex, /winston:codex' })
@@ -223,47 +330,280 @@ export function checks(cwd) {
   return out
 }
 
+const missing = (list) => list.filter((c) => c.required && c.state === 'missing')
+
 function doctor(cwd) {
   const list = checks(cwd)
   for (const c of list) console.log(`${c.state.padEnd(8)} ${c.name}${c.detail ? `  — ${c.detail}` : ''}`)
-  const bad = list.filter((c) => c.required && c.state === 'missing')
-  if (list.some((c) => c.board && c.state === 'missing' && !c.fix)) console.log('\nBoard: winston init prints how to set one up; creating it needs the owner\'s decisions.')
-  if (bad.some((c) => c.fix)) console.log('\nFix: winston init')
+  const bad = missing(list)
+  const hand = bad.filter((c) => !c.fix && c.hand)
+  if (hand.length) {
+    console.log('\nBy hand:')
+    for (const c of hand) console.log(`  - ${c.name}: ${c.hand}`)
+  }
+  if (bad.some((c) => c.unconfigured)) console.log('\nNot set up for Winston here. winston init asks which setup fits: join, new or adopt.')
+  else if (bad.some((c) => c.fix)) console.log('\nFix: winston init --mode adopt')
   return bad.length ? 1 : 0
 }
 
-function init(cwd, yes) {
+/** What this directory is, read-only: the facts the three setups differ on. */
+function situation(cwd) {
+  const root = repoRoot(cwd)
+  const git = (...args) => run('git', ['-C', root, ...args])
+  const hasConfig = !!root && existsSync(join(root, '.winston', 'config.json'))
+  const hasCommits = !!root && git('rev-parse', '--verify', '-q', 'HEAD').ok
+  const origin = (root && git('remote', 'get-url', 'origin').out) || null
+  let mode, why
+  if (hasConfig) [mode, why] = ['join', `${join(root, '.winston', 'config.json')} exists`]
+  else if (!root) [mode, why] = ['new', `${cwd} is not a git repository`]
+  else if (!hasCommits) [mode, why] = ['new', 'the repository has no commits']
+  else if (!origin) [mode, why] = ['new', 'the repository has no origin remote']
+  else [mode, why] = ['adopt', 'the repository has history and an origin, and no .winston/config.json']
+  return { root, hasConfig, hasCommits, origin, mode, why }
+}
+
+function ask(sit) {
+  console.log('Which of these is this repository?')
+  console.log('  join    Already set up for Winston by someone else. Check my access and my machine;')
+  console.log('          change nothing in the repo or on GitHub.')
+  console.log('  new     A new project. Create the GitHub repo, both branches, the board and the config.')
+  console.log('  adopt   An existing repo that Winston did not set up. Fit a config to its branches,')
+  console.log('          board and docs, and add only what is missing.')
+  console.log(`\nLooks like: ${sit.mode} — ${sit.why}.`)
+  console.log('\nRun: winston init --mode <join|new|adopt>   (prints the plan; --yes applies it)')
+}
+
+/** join: the repo's setup is someone else's. Report; write nothing outside this machine. */
+function join_(cwd, sit, yes) {
+  if (!sit.hasConfig) {
+    console.log('There is no .winston/config.json here, so this checkout is not set up for Winston.')
+    console.log('If the repo is, pull the branch that holds its config. Otherwise: winston init --mode adopt')
+    return 1
+  }
   const list = checks(cwd)
-  const fixes = list.filter((c) => c.required && c.state === 'missing' && c.fix)
-  const board = list.filter((c) => c.board && c.state === 'missing' && !c.fix)
-  const manual = list.filter((c) => c.required && c.state === 'missing' && !c.fix && !c.board)
-  if (!fixes.length && !board.length && !manual.length) {
+  const layers = loadLayers(cwd)
+  const owner = { ...layers.user.data, ...layers.repo.data }.owner || 'the owner'
+  const bad = missing(list)
+  const yours = bad.filter((c) => c.scope === 'you')
+  const theirs = bad.filter((c) => c.scope !== 'you')
+  console.log(`Joining ${sit.root}. Its setup is ${owner}'s: nothing in the repo or on GitHub is changed.`)
+  if (!bad.length) console.log('\nReady: every required check passes.')
+  if (yours.length) {
+    console.log('\nYours to fix:')
+    for (const c of yours) console.log(`  - ${c.name}: ${c.hand || c.detail}`)
+  }
+  if (theirs.length) {
+    console.log(`\nGaps in the repo's own setup. They are ${owner}'s to close (winston init --mode adopt), not yours:`)
+    for (const c of theirs) console.log(`  - ${c.name}${c.detail ? ` — ${c.detail}` : ''}`)
+  }
+  // The launchers read launcher.repo from the user layer only, so the repo's copy never
+  // reaches a second person. Set it when they have none; never replace one.
+  const userPath = join(winstonHome(), 'config.json')
+  if (!layers.user.data.launcher?.repo) {
+    const shown = sit.root.startsWith(homedir() + '/') ? `~${sit.root.slice(homedir().length)}` : sit.root
+    const plan = `set launcher.repo to ${shown} in ${userPath} (the session launchers open that checkout)`
+    if (!yes) {
+      console.log(`\nOn this machine, init would:\n  - ${plan}\n\nRerun with --yes to do that.`)
+    } else {
+      mkdirSync(dirname(userPath), { recursive: true })
+      writeFileSync(userPath, JSON.stringify({ ...layers.user.data, launcher: { ...layers.user.data.launcher, repo: shown } }, null, 2) + '\n')
+      console.log(`\ndone     ${plan}`)
+    }
+  }
+  return yours.length ? 1 : 0
+}
+
+/**
+ * The first steps for a repo with no config: settle the GitHub repo, the two branches and
+ * the board, then write a config that describes them. Read-only until a step's run().
+ * Returns { steps, notes, planned } or { boards } when the owner must pick a board.
+ */
+function bootstrap(cwd, sit, opts) {
+  const root = sit.root ?? cwd
+  const git = (...args) => run('git', ['-C', root, ...args])
+  const login = run('gh', ['api', 'user', '--jq', '.login']).out
+  if (!login) throw new Error('gh is not logged in. Run: gh auth login, then: gh auth refresh -s project')
+
+  const noRepo = !sit.origin
+  let slug
+  if (noRepo) slug = opts.repo || `${login}/${basename(root)}`
+  else {
+    const view = run('gh', ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'], { cwd: root })
+    if (!view.ok) throw new Error(`origin (${sit.origin}) is not a GitHub repository gh can read: ${view.err}`)
+    slug = view.out
+  }
+  const [ghOwner, name] = slug.split('/')
+  if (!ghOwner || !name) throw new Error(`--repo takes <owner>/<name>, got: ${slug}`)
+
+  // Branches: production is what the repo already treats as its default.
+  let production, heads = []
+  if (noRepo) production = (sit.root && git('symbolic-ref', '--short', 'HEAD').out) || 'main'
+  else {
+    heads = git('ls-remote', '--heads', 'origin').out.split('\n').map((l) => l.split('refs/heads/')[1]).filter(Boolean)
+    production = git('ls-remote', '--symref', 'origin', 'HEAD').out.match(/^ref: refs\/heads\/(\S+)\s+HEAD/m)?.[1]
+    if (!production) throw new Error('cannot read origin\'s default branch (is the remote empty?)')
+  }
+  const integration = opts.integration || INTEGRATION_NAMES.find((b) => b !== production && heads.includes(b)) || 'staging'
+
+  // Board: an existing one is used as it stands; only a new project gets created.
+  let board = null
+  if (opts.board && opts.board !== 'new') {
+    const [owner, number] = opts.board.split('/')
+    if (!owner || !/^\d+$/.test(number ?? '')) throw new Error(`--board takes <owner>/<number> or new, got: ${opts.board}`)
+    board = { owner, number: Number(number) }
+    if (!fetchBoard(owner, board.number).project) throw new Error(`--board ${opts.board}: no such project, or this account has no access to it`)
+  } else if (!opts.board && !noRepo) {
+    const linked = run('gh', ['api', 'graphql', '-f', `query=${LINKED_BOARDS_QUERY}`, '-f', `owner=${ghOwner}`, '-f', `name=${name}`])
+    let nodes = []
+    try {
+      nodes = JSON.parse(linked.out).data.repository.projectsV2.nodes.filter((n) => n && !n.closed)
+    } catch {
+      throw new Error(`cannot list the projects linked to ${slug}: ${linked.err || linked.out}`)
+    }
+    if (nodes.length > 1) return { boards: nodes.map((n) => ({ owner: n.owner.login, number: n.number, title: n.title })) }
+    if (nodes.length === 1) board = { owner: nodes[0].owner.login, number: nodes[0].number }
+  }
+  const newBoard = !board
+  const statuses = DEFAULT_STATUSES
+
+  const present = (f) => existsSync(join(root, f))
+  const processDocs = PROCESS_DOCS.filter(present)
+  const config = {
+    owner: opts.owner || (sit.root && git('config', 'user.name').out) || login,
+    branches: { integration, production },
+    board: { owner: board?.owner ?? ghOwner, number: board?.number ?? null, statuses, priorityField: 'Priority' },
+    processDocs,
+    triage: { policy: 'TRIAGE.md', workflow: DEFAULT_TRIAGE_WORKFLOW, labels: [] },
+    worktree: { copy: ['.env.local', '.env'].filter(present), link: present('package.json') ? ['node_modules'] : [] },
+  }
+  const configPath = join(root, '.winston', 'config.json')
+  const wf = join(root, '.github', 'workflows', DEFAULT_TRIAGE_WORKFLOW)
+  const must = (r, what) => { if (!r.ok) throw new Error(`${what}: ${r.err || r.out}`) }
+
+  const steps = []
+  if (!sit.root) steps.push({ plan: `git init in ${root}, on branch ${production}`, run: () => must(run('git', ['init', '-q', '-b', production, root]), 'git init') })
+  // A new project's own workflows point at two of its default options: "Item added to
+  // project" at Todo, and the closing ones at Done. Renaming Todo in place (same id) makes
+  // the first set the intake status; Done stays; In Progress goes.
+  const configureNewBoard = () => {
+    const status = fetchBoard(ghOwner, config.board.number).project?.fields.nodes.find((f) => f?.name === 'Status')
+    if (!status?.id) throw new Error('cannot read the new project\'s Status field')
+    const stock = (n) => status.options.find((o) => o.name === n)
+    setOptions(status.id, [{ ...statusOption(statuses[0], 0), id: stock('Todo')?.id }, ...statuses.slice(1).map((n, i) => statusOption(n, i + 1)), ...(stock('Done') ? [stock('Done')] : [])])
+    createPriorityField(ghOwner, config.board.number, 'Priority')
+  }
+  if (newBoard) {
+    steps.push({
+      plan: `create a private GitHub Project "${name}" under ${ghOwner}, with Status ${statuses.join(' / ')} and a Priority field (${PRIORITIES.join(', ')})`,
+      run: () => {
+        const made = run('gh', ['project', 'create', '--owner', ghOwner, '--title', name, '--format', 'json'])
+        must(made, 'gh project create')
+        config.board.number = JSON.parse(made.out).number
+        try {
+          configureNewBoard()
+        } catch (e) {
+          // The project exists and is not linked yet, so a plain rerun would not find it.
+          throw new Error(`${e.message}. ${ghOwner} project ${config.board.number} was created: rerun with --board ${ghOwner}/${config.board.number} to use it rather than make another`)
+        }
+      },
+    })
+  }
+  steps.push({
+    plan: `write ${configPath}: production ${production}, integration ${integration}, board ${newBoard ? 'the new one' : `${board.owner} project ${board.number}`}, process docs ${processDocs.join(', ') || 'none found'}`,
+    run: () => { mkdirSync(dirname(configPath), { recursive: true }); writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n') },
+  })
+  if (!sit.hasCommits) {
+    steps.push({
+      plan: 'make the first commit: the Winston config and the triage workflow, nothing else',
+      run: () => {
+        writeTriageWorkflow(wf)
+        must(git('add', '--', configPath, wf), 'git add')
+        must(git('commit', '-q', '-m', 'Add Winston configuration', '--', configPath, wf), 'git commit')
+      },
+    })
+  }
+  if (noRepo) {
+    steps.push({
+      plan: `create the ${opts.public ? 'public' : 'private'} GitHub repository ${slug} from this directory and push ${production}`,
+      run: () => must(run('gh', ['repo', 'create', slug, opts.public ? '--public' : '--private', '--source', root, '--remote', 'origin', '--push'], { timeout: PUSH_TIMEOUT }), 'gh repo create'),
+    })
+  }
+  if (integration !== production && !heads.includes(integration)) {
+    steps.push({
+      plan: `create branch ${integration} on origin from ${production}`,
+      run: () => {
+        must(run('git', ['-C', root, 'fetch', '-q', 'origin', production], { timeout: PUSH_TIMEOUT }), `git fetch origin ${production}`)
+        must(run('git', ['-C', root, 'push', '-q', 'origin', `FETCH_HEAD:refs/heads/${integration}`], { timeout: PUSH_TIMEOUT }), `git push origin ${integration}`)
+      },
+    })
+  }
+  if (newBoard) {
+    steps.push({
+      plan: `link the new board to ${slug}`,
+      run: () => must(run('gh', ['project', 'link', String(config.board.number), '--owner', ghOwner, '--repo', name]), 'gh project link'),
+    })
+  }
+
+  const notes = []
+  if (sit.hasCommits) notes.push(`Commit ${configPath} and ${wf} to ${production}: GitHub runs the triage workflow from the default branch only.`)
+  if (!present(config.triage.policy)) notes.push(`There is no ${config.triage.policy}: /winston:triage does not run without a policy. Write one, or point triage.policy in the config at the doc that holds your triage rules.`)
+  notes.push(`No deploy gate is set. If merges into ${production} deploy, add deployGate to the config (see the README).`)
+  return { steps, notes, planned: { config, newBoard, noRepo, firstCommit: !sit.hasCommits } }
+}
+
+/** new and adopt: build what is missing. With a config already here, that config is the plan. */
+function setup(cwd, sit, opts) {
+  if (opts.mode === 'adopt' && !sit.hasConfig && !(sit.root && sit.hasCommits && sit.origin)) {
+    console.log(`adopt needs an existing repository with history and an origin remote, and ${sit.why}. For a new project: winston init --mode new`)
+    return 1
+  }
+  const boot = sit.hasConfig ? null : bootstrap(cwd, sit, opts)
+  if (boot?.boards) {
+    console.log('More than one GitHub Project is linked to this repository. Which is the Winston board?')
+    for (const b of boot.boards) console.log(`  --board ${b.owner}/${b.number}   ${b.title}`)
+    console.log('  --board new   create a new one')
+    return opts.yes ? 2 : 0
+  }
+  const list = checks(cwd, boot?.planned)
+  const fixes = missing(list).filter((c) => c.fix)
+  const hand = missing(list).filter((c) => !c.fix)
+  const printHand = (items) => {
+    if (!items.length) return
+    console.log('\nBy hand (GitHub has no API for these, or they need someone\'s access):')
+    for (const c of items) console.log(`  - ${c.name}: ${c.hand || c.detail}`)
+  }
+  if (!boot && !fixes.length && !hand.length) {
     console.log('Nothing to do: every required check passes.')
     return 0
   }
-  if (fixes.length) {
-    console.log(yes ? 'Creating:' : 'winston init would create:')
-    for (const c of fixes) console.log(`  - ${c.fix.plan}`)
-  }
-  if (board.length) {
-    console.log('\nThe board needs the owner\'s decisions, so init does not create it:')
-    console.log('  1. Create a GitHub Project (v2) under the board owner: gh project create --owner <owner> --title "<title>"')
-    console.log('  2. Give its Status field the options: ' + DEFAULT_STATUSES.join(', ') + ' (or the repo config\'s board.statuses)')
-    console.log('  3. Add a single-select Priority field (or the name in board.priorityField)')
-    console.log('  4. Put its owner and number in .winston/config.json as board.owner and board.number')
-    console.log('  5. Add a BOARD_LAYOUT view, columns by Status, filtered to a milestone (e.g. filter: milestone:"Phase 1.0")')
-    for (const c of board) console.log(`  now: ${c.name} — ${c.detail}`)
-  }
-  if (manual.length) {
-    console.log('\nNeeds a hand fix:')
-    for (const c of manual) console.log(`  - ${c.name}${c.detail ? ` — ${c.detail}` : ''}`)
-  }
-  if (!yes) {
-    if (fixes.length) console.log('\nRerun with --yes to create these.')
+  const plans = [...(boot?.steps ?? []), ...fixes.map((c) => c.fix)]
+  if (!opts.yes) {
+    if (plans.length) {
+      console.log(`winston init --mode ${opts.mode} would:`)
+      for (const p of plans) console.log(`  - ${p.plan}`)
+    }
+    printHand(hand)
+    for (const n of boot?.notes ?? []) console.log(`\nNote: ${n}`)
+    if (plans.length) console.log('\nRerun with --yes to do these.')
     return 0
   }
+
+  // First steps run in order and each needs the one before it, so the first failure stops.
+  const first = boot?.steps ?? []
+  for (const [i, step] of first.entries()) {
+    try {
+      step.run()
+      console.log(`done     ${step.plan}`)
+    } catch (e) {
+      console.log(`failed   ${step.plan}: ${e.message}`)
+      for (const later of first.slice(i + 1)) console.log(`not run  ${later.plan}`)
+      return 1
+    }
+  }
+  // The config exists now, so the checks read the real repo and board.
+  const after = boot ? checks(cwd) : list
   let failed = 0
-  for (const c of fixes) {
+  for (const c of missing(after).filter((c) => c.fix)) {
     try {
       c.fix.run()
       console.log(`done     ${c.fix.plan}`)
@@ -272,7 +612,41 @@ function init(cwd, yes) {
       console.log(`failed   ${c.fix.plan}: ${e.message}`)
     }
   }
+  printHand(missing(after).filter((c) => !c.fix))
+  for (const n of boot?.notes ?? []) console.log(`\nNote: ${n}`)
   return failed ? 1 : 0
+}
+
+function init(cwd, opts) {
+  const sit = situation(cwd)
+  if (!opts.mode) {
+    ask(sit)
+    if (opts.yes) console.error('\nwinston init --yes needs --mode: the setup is the owner\'s choice, not a guess.')
+    return opts.yes ? 2 : 0
+  }
+  if (!MODES.includes(opts.mode)) {
+    console.error(`winston init: --mode is one of ${MODES.join(', ')}`)
+    return 2
+  }
+  return opts.mode === 'join' ? join_(cwd, sit, opts.yes) : setup(cwd, sit, opts)
+}
+
+const INIT_FLAGS = { '--yes': false, '--public': false, '--mode': true, '--board': true, '--integration': true, '--owner': true, '--repo': true }
+
+/** Strict: an unknown flag, or a flag missing its value, is an error, never a guess. */
+function initOptions(args) {
+  const opts = {}
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i]
+    if (!(flag in INIT_FLAGS)) throw new Error(`winston init: unknown argument ${flag}`)
+    if (!INIT_FLAGS[flag]) opts[flag.slice(2)] = true
+    else {
+      const value = args[++i]
+      if (value === undefined || value.startsWith('--')) throw new Error(`winston init: ${flag} needs a value`)
+      opts[flag.slice(2)] = value
+    }
+  }
+  return opts
 }
 
 function installCodexAgents(force) {
@@ -315,7 +689,7 @@ function config(cwd, json) {
   return 0
 }
 
-const USAGE = 'usage: winston config [--json] | doctor | init [--yes] | install-codex-agents [--force] | title <words...>'
+const USAGE = 'usage: winston config [--json] | doctor | init [--mode join|new|adopt] [--yes] | install-codex-agents [--force] | title <words...>'
 
 function main(argv) {
   const [cmd, ...rest] = argv
@@ -324,7 +698,7 @@ function main(argv) {
     switch (cmd) {
       case 'config': return config(cwd, rest.includes('--json'))
       case 'doctor': return doctor(cwd)
-      case 'init': return init(cwd, rest.includes('--yes'))
+      case 'init': return init(cwd, initOptions(rest))
       case 'install-codex-agents': return installCodexAgents(rest.includes('--force'))
       case 'title':
         if (!recordTitle(rest)) {
