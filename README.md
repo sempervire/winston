@@ -54,6 +54,18 @@ GitHub in that Chrome, and connect it with `/chrome` (or start with `claude --ch
 Without browser control it prints the two steps for you to do, and doctor reports them
 until they are done.
 
+The triage workflow needs two Actions secrets that only the owner can create: `GH_PAT`
+(Issues on the repo, Projects on the board's owner) and `CLAUDE_CODE_OAUTH_TOKEN` (from
+`claude setup-token`). `winston init` checks which exist, by name only, and prints numbered
+steps for the missing ones, with the token type GitHub requires for the board's owner.
+Until both are set new issues are not triaged automatically; `winston doctor` reports the
+secrets and whether the workflow's latest runs failed.
+
+Triage takes every rule from the repo's policy file (`triage.policy`, `TRIAGE.md` by
+default). When that file is missing or has no triage rules (no heading that names triage,
+no `risk:` tier), doctor says so and init offers a starter `TRIAGE.md` to edit and commit;
+it never overwrites an existing one.
+
 ## Updating
 
 Winston says when a newer version is out: a notice at the start of a session (it asks
@@ -66,6 +78,15 @@ claude plugin marketplace update winston && claude plugin update winston@winston
 
 Add `--scope project`, run from the project, for a project-scope install. Then restart
 Claude Code. `"updateCheck": false` in the config turns the session notice off.
+
+So that a run does not stop on permission prompts, `winston permissions` lists the Claude
+Code allow rules Winston runs use in the repo and which the project's
+`.claude/settings.json` lacks. The owner runs `winston permissions --apply` once: it adds
+the missing rules to `permissions.allow`, and to `permissions.deny` a short list for what
+an allow pattern cannot leave out (force pushes, pushes to the production branch, PR
+approvals, forced deletions; deny wins over allow). It prints what it added and never
+removes or loosens an existing rule. Allow rules never clear deny or ask rules, hooks,
+production approval or secret grants.
 
 ## Commands
 
@@ -81,6 +102,7 @@ Claude Code. `"updateCheck": false` in the config turns the session notice off.
 | `/winston:handoff` | Hand the work to a fresh session. |
 | `/winston:codex`, `/winston:gemini` | Read-only second opinions from other model families. |
 | `/winston:doctor`, `/winston:init` | Check the setup Winston needs; join, create or adopt it. |
+| `winston permissions [--apply]` | List, or add to the project's settings, the allow rules Winston runs use. |
 
 Hooks: a production-deploy gate (blocks configured deploy actions until the owner types the
 approval phrase in that session), a secret-handling grant, session titles, a starting-branch check (a session opened in the
@@ -113,6 +135,7 @@ Top-level keys merge shallowly; the repo wins. See `templates/config.sample.json
 | `advisors` | Repo-specific agent names for Debbie, Sheldon and Radar. |
 | `deployGate` | Approval phrase and the guarded actions (`pr-merge` into a base, `workflow-run`). |
 | `secretGrant` | The phrase that grants secret handling for one session. |
+| `permissions.allow` | The repo's own commands, as Claude Code rules (`Bash(npm test*)`), added to what `winston permissions` lists. |
 | `updateCheck` | `false` turns off the session-start notice that a newer Winston is out. |
 | `startBranch` | `false` leaves the main checkout on whatever branch it is on at session start. |
 | `worktree`, `launcher` | Files copied or linked into new worktrees; the repo the launchers open. |

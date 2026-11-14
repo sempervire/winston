@@ -257,29 +257,44 @@ In order:
    a named dependency (data, an owner action, a branch not yet pushed). Unmerged code is not a
    blocker. Anything not blocked starts at
    authorization, under the Parallelism amendment.
-7. From the planned work and the commands it is likely to run (step 6), draft a narrow,
-   paste-ready block of Claude Code `/permissions` allow rules covering only that work. If
-   nothing in the plan needs a rule, skip this step and the `/permissions` steps below. Where
-   a needed permission can't be known or pinned down in advance, list it under Known possible
-   stops instead of forcing a rule for it.
+7. Run `winston permissions`. It is read-only and lists the Claude Code allow rules a
+   Winston run uses in this repo (git worktree, branch, commit and push; the `gh` issue, PR
+   and board forms; the repo's own commands from config `permissions.allow`) and which of
+   them the project's `.claude/settings.json` lacks. From the planned work and the commands
+   it is likely to run (step 6), add any narrow rule that work needs and the list does not
+   have, each as `--add '<rule>'`. If nothing is missing and nothing is added, skip the
+   permissions step below. Where a needed permission can't be known or pinned down in
+   advance, list it under Known possible stops instead of forcing a rule for it.
 8. Show the owner (1) the issues to be worked and (2) the complete human-needed setup: every
    decision, gated action, permission, and known possible stop. Summarize the decisions
    before asking them, so the owner can correct the shape of the run before answering. Where
-   step 7 produced a rule block, show it here too, with:
-   1. Open `/permissions`.
-   2. Select **Add**.
-   3. Paste the proposed block (if a multiline paste isn't accepted, add the rules one at a
-      time instead).
-   4. Choose **Session**, **Project**, or **User** for the scope.
+   step 7 found rules to add, show them here too, as one step for the owner: the single
+   command `winston permissions --apply` (with the `--add` rules from step 7), which the
+   owner runs themselves, in their terminal or with the `!` prefix. It adds the missing
+   rules to `permissions.allow` in the project's `.claude/settings.json`, and a short
+   `permissions.deny` list beside them: an allow pattern cannot leave out a flag, so
+   `git push origin *` alone would also cover a force push, a push to the production
+   branch and a branch deletion, and `gh pr review * --comment*` an approval. Deny wins
+   over allow, so those stay blocked. That includes `--force-with-lease`: a branch that
+   is already pushed is brought up to date by merging its base into it and pushing
+   normally, never by rebasing it. It prints the allow and the deny additions
+   separately, keeps every existing rule, and never removes or loosens a deny or ask
+   entry. Never run
+   `--apply` yourself, never edit a settings file to grant yourself a permission, and never
+   hand the owner a multi-line block to paste into `/permissions`: that dialog takes a
+   pasted block as one rule, which matches nothing.
 
-   Explain the scope choice; never make it for the owner: matching actions won't prompt again
-   this session; **Project** carries that into this project on future sessions; **User**
-   carries it into every project. This covers only the prompts the new allow rules remove.
+   Explain the scope; never choose it for the owner: the command writes **Project** scope,
+   so matching actions won't prompt again in this project, in this and future sessions, for
+   everyone who uses the committed file. An owner who wants **Session** or **User** scope
+   instead adds the listed rules one at a time in `/permissions` → **Add** and picks that
+   scope there; **User** carries a rule into every project. This covers only the prompts the
+   new allow rules remove.
    Claude Code evaluates deny, then ask, then allow, and a hook can block an action before any
    rule is reached, so an allow rule never clears a `permissions.ask`/`permissions.deny` rule,
    a hook, production approval, a secret grant, or any other gate below — those stay explicit.
-9. Ask every independent setup decision in a question box, including the `/permissions` scope
-   from step 8 where a rule block exists. Give each its own question, explain the tradeoff,
+9. Ask every independent setup decision in a question box, including the permission-rules
+   step and its scope from step 8 where rules are to be added. Give each its own question, explain the tradeoff,
    recommend an answer and say why. Batch the questions in one setup round where the interface
    permits; ask dependent questions after their prerequisites are answered. This skill requires
    question boxes as its standing setup behavior, even where the repository's general chat

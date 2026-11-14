@@ -17,6 +17,21 @@ needs its own confirmation. Its **In the browser** list (the board's intake work
 which GitHub has no API for) is work `/winston:init` does through browser control: offer
 that rather than leaving it with the user. Relay its **By hand** list as it stands.
 
+A **Triage workflow** list means the installed triage workflow is not triaging: its secrets
+are missing, or its latest runs failed. Say so plainly, since nothing else reports it, and
+offer `/winston:init`, which prints the owner's steps for the secrets. A missing `triage policy` means the policy file is
+absent or has no triage rules, so a triage run changes nothing; `/winston:init` offers a
+`TRIAGE.md` starter. `unknown` on either
+workflow line means this account cannot see them, not that they are missing. Never create a token or
+set a secret yourself.
+
+`off` on `triage policy blanks` means the policy still has lines that say "fill this in"
+or hold a `{{placeholder}}`; the owner writes those values.
+
+`off` on `project permission rules` counts the allow and deny rules a Winston run uses that
+the project's `.claude/settings.json` lacks (deny wins over allow). The fix is one command the owner runs,
+`winston permissions --apply`; relay it, never run it yourself.
+
 When the output ends with an **Update Winston:** line, a newer version is out. Give the
 user that line as it stands, command included: they run it and restart. Do not run the
 update yourself; it replaces the hooks and skills this session is running on.

@@ -59,22 +59,64 @@ It runs in five steps and never skips the first two.
      rather not, or the harness has no browser control (Codex), give them the two lines
      from the output to do by hand, and run `winston doctor` once they say they have.
 
-5. **Carry the plan's notes through as help, not status.** `winston init`'s plan can end with
-   `Note:` lines and `winston doctor` can report `triage workflow secrets` as `off` — both are
-   non-blocking, so don't present them as bare facts or errors; say what to do about them.
+5. **Carry the plan's notes through as help, not status.** `winston init`'s output can end
+   with `Note:` lines and a **Secrets the triage workflow needs** list, and `winston doctor`
+   can report `triage workflow secrets` as `off` — all are non-blocking, so don't present
+   them as bare facts or errors; say what to do about them, and always offer the next step.
    - **A note to commit the config and workflow:** it names the exact files and the reason
      (GitHub runs the triage workflow from the default branch only). Relay that reason, and
      offer to commit those two files yourself now (`git add` and `git commit` them) rather
      than leaving the user to work out why they're uncommitted.
-   - **`triage workflow secrets: off`:** the workflow skips cleanly without them, so frame
-     this as an optional next step, not a problem. Explain both secrets in plain terms: `GH_PAT`
-     is a fine-grained token over this repo with Issues read/write and Projects read/write on
-     the board owner (`GITHUB_TOKEN` cannot reach an org/user project); `CLAUDE_CODE_OAUTH_TOKEN`
-     comes from running `claude setup-token`. With browser control, offer to open GitHub's
-     token settings (Settings → Developer settings → Personal access tokens → Fine-grained
-     tokens) so the user can create it, then run `gh secret set GH_PAT` and
-     `gh secret set CLAUDE_CODE_OAUTH_TOKEN` yourself once they give you the values. Without
-     browser control, give them those same two lines to do by hand and wait.
+   - **`triage workflow secrets: off`, or the Secrets list:** the workflow skips cleanly
+     without them, so frame this as an optional next step, not a problem; until it is done,
+     new issues are not triaged automatically. Explain both secrets in plain terms: `GH_PAT`
+     is a token over this repo with Issues read/write and Projects read/write on the board
+     owner (`GITHUB_TOKEN` cannot reach an org/user project); `CLAUDE_CODE_OAUTH_TOKEN`
+     comes from running `claude setup-token`. The numbered steps under **Secrets the triage
+     workflow needs** are the walkthrough: the CLI checked which of the two names exist
+     (names only), and prints the exact commands for the missing ones. Present those steps
+     unaltered. Use the token type they name, not a guess: a fine-grained token for a
+     board an organization owns, a classic token (`repo`, `project`) for a board a user
+     owns, because GitHub's fine-grained tokens cannot reach a user's projects. With
+     browser control, offer to open the token settings page the steps give so the user
+     can create the token there. Without browser control, give them the same steps to do
+     by hand and wait.
+   - **The token's value stays with the owner.** They run `claude setup-token` and the two
+     `gh secret set` lines in their own terminal, where `gh secret set` prompts for the
+     value. Never create a token, never ask for a token's value in chat, and never run
+     `gh secret set` with a value yourself. The owner doing it by hand needs no
+     secret-grant phrase (config `secretGrant.phrase`); that phrase governs an agent
+     handling secrets, and here no agent does.
+   - **When they say it is done,** run `winston doctor`: `triage workflow secrets` should
+     read `on`, and after the proving run in the steps `triage workflow runs` should show
+     `last run: success`. In **join** the secrets are the repo owner's; say so and stop.
+
+**Permission rules** in the output is one more step for the owner: the project lacks some
+of the Claude Code allow rules a Winston run uses, so those actions would prompt mid-run.
+Relay its one command, `winston permissions --apply`, for the owner to run themselves (in
+their terminal, or with the `!` prefix). Never run `--apply` yourself or edit a settings
+file to grant yourself a permission. It writes only the project's `.claude/settings.json`:
+the allow rules, and a short deny list for what an allow pattern cannot leave out (force
+pushes including `--force-with-lease`, pushes to the production branch, PR approvals,
+forced deletions; so a pushed branch is updated by merging its base, not by rebasing). Deny wins over
+allow, and an allow rule never clears a deny or ask rule, a hook, production approval or a
+secret grant.
+
+**Values to fill in** lists lines of the new `TRIAGE.md` that say "fill this in", where
+the config had no value (an owner, a branch, a board number). They are the owner's to
+write; relay the lines.
+
+A plan line that writes `TRIAGE.md` means the repo's triage policy (config `triage.policy`)
+is missing or holds no triage rules: no heading that names triage and no `risk:` tier. The
+triage skill takes every rule from that file, so without them a triage run finishes clean
+and changes nothing. The starter holds the triage behavior, with the config's values filled in, and
+three sections marked **(per-repo)** that are generic. Say plainly that the **Risk tiers**
+section must be written for this repo before triage can judge anything: its rows are an
+example. After applying, offer to propose tiers: read the repo (what it ships, which paths
+hold data, auth, money or release machinery), draft the three rows naming real paths, and
+show them to the user; write them into `TRIAGE.md` only after an explicit yes. Then tell
+the user to review the file and commit it to the default branch, where the workflow reads
+it. init never overwrites an existing `TRIAGE.md` or edits the doc the config pointed at.
 
 Anything under **By hand** needs a person: access someone else grants, or a missing policy
 file. Relay it as it stands.
