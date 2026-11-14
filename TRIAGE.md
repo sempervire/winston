@@ -160,11 +160,12 @@ Once each qualifying issue has been processed, the triage process ends.
 - **Board**: project `6` of `sempervire`. Triage reads statuses
   `New` and `Ready`.
 - **Priority options**: the options of the `Priority` field, most urgent
-  first. Write them out here exactly as the board spells them.
+  first: `P0`, `P1`, `P2`, `P3`.
 - **Branches**: work lands on `staging`; `main` is
   what is released. The unattended workflow runs from the repository's default branch,
   so a change to this file or to the workflow takes effect only once it is there.
-- **Other rules**: name the file that owns the repo's working rules, if there is one.
+- **Other rules**: none. This repo has no separate working-rules file; this file is the
+  only triage policy.
 <!-- /per-repo -->
 
 <!-- per-repo:risk-tiers -->
