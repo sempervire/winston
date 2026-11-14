@@ -36,9 +36,11 @@ Who does what:
 - **triage workflow secrets** and **triage workflow runs** mean the installed triage
   workflow is not triaging. Say so plainly, since nothing else reports it, and relay the
   numbered steps; the first is a link that opens GitHub's token form filled in. By
-  default the owner opens it themselves and you explain the fields. Only if they ask for
-  browser help do you open it and check or fill the fields, as `/winston:init` step 5
-  describes; if the harness or a hook stops you from opening the page, that is the stop,
+  default the owner opens it themselves and you explain the fields. Whenever you have
+  browser tools, offer in one plain line, right after giving the link, to open the page
+  and fill in the fields for them, stopping before Generate; proceed only on their yes,
+  as `/winston:init` step 5 describes. If they say no or do not answer, they open it
+  themselves; if the harness or a hook stops you from opening the page, that is the stop,
   and you do not ask for a grant phrase. Never click Generate. Once the fields are filled,
   say so, and take no further browser action in that tab or window – no screenshot, no
   page read, no navigation, no close – until the owner says in chat that the token is

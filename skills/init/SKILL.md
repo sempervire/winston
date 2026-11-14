@@ -85,10 +85,14 @@ It runs in five steps and never skips the first two.
      1. **The owner opens the link themselves**, in their own signed-in browser. You
         explain each field from the numbered steps, including what the link cannot fill
         (the Note on a classic token; "Only select repositories" and this repository on a
-        fine-grained one), and answer questions as they go. This is the default.
-     2. **Only if the owner asks for browser help** (Claude in Chrome): open that link in
-        a new tab in their signed-in browser, check each field against the steps, and
-        fill in what the link could not. Never click Generate, and never type a password
+        fine-grained one), and answer questions as they go. This is the default, and what
+        happens if they say no to the offer below or do not answer it.
+     2. **Whenever you have browser tools** (Claude in Chrome), **offer the help** in one
+        plain line right after giving the link, for example: "I can also open this page in
+        your browser and fill in the fields for you, stopping before Generate – want me
+        to?" Proceed only on the owner's yes. Then open that link in a new tab in their
+        signed-in browser, check each field against the steps, and fill in what the link
+        could not. Never click Generate, and never type a password
         or a two-factor code. Once the fields are filled, say so, and take **no further
         browser action in that tab or window** – no screenshot, no page read, no
         navigation, no close – until the owner says in chat that the token is copied and
