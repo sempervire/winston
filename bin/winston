@@ -477,6 +477,26 @@ export function policyState(file) {
  * create. Which token GH_PAT is depends on who owns the board: GitHub's fine-grained tokens
  * cannot reach a project owned by a user account, and cover one owner at a time.
  */
+/**
+ * The page that creates GH_PAT, with the form filled in as far as GitHub lets a link fill
+ * it. Only parameters GitHub documents are used: `scopes` on the classic form; `name`,
+ * `description`, `target_name`, `expires_in` and one parameter per permission on the
+ * fine-grained form. A link carries no secret: the token exists only after the owner
+ * clicks Generate.
+ */
+export function tokenUrl({ fineGrained, slug, boardOwner }) {
+  if (!fineGrained) return `https://github.com/settings/tokens/new?scopes=${['repo', 'project'].map(encodeURIComponent).join(',')}`
+  const params = new URLSearchParams({
+    name: `winston triage ${slug.split('/')[1] ?? ''}`.trim().slice(0, 40),
+    description: `Winston triage workflow for ${slug}: Issues on the repository and Projects on ${boardOwner}, read and write.`.slice(0, 1024),
+    target_name: boardOwner,
+    expires_in: '90',
+    issues: 'write',
+    organization_projects: 'write',
+  })
+  return `https://github.com/settings/personal-access-tokens/new?${params}`
+}
+
 function secretSteps({ slug, known, want, boardOwner, wfName }) {
   const flag = slug ? ` --repo ${slug}` : ''
   const where = slug || 'this repository'
@@ -490,17 +510,30 @@ function secretSteps({ slug, known, want, boardOwner, wfName }) {
   if (want.includes('GH_PAT')) {
     lines.push(`GH_PAT, a token that can read and write Issues on ${where} and Projects on ${board}:`)
     const type = boardOwner ? run('gh', ['api', `users/${boardOwner}`, '--jq', '.type']).out : ''
-    const classic = 'create a classic token at https://github.com/settings/tokens/new with the scopes repo and project'
-    if (type === 'User') step(`${boardOwner} is a user account, and a fine-grained token cannot reach a user's projects: ${classic}`)
-    else if (type !== 'Organization') step(`${classic} (gh could not tell whether ${board} is a user or an organization; a classic token reaches the projects of either)`)
-    else if (repoOwner?.toLowerCase() !== boardOwner.toLowerCase()) step(`the board is ${boardOwner}'s and the repository is not, and a fine-grained token covers one owner: ${classic}`)
-    else step(`${boardOwner} is an organization: create a fine-grained token at https://github.com/settings/personal-access-tokens/new with Resource owner ${boardOwner}, Repository access "Only select repositories": ${slug}, Repository permissions "Issues: Read and write", Organization permissions "Projects: Read and write" (if ${boardOwner} requires approval for fine-grained tokens, one of its owners approves it before it works)`)
-    step(`gh secret set GH_PAT${flag}   (it prompts for the value: paste the token there)`)
+    const fineGrained = type === 'Organization' && !!slug && repoOwner?.toLowerCase() === boardOwner.toLowerCase()
+    const url = tokenUrl({ fineGrained, slug, boardOwner })
+    lines.next = { open: url }
+    const why = type === 'User' ? `${boardOwner} is a user account, and a fine-grained token cannot reach a user's projects, so this is a classic token`
+      : type !== 'Organization' ? `gh could not tell whether ${board} is a user or an organization, so this is a classic token, which reaches the projects of either`
+        : !fineGrained ? `the board is ${boardOwner}'s and the repository is not, and a fine-grained token covers one owner, so this is a classic token`
+          : `${boardOwner} is an organization, so this is a fine-grained token`
+    step(`Open this link while signed in to GitHub; it fills in the form (${why}): ${url}`)
+    if (fineGrained) {
+      step(`Check the form: Token name (filled in), Resource owner ${boardOwner}, Expiration 90 days (change it if you like). Under Repository access choose "Only select repositories" and pick ${slug}; the link cannot fill that in. Under Permissions: Repository permissions "Issues: Read and write", Organization permissions "Projects: Read and write"`)
+      step(`If the form came up empty: github.com, your picture, Settings, Developer settings, Personal access tokens, Fine-grained tokens, "Generate new token", and enter the values from the step above`)
+      step(`Click "Generate token" yourself and copy the token; GitHub shows it once. If ${boardOwner} requires approval for fine-grained tokens, one of its owners approves it before it works`)
+    } else {
+      step('Check the form: Note is empty, so type a name such as "winston triage" (the link cannot fill it in). Expiration: your choice; 90 days is a reasonable one. Under Select scopes, "repo" and "project" are ticked, and nothing else needs to be')
+      step('If the form came up empty: github.com, your picture, Settings, Developer settings, Personal access tokens, Tokens (classic), "Generate new token (classic)", then the Note, the Expiration, and tick "repo" and "project"')
+      step('Click "Generate token" yourself and copy the token; GitHub shows it once')
+    }
+    step(`In your own terminal: gh secret set GH_PAT${flag}   (it prompts for the value: paste the token there, never into a chat)`)
   }
   if (want.includes('CLAUDE_CODE_OAUTH_TOKEN')) {
     lines.push('CLAUDE_CODE_OAUTH_TOKEN, which lets the workflow run Claude on your subscription:')
-    step('claude setup-token   (it prints a token)')
-    step(`gh secret set CLAUDE_CODE_OAUTH_TOKEN${flag}   (paste that token at the prompt)`)
+    lines.next ??= { command: 'claude setup-token' }
+    step('In your own terminal: claude setup-token   (it opens a browser to sign in to Claude; approve there, and it prints a long-lived token; copy it)')
+    step(`In your own terminal: gh secret set CLAUDE_CODE_OAUTH_TOKEN${flag}   (paste that token at the prompt)`)
   }
   lines.push('Then prove it, once the workflow is on the default branch:')
   step(`gh workflow run ${wfName}${flag} -f issue=<the number of an open issue>`)
@@ -850,7 +883,10 @@ export function statusOf(c) {
 
 /** How to close an open item: { command } for one paste-ready command, and the lines to show. */
 function fixOf(c) {
-  if (c.steps) return { lines: c.steps() }
+  if (c.steps) {
+    const lines = c.steps()
+    return { lines, ...lines.next }
+  }
   if (c.ownerStep) return { command: 'winston permissions --apply', lines: ['Run it yourself, once: winston permissions --apply   (winston permissions lists the rules first)'] }
   if (c.command) return { command: c.command, lines: c.fixLines }
   if (c.unconfigured) return { command: 'winston init', lines: ['winston init   (or /winston:init; it asks which setup fits: join, new or adopt, and shows its plan before changing anything)'] }
@@ -936,14 +972,15 @@ function doctor(cwd, copy = false) {
     console.log('   Fix:')
     for (const line of fixes[i].lines) console.log(`     ${line}`)
   }
-  const { command } = fixes[0]
+  const { open: link } = fixes[0]
+  const command = fixes[0].command ?? link
   let copied = ''
   if (copy) {
     const done = command && process.platform === 'darwin' && spawnSync('pbcopy', { input: command }).status === 0
     if (done) copied = '   (copied to the clipboard)'
     else console.log(`\nNothing was copied: ${!command ? 'the next step is several steps, not one command' : process.platform !== 'darwin' ? '--copy works on macOS only' : 'pbcopy did not run'}.`)
   }
-  console.log(`\nNext step: ${open[0].name} – ${command ? `run: ${command}${copied}` : `follow the steps under 1 above`}. Then run winston doctor again.`)
+  console.log(`\nNext step: ${open[0].name} – ${link ? `open ${link}${copied} and follow the steps under 1 above` : command ? `run: ${command}${copied}` : 'follow the steps under 1 above'}. Then run winston doctor again.`)
   return code
 }
 

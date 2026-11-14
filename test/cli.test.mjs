@@ -5,7 +5,7 @@ import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, rea
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { loadConfig, loadLayers } from '../lib/config.mjs';
-import { coveredBy, DOCTOR_POINTER, permissionRules, policyBlanks, policyState } from '../bin/winston';
+import { coveredBy, DOCTOR_POINTER, permissionRules, policyBlanks, policyState, tokenUrl } from '../bin/winston';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const CLI = join(ROOT, 'bin/winston');
@@ -436,7 +436,7 @@ test('doctor checks the board\'s two intake workflows and the triage workflow\'s
   assert.match(off.stdout, /^needs you\s+board auto-adds new issues\s+— the board's "Auto-add to project" workflow is off/m);
   assert.match(off.stdout, /^done\s+board sets Inbox on added items\s+— on; GitHub's API does not show which Status it sets$/m);
   assert.match(off.stdout, /^needs you\s+triage workflow secrets\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN missing/m);
-  assert.match(off.stdout, /\d\. triage workflow secrets\n   Why: [^\n]+\n   Fix:\n     Not set on acme\/thing: CLAUDE_CODE_OAUTH_TOKEN\.[^]*\n       1\. claude setup-token/);
+  assert.match(off.stdout, /\d\. triage workflow secrets\n   Why: [^\n]+\n   Fix:\n     Not set on acme\/thing: CLAUDE_CODE_OAUTH_TOKEN\.[^]*\n       1\. In your own terminal: claude setup-token/);
   assert.match(off.stdout, /\d\. board auto-adds new issues\n   Why: Without this a new issue never shows up on the board\.\n   Fix:\n     \/winston:init does this for you in the browser\. By hand: open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
   assert.equal(off.stdout.match(/board auto-adds new issues/g).length, 2, 'once in the checklist, once under Needs you');
 
@@ -497,8 +497,10 @@ test('init walks the owner through the triage workflow\'s missing secrets, by wh
   // The plan writes the workflow, so it carries the step; a user's board needs a classic token.
   const plan = s.cli(['init', '--mode', 'adopt']);
   assert.match(plan.stdout, /Secrets the triage workflow needs \(the owner's to do[^]*Not set on acme\/thing: GH_PAT\./);
-  assert.match(plan.stdout, /1\. acme is a user account, and a fine-grained token cannot reach a user's projects: create a classic token at https:\/\/github\.com\/settings\/tokens\/new with the scopes repo and project\n\s+2\. gh secret set GH_PAT --repo acme\/thing /);
-  assert.match(plan.stdout, /3\. gh workflow run triage-on-new-issue\.yml --repo acme\/thing -f issue=<[^\n]*\n\s+4\. gh run list --workflow triage-on-new-issue\.yml --repo acme\/thing --limit 1/);
+  // The prefilled link first, then every field by name for when the link fills nothing in.
+  assert.match(plan.stdout, /1\. Open this link while signed in to GitHub; it fills in the form \(acme is a user account, and a fine-grained token cannot reach a user's projects, so this is a classic token\): https:\/\/github\.com\/settings\/tokens\/new\?scopes=repo,project\n/);
+  assert.match(plan.stdout, /2\. Check the form: Note is empty, so type a name[^\n]*"repo" and "project" are ticked[^\n]*\n\s+3\. If the form came up empty: [^\n]*Tokens \(classic\), "Generate new token \(classic\)"[^\n]*\n\s+4\. Click "Generate token" yourself and copy the token[^\n]*\n\s+5\. In your own terminal: gh secret set GH_PAT --repo acme\/thing /);
+  assert.match(plan.stdout, /6\. gh workflow run triage-on-new-issue\.yml --repo acme\/thing -f issue=<[^\n]*\n\s+7\. gh run list --workflow triage-on-new-issue\.yml --repo acme\/thing --limit 1/);
   assert.doesNotMatch(plan.stdout, /claude setup-token/, 'a secret that exists is not walked through');
   assert.match(s.calls(), /^secret list --repo acme\/thing --json name/m);
 
@@ -508,8 +510,9 @@ test('init walks the owner through the triage workflow\'s missing secrets, by wh
   const made = s.cli(['init', '--mode', 'adopt', '--yes']);
   assert.equal(made.status, 0, made.stdout + made.stderr);
   assert.match(made.stdout, /Not set on acme\/thing: GH_PAT, CLAUDE_CODE_OAUTH_TOKEN\./);
-  assert.match(made.stdout, /1\. acme is an organization: create a fine-grained token at https:\/\/github\.com\/settings\/personal-access-tokens\/new with Resource owner acme,[^\n]*"Issues: Read and write"[^\n]*"Projects: Read and write"/);
-  assert.match(made.stdout, /3\. claude setup-token[^\n]*\n\s+4\. gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo acme\/thing /);
+  assert.match(made.stdout, /1\. Open this link while signed in to GitHub; it fills in the form \(acme is an organization, so this is a fine-grained token\): https:\/\/github\.com\/settings\/personal-access-tokens\/new\?name=winston\+triage\+thing&description=[^ &]+&target_name=acme&expires_in=90&issues=write&organization_projects=write\n/);
+  assert.match(made.stdout, /2\. Check the form: Token name \(filled in\), Resource owner acme, Expiration 90 days[^\n]*"Only select repositories" and pick acme\/thing; the link cannot fill that in[^\n]*"Issues: Read and write"[^\n]*"Projects: Read and write"\n\s+3\. If the form came up empty: [^\n]*Fine-grained tokens[^\n]*\n\s+4\. Click "Generate token" yourself/);
+  assert.match(made.stdout, /6\. In your own terminal: claude setup-token[^\n]*\n\s+7\. In your own terminal: gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo acme\/thing /);
 
   // Set up already, secrets still missing: init says so rather than "Nothing to do".
   const again = s.cli(['init', '--mode', 'adopt', '--yes']);
@@ -517,9 +520,9 @@ test('init walks the owner through the triage workflow\'s missing secrets, by wh
   // A board under another owner than the repo, or an owner gh cannot look up: classic.
   const config = JSON.parse(readFileSync(join(s.repo, '.winston/config.json'), 'utf8'));
   writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ ...config, board: { ...config.board, owner: 'other-org' } }));
-  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /1\. the board is other-org's and the repository is not, and a fine-grained token covers one owner: create a classic token/);
+  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /1\. Open this link[^\n]*\(the board is other-org's and the repository is not, and a fine-grained token covers one owner, so this is a classic token\): https:\/\/github\.com\/settings\/tokens\/new\?scopes=repo,project\n/);
   writeFileSync(join(s.tmp, 'owner-type'), '');
-  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /1\. create a classic token[^\n]*gh could not tell whether other-org is a user or an organization/);
+  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /1\. Open this link[^\n]*\(gh could not tell whether other-org is a user or an organization, so this is a classic token, which reaches the projects of either\): https:\/\/github\.com\/settings\/tokens\/new\?scopes=repo,project\n/);
 
   // Secrets this account cannot list: check first, then both, never "missing".
   writeFileSync(join(s.tmp, 'secrets-denied'), '');
@@ -878,9 +881,11 @@ test('doctor lists what needs the owner with why and how, names the first as the
   assert.equal(second.status, 0, 'an example tier is flagged, not a failed setup');
 
   // Then the secrets, then the permission rules.
-  const steps = s.cli(['doctor', '--copy']).stdout;
-  assert.match(lastLine(steps), /^Next step: triage workflow secrets – follow the steps under 1 above\./);
-  assert.match(steps, /\nNothing was copied: (the next step is several steps, not one command|--copy works on macOS only)\.\n/);
+  // A missing secret: the next step is the link that fills in the token form.
+  assert.equal(lastLine(s.cli(['doctor']).stdout), 'Next step: triage workflow secrets – open https://github.com/settings/tokens/new?scopes=repo,project and follow the steps under 1 above. Then run winston doctor again.');
+  // With GH_PAT in place, it is the one command that makes the other token.
+  writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\n');
+  assert.equal(lastLine(s.cli(['doctor']).stdout), 'Next step: triage workflow secrets – run: claude setup-token. Then run winston doctor again.');
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
   const third = s.cli(['doctor']);
   assert.match(third.stdout, /^done\s+triage workflow secrets/m);
@@ -928,4 +933,24 @@ test('every stop on a missing prerequisite points at /winston:doctor', (t) => {
   assert.match(noGh.stderr, /gh is not logged in\.[^\n]*\nRun \/winston:doctor to see what is missing and how to fix it\.\n$/);
   assert.match(s.cli(['init', '--mode', 'join']).stdout, /Run \/winston:doctor to see what is missing and how to fix it\.\n$/);
   assert.match(s.cli(['permissions'], s.tmp).stderr, /is not inside a git repository\nRun \/winston:doctor to see what is missing and how to fix it\.\n$/);
+});
+
+test('the token link fills in what GitHub documents, by who owns the board', () => {
+  // A user's board, or one under another owner than the repo: the classic form, scopes ticked.
+  assert.equal(tokenUrl({ fineGrained: false, slug: 'pat/thing', boardOwner: 'pat' }), 'https://github.com/settings/tokens/new?scopes=repo,project');
+  // An organization's board: the fine-grained form, owner, expiry and the two permissions.
+  const url = new URL(tokenUrl({ fineGrained: true, slug: 'acme-co/my app & more-than-forty-characters-long-name', boardOwner: 'acme-co' }));
+  assert.equal(url.origin + url.pathname, 'https://github.com/settings/personal-access-tokens/new');
+  assert.deepEqual([...url.searchParams.keys()], ['name', 'description', 'target_name', 'expires_in', 'issues', 'organization_projects'], 'only documented parameters');
+  assert.equal(url.searchParams.get('target_name'), 'acme-co');
+  assert.equal(url.searchParams.get('expires_in'), '90');
+  assert.equal(url.searchParams.get('issues'), 'write');
+  assert.equal(url.searchParams.get('organization_projects'), 'write');
+  assert.equal(url.searchParams.get('name'), 'winston triage my app & more-than-forty-');
+  assert.equal(url.searchParams.get('name').length, 40, 'GitHub caps a token name at 40 characters');
+  assert.match(url.searchParams.get('description'), /^Winston triage workflow for acme-co\/my app & more-than-forty-characters-long-name: /);
+  // Encoded, so a space or an ampersand in a name cannot add or break a parameter.
+  assert.doesNotMatch(url.search, / /);
+  assert.match(url.search, /name=winston\+triage\+my\+app\+%26\+more/);
+  assert.doesNotMatch(tokenUrl({ fineGrained: true, slug: 'acme/thing', boardOwner: 'acme' }), /scopes=|token=|ghp_/);
 });
