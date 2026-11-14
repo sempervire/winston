@@ -195,7 +195,8 @@ test('doctor-nudge: one line per session when the last doctor run left open item
   };
   process.env.WINSTON_HOME = s.home;
   t.after(() => delete process.env.WINSTON_HOME);
-  const start = (id) => s.run('doctor-nudge.mjs', { hook_event_name: 'SessionStart', cwd: repo, session_id: id });
+  mkdirSync(join(repo, 'src/deep'), { recursive: true });
+  const start = (id, cwd = repo) => s.run('doctor-nudge.mjs', { hook_event_name: 'SessionStart', cwd, session_id: id });
 
   result({ root: repo, open: 3 });
   assert.equal(start('aaaaaaaa-1'), '', 'no Winston config in the repo: silent');
@@ -206,7 +207,7 @@ test('doctor-nudge: one line per session when the last doctor run left open item
   assert.deepEqual(out.hookSpecificOutput, { hookEventName: 'SessionStart', additionalContext: out.systemMessage });
   assert.equal(start('aaaaaaaa-1'), '', 'a resume or compaction in the same session does not repeat it');
   result({ root: repo, open: 1 });
-  assert.equal(start('bbbbbbbb-2').systemMessage, 'Winston setup has 1 open item – run /winston:doctor.');
+  assert.equal(start('bbbbbbbb-2', join(repo, 'src/deep')).systemMessage, 'Winston setup has 1 open item – run /winston:doctor.', 'from a subdirectory too');
 
   // Nothing open, doctor never run, or a result that does not parse: no output, exit 0.
   result({ root: repo, open: 0 });
@@ -220,7 +221,7 @@ test('doctor-nudge: one line per session when the last doctor run left open item
   // It is registered at session start, and reads nothing but local files.
   const hooks = JSON.parse(readFileSync(join(HOOKS, 'hooks.json'), 'utf8')).hooks;
   assert.ok(hooks.SessionStart[0].hooks.some((h) => h.command.includes('doctor-nudge.mjs')));
-  assert.doesNotMatch(readFileSync(join(HOOKS, 'doctor-nudge.mjs'), 'utf8'), /child_process|fetch\(|https?:/);
+  assert.doesNotMatch(readFileSync(join(HOOKS, 'doctor-nudge.mjs'), 'utf8'), /child_process|repoRoot|fetch\(|https?:/, 'no process to wait on, no network');
 });
 
 // ---- parallelism-check

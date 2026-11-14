@@ -3,7 +3,7 @@
  * doctor-nudge — one line at session start when the last `winston doctor` run in this
  * repository left open items: "Winston setup has N open items – run /winston:doctor."
  *
- * It reads two local files and nothing else: the repo's .winston/config.json (no config,
+ * It reads two local files and nothing else, and starts no other process: the repo's .winston/config.json (no config,
  * no nudge) and the result doctor left in Winston's state directory. It runs no check of
  * its own and makes no network call, so a session never waits on it. A repo where doctor
  * has not run, or where its last run found nothing open, gets no output at all.
@@ -15,13 +15,21 @@
  * blocking a session over.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { doctorResultPath, repoRoot, stateDir } from '../lib/config.mjs'
+import { dirname, join, resolve } from 'node:path'
+import { doctorResultPath, stateDir } from '../lib/config.mjs'
 import { readInput } from '../lib/harness.mjs'
+
+/** The checkout's top directory, found by walking up to `.git`: no git process to wait on. */
+function topLevel(cwd) {
+  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
+    if (existsSync(join(dir, '.git'))) return dir
+    if (dir === dirname(dir)) return null
+  }
+}
 
 function hook() {
   const input = readInput()
-  const root = repoRoot(input.cwd || process.cwd())
+  const root = topLevel(input.cwd || process.cwd())
   if (!root || !existsSync(join(root, '.winston', 'config.json'))) return
   const open = JSON.parse(readFileSync(doctorResultPath(root), 'utf8')).open
   if (!Number.isInteger(open) || open < 1) return
