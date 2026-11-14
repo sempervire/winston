@@ -247,6 +247,12 @@ test('init without --mode asks which setup this is, names the likely one, and ch
   assert.equal(forced.status, 2, '--yes never picks the setup');
   assert.match(forced.stderr, /needs --mode/);
   assert.equal(s.cli(['init', '--mode', 'sideways']).status, 2);
+  // A flag missing its value never swallows the next flag, and unknown flags are refused.
+  for (const bad of [['--mode', 'new', '--integration', '--yes'], ['--mode'], ['--mode', 'new', '--yess']]) {
+    const r = s.cli(['init', ...bad]);
+    assert.equal(r.status, 1, bad.join(' '));
+    assert.match(r.stderr, /needs a value|unknown argument/);
+  }
   assert.ok(!existsSync(join(s.repo, '.winston')) && s.calls() === '', 'nothing written, GitHub not touched');
 
   existingRepo(s);
@@ -272,6 +278,7 @@ test('init --mode new creates the repo, both branches, the board and the config,
   assert.match(plan.stdout, /create the private GitHub repository pat\/repo/);
   assert.match(plan.stdout, /create branch staging on origin from main/);
   assert.match(plan.stdout, /create labels: risk: low/);
+  assert.doesNotMatch(plan.stdout, /write .*triage-on-new-issue\.yml from the template/, 'the first commit writes the workflow; it is not planned twice');
   assert.match(plan.stdout, /By hand[^]*"Auto-add to project"/);
   assert.doesNotMatch(plan.stdout, /set Status to New/, 'a new project already has "Item added" on, and init points it at New');
   assert.ok(!existsSync(join(s.repo, '.winston')), 'no --yes, no change');
@@ -290,7 +297,7 @@ test('init --mode new creates the repo, both branches, the board and the config,
   assert.doesNotMatch(calls, /In Progress/);
   assert.equal(calls.match(/updateProjectV2Field/g).length, 1);
   assert.match(calls, /project field-create 7 --owner pat --name Priority/);
-  assert.match(calls, /project link 7 --owner pat --repo pat\/repo/);
+  assert.match(calls, /project link 7 --owner pat --repo repo$/m);
   assert.ok(calls.indexOf('project create') < calls.indexOf('repo create') && calls.indexOf('repo create') < calls.indexOf('project link'));
   assert.match(readFileSync(join(s.tmp, 'labels'), 'utf8'), /^risk: high$/m);
   assert.match(made.stdout, /done\s+create a BOARD_LAYOUT view/);
@@ -350,6 +357,12 @@ test('init --mode adopt asks which board when several are linked, and refuses a 
   assert.equal(s.cli(['init', '--mode', 'adopt', '--yes']).status, 2);
   assert.ok(!existsSync(join(s.repo, '.winston')));
   assert.match(s.cli(['init', '--mode', 'adopt', '--board', 'acme/4']).stdout, /board acme project 4/);
+  rmSync(join(s.tmp, 'board.json'));
+  const gone = s.cli(['init', '--mode', 'adopt', '--board', 'acme/99', '--yes']);
+  assert.equal(gone.status, 1, 'a board this account cannot read is refused before anything is written');
+  assert.match(gone.stderr, /--board acme\/99: no such project/);
+  assert.ok(!existsSync(join(s.repo, '.winston')));
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
   assert.match(s.cli(['init', '--mode', 'adopt', '--board', 'new']).stdout, /create a private GitHub Project "thing" under acme/);
 });
 

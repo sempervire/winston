@@ -57,6 +57,8 @@ const TRIAGE_SECRETS = ['GH_PAT', 'CLAUDE_CODE_OAUTH_TOKEN']
 const INTEGRATION_NAMES = ['staging', 'develop', 'dev', 'development']
 const PROCESS_DOCS = ['AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md']
 const MODES = ['join', 'new', 'adopt']
+// A first push of a repo with history outlasts the default 30 seconds.
+const PUSH_TIMEOUT = 600000
 const DEFAULT_TRIAGE_WORKFLOW = 'triage-on-new-issue.yml'
 const DEFAULT_MILESTONE = 'Phase 1.0'
 
@@ -154,7 +156,7 @@ function writeTriageWorkflow(wf) {
 
 /**
  * Every check, in report order: { name, state: ok|missing|on|off, detail, required, fix?, hand?, scope? }.
- * `planned` is init's proposal for a repo with no config yet: { config, newBoard, noRepo }.
+ * `planned` is init's proposal for a repo with no config yet: { config, newBoard, noRepo, firstCommit }.
  * The checks then describe the repo as it will be once init's first steps have run.
  */
 export function checks(cwd, planned = null) {
@@ -258,7 +260,7 @@ export function checks(cwd, planned = null) {
       // workflows. GitHub has no API that creates or enables them, so they are hand steps,
       // and the API shows only whether each is on, not what it is set to do.
       const intake = (config.board.statuses ?? DEFAULT_STATUSES)[0]
-      const enabled = (name) => (project.workflows?.nodes ?? []).some((w) => w?.name === name && w.enabled)
+      const enabled = (name) => (project.workflows?.nodes ?? []).some((w) => w?.enabled && (w.name === name || (name === 'Auto-add to project' && /^Auto-add(?! sub-issues)/.test(w.name))))
       add({
         name: 'board auto-adds new issues', state: enabled('Auto-add to project') ? 'ok' : 'missing',
         detail: enabled('Auto-add to project') ? '' : 'the board\'s "Auto-add to project" workflow is off', board: true,
@@ -295,9 +297,11 @@ export function checks(cwd, planned = null) {
 
   const wfName = config.triage?.workflow ?? DEFAULT_TRIAGE_WORKFLOW
   const wf = join(root, '.github', 'workflows', wfName)
+  // init's first commit, when it makes one, writes the workflow itself.
+  const hasWf = existsSync(wf) || !!planned?.firstCommit
   add({
-    name: 'triage-on-new-issue workflow', state: existsSync(wf) ? 'ok' : 'missing', detail: wf,
-    fix: !existsSync(wf) && {
+    name: 'triage-on-new-issue workflow', state: hasWf ? 'ok' : 'missing', detail: wf,
+    fix: !hasWf && {
       plan: `write ${wf} from the template (it skips until the repo has the secrets ${TRIAGE_SECRETS.join(' and ')})`,
       run: () => writeTriageWorkflow(wf),
     },
@@ -447,6 +451,7 @@ function bootstrap(cwd, sit, opts) {
     const [owner, number] = opts.board.split('/')
     if (!owner || !/^\d+$/.test(number ?? '')) throw new Error(`--board takes <owner>/<number> or new, got: ${opts.board}`)
     board = { owner, number: Number(number) }
+    if (!fetchBoard(owner, board.number).project) throw new Error(`--board ${opts.board}: no such project, or this account has no access to it`)
   } else if (!opts.board && !noRepo) {
     const linked = run('gh', ['api', 'graphql', '-f', `query=${LINKED_BOARDS_QUERY}`, '-f', `owner=${ghOwner}`, '-f', `name=${name}`])
     let nodes = []
@@ -477,6 +482,16 @@ function bootstrap(cwd, sit, opts) {
 
   const steps = []
   if (!sit.root) steps.push({ plan: `git init in ${root}, on branch ${production}`, run: () => must(run('git', ['init', '-q', '-b', production, root]), 'git init') })
+  // A new project's own workflows point at two of its default options: "Item added to
+  // project" at Todo, and the closing ones at Done. Renaming Todo in place (same id) makes
+  // the first set the intake status; Done stays; In Progress goes.
+  const configureNewBoard = () => {
+    const status = fetchBoard(ghOwner, config.board.number).project?.fields.nodes.find((f) => f?.name === 'Status')
+    if (!status?.id) throw new Error('cannot read the new project\'s Status field')
+    const stock = (n) => status.options.find((o) => o.name === n)
+    setOptions(status.id, [{ ...statusOption(statuses[0], 0), id: stock('Todo')?.id }, ...statuses.slice(1).map((n, i) => statusOption(n, i + 1)), ...(stock('Done') ? [stock('Done')] : [])])
+    createPriorityField(ghOwner, config.board.number, 'Priority')
+  }
   if (newBoard) {
     steps.push({
       plan: `create a private GitHub Project "${name}" under ${ghOwner}, with Status ${statuses.join(' / ')} and a Priority field (${PRIORITIES.join(', ')})`,
@@ -484,14 +499,12 @@ function bootstrap(cwd, sit, opts) {
         const made = run('gh', ['project', 'create', '--owner', ghOwner, '--title', name, '--format', 'json'])
         must(made, 'gh project create')
         config.board.number = JSON.parse(made.out).number
-        const status = fetchBoard(ghOwner, config.board.number).project?.fields.nodes.find((f) => f?.name === 'Status')
-        if (!status?.id) throw new Error(`created ${ghOwner} project ${config.board.number}, but cannot read its Status field`)
-        // A new project's own workflows point at two of its default options: "Item added
-        // to project" at Todo, and the closing ones at Done. Renaming Todo in place (same
-        // id) makes the first set the intake status; Done stays; In Progress goes.
-        const stock = (n) => status.options.find((o) => o.name === n)
-        setOptions(status.id, [{ ...statusOption(statuses[0], 0), id: stock('Todo')?.id }, ...statuses.slice(1).map((n, i) => statusOption(n, i + 1)), ...(stock('Done') ? [stock('Done')] : [])])
-        createPriorityField(ghOwner, config.board.number, 'Priority')
+        try {
+          configureNewBoard()
+        } catch (e) {
+          // The project exists and is not linked yet, so a plain rerun would not find it.
+          throw new Error(`${e.message}. ${ghOwner} project ${config.board.number} was created: rerun with --board ${ghOwner}/${config.board.number} to use it rather than make another`)
+        }
       },
     })
   }
@@ -512,22 +525,22 @@ function bootstrap(cwd, sit, opts) {
   if (noRepo) {
     steps.push({
       plan: `create the ${opts.public ? 'public' : 'private'} GitHub repository ${slug} from this directory and push ${production}`,
-      run: () => must(run('gh', ['repo', 'create', slug, opts.public ? '--public' : '--private', '--source', root, '--remote', 'origin', '--push']), 'gh repo create'),
+      run: () => must(run('gh', ['repo', 'create', slug, opts.public ? '--public' : '--private', '--source', root, '--remote', 'origin', '--push'], { timeout: PUSH_TIMEOUT }), 'gh repo create'),
     })
   }
   if (integration !== production && !heads.includes(integration)) {
     steps.push({
       plan: `create branch ${integration} on origin from ${production}`,
       run: () => {
-        must(git('fetch', '-q', 'origin', production), `git fetch origin ${production}`)
-        must(git('push', '-q', 'origin', `FETCH_HEAD:refs/heads/${integration}`), `git push origin ${integration}`)
+        must(run('git', ['-C', root, 'fetch', '-q', 'origin', production], { timeout: PUSH_TIMEOUT }), `git fetch origin ${production}`)
+        must(run('git', ['-C', root, 'push', '-q', 'origin', `FETCH_HEAD:refs/heads/${integration}`], { timeout: PUSH_TIMEOUT }), `git push origin ${integration}`)
       },
     })
   }
   if (newBoard) {
     steps.push({
       plan: `link the new board to ${slug}`,
-      run: () => must(run('gh', ['project', 'link', String(config.board.number), '--owner', ghOwner, '--repo', slug]), 'gh project link'),
+      run: () => must(run('gh', ['project', 'link', String(config.board.number), '--owner', ghOwner, '--repo', name]), 'gh project link'),
     })
   }
 
@@ -535,7 +548,7 @@ function bootstrap(cwd, sit, opts) {
   if (sit.hasCommits) notes.push(`Commit ${configPath} and ${wf} to ${production}: GitHub runs the triage workflow from the default branch only.`)
   if (!present(config.triage.policy)) notes.push(`There is no ${config.triage.policy}: /winston:triage does not run without a policy. Write one, or point triage.policy in the config at the doc that holds your triage rules.`)
   notes.push(`No deploy gate is set. If merges into ${production} deploy, add deployGate to the config (see the README).`)
-  return { steps, notes, planned: { config, newBoard, noRepo } }
+  return { steps, notes, planned: { config, newBoard, noRepo, firstCommit: !sit.hasCommits } }
 }
 
 /** new and adopt: build what is missing. With a config already here, that config is the plan. */
@@ -618,12 +631,22 @@ function init(cwd, opts) {
   return opts.mode === 'join' ? join_(cwd, sit, opts.yes) : setup(cwd, sit, opts)
 }
 
+const INIT_FLAGS = { '--yes': false, '--public': false, '--mode': true, '--board': true, '--integration': true, '--owner': true, '--repo': true }
+
+/** Strict: an unknown flag, or a flag missing its value, is an error, never a guess. */
 function initOptions(args) {
-  const value = (flag) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined)
-  return {
-    yes: args.includes('--yes'), public: args.includes('--public'),
-    mode: value('--mode'), board: value('--board'), integration: value('--integration'), owner: value('--owner'), repo: value('--repo'),
+  const opts = {}
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i]
+    if (!(flag in INIT_FLAGS)) throw new Error(`winston init: unknown argument ${flag}`)
+    if (!INIT_FLAGS[flag]) opts[flag.slice(2)] = true
+    else {
+      const value = args[++i]
+      if (value === undefined || value.startsWith('--')) throw new Error(`winston init: ${flag} needs a value`)
+      opts[flag.slice(2)] = value
+    }
   }
+  return opts
 }
 
 function installCodexAgents(force) {
