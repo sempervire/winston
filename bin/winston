@@ -182,27 +182,37 @@ function createPriorityField(owner, number, name) {
 
 const openMilestones = (root) => run('gh', ['api', '--method', 'GET', 'repos/{owner}/{repo}/milestones', '-f', 'state=open', '--jq', '.[].title'], { cwd: root }).out.split('\n').filter(Boolean)
 
-const INTAKE_BOT = 'github-project-automation[bot]'
+// The projects automation's login as GraphQL gives it (REST adds "[bot]").
+const INTAKE_BOT = 'github-project-automation'
+const INTAKE_QUERY = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ issues(last:5){ nodes{ number
+  timelineItems(first:100,itemTypes:[ADDED_TO_PROJECT_V2_EVENT,PROJECT_V2_ITEM_STATUS_CHANGED_EVENT]){ nodes{ __typename
+    ... on AddedToProjectV2Event{ actor{ login } project{ number owner{ ... on User{ login } ... on Organization{ login } } } }
+    ... on ProjectV2ItemStatusChangedEvent{ actor{ login } project{ number owner{ ... on User{ login } ... on Organization{ login } } } } } } } } } }`
 
 /**
- * Whether the board's two intake workflows have actually run recently, read from
- * `github-project-automation[bot]`'s REST timeline on the repo's most recent issues: only
- * that bot's `added_to_project_v2` and `project_v2_item_status_changed` events come from
- * them. A second source, since the GraphQL `ProjectV2.workflows` listing can say a workflow
- * is off while GitHub is visibly still running it (#45). `checked` is false when the repo
- * has no issues yet to prove it either way.
+ * Whether this board's two intake workflows have actually run recently, read from the
+ * repo's five most recent issues: an "added to project" or "status changed" event made by
+ * the projects automation ON THIS BOARD. The board is what makes it evidence. An issue
+ * timeline also carries the events of every other project that took the issue, and of a
+ * person or agent adding it by hand, and neither says anything about this board (#45: an
+ * older project was auto-adding the repo's issues while this board's workflows were off).
+ * A second source beside the `ProjectV2.workflows` listing. `checked` is false when the
+ * repo has no issues to read.
  */
-function intakeFromTimeline(root) {
-  const issues = run('gh', ['api', '--method', 'GET', 'repos/{owner}/{repo}/issues', '-f', 'state=all', '-f', 'per_page=5', '--jq', '.[].number'], { cwd: root })
-  const numbers = issues.ok ? issues.out.split('\n').filter(Boolean) : []
-  const result = { checked: numbers.length > 0, addedToProject: null, statusChanged: null }
-  for (const n of numbers) {
-    const timeline = run('gh', ['api', `repos/{owner}/{repo}/issues/${n}/timeline`, '--jq', `.[] | select(.actor.login=="${INTAKE_BOT}") | .event`], { cwd: root })
-    if (!timeline.ok) continue
-    const events = new Set(timeline.out.split('\n').filter(Boolean))
-    if (result.addedToProject === null && events.has('added_to_project_v2')) result.addedToProject = n
-    if (result.statusChanged === null && events.has('project_v2_item_status_changed')) result.statusChanged = n
-    if (result.addedToProject !== null && result.statusChanged !== null) break
+function intakeFromTimeline(root, owner, number) {
+  const r = run('gh', ['api', 'graphql', '-f', `query=${INTAKE_QUERY}`, '-F', 'owner={owner}', '-F', 'name={repo}'], { cwd: root })
+  let issues = []
+  try {
+    issues = JSON.parse(r.out).data.repository.issues.nodes.filter(Boolean)
+  } catch {}
+  const result = { checked: issues.length > 0, addedToProject: null, statusChanged: null }
+  const here = (e) => e?.actor?.login?.startsWith(INTAKE_BOT) && e.project?.number === number && e.project?.owner?.login?.toLowerCase() === String(owner).toLowerCase()
+  // Newest first, so the detail names the most recent proof.
+  for (const issue of [...issues].sort((a, b) => b.number - a.number)) {
+    for (const e of (issue.timelineItems?.nodes ?? []).filter(here)) {
+      if (e.__typename === 'AddedToProjectV2Event') result.addedToProject ??= issue.number
+      if (e.__typename === 'ProjectV2ItemStatusChangedEvent') result.statusChanged ??= issue.number
+    }
   }
   return result
 }
@@ -296,19 +306,29 @@ export function firesOnNewIssue(text) {
   const at = lines.findIndex((l) => /^(on|'on'|"on")\s*:/.test(l))
   if (at === -1) return false
   const inline = lines[at].slice(lines[at].indexOf(':') + 1).trim()
-  if (inline) return /(^|[\s[,{'"])issues($|[\s\],:}'"])/.test(inline) && (!/types/.test(inline) || /\bopened\b/.test(inline))
+  if (inline) {
+    // `on: issues`, `on: [push, issues]`, or a flow map, where only the issues entry's own types count.
+    const m = /(?:^|[\s[,{'"])issues['"]?\s*(?::\s*(\{[^}]*\}))?(?=$|[\s\],:}'"])/.exec(inline)
+    if (!m) return false
+    return !m[1] || !/types/.test(m[1]) || /\bopened\b/.test(m[1])
+  }
   const indent = (l) => l.length - l.trimStart().length
+  // The block under on: runs to the next top-level key; a sequence may sit at column 0.
   const block = []
   for (const l of lines.slice(at + 1)) {
-    if (l && indent(l) === 0) break
-    block.push(l)
+    if (l && indent(l) === 0 && !l.startsWith('-')) break
+    if (l) block.push(l)
   }
-  if (block.some((l) => /^\s+-\s*['"]?issues['"]?\s*$/.test(l))) return true
-  const i = block.findIndex((l) => /^\s+['"]?issues['"]?\s*:/.test(l))
-  if (i === -1) return false
-  const own = [block[i].slice(block[i].indexOf(':') + 1)]
-  for (const l of block.slice(i + 1)) {
-    if (l && indent(l) <= indent(block[i])) break
+  if (!block.length) return false
+  // Only the events themselves, on:'s direct children: not a key or item nested under one.
+  const level = indent(block[0])
+  const direct = block.map((l, i) => ({ l, i })).filter(({ l }) => indent(l) === level)
+  if (direct.some(({ l }) => /^\s*-\s*['"]?issues['"]?\s*$/.test(l))) return true
+  const hit = direct.find(({ l }) => /^\s*['"]?issues['"]?\s*:/.test(l))
+  if (!hit) return false
+  const own = [hit.l.slice(hit.l.indexOf(':') + 1)]
+  for (const l of block.slice(hit.i + 1)) {
+    if (indent(l) <= level) break
     own.push(l)
   }
   const body = own.join('\n')
@@ -316,9 +336,9 @@ export function firesOnNewIssue(text) {
 }
 
 /**
- * Other workflows in the repo that also triage a new issue: they run when one is opened
- * and their text speaks of triage or a `risk:` label. A workflow that only greets or
- * stamps a new issue is not one.
+ * Other workflows in the repo that also triage a new issue: they run when one is opened,
+ * and either write a `risk:` tier or are named for triage (the file, or its `name:`). A
+ * workflow that greets a new issue, stamps it, or adds a "needs-triage" label is not one.
  */
 function otherTriageWorkflows(root, wfName) {
   const dir = join(root, '.github', 'workflows')
@@ -331,7 +351,8 @@ function otherTriageWorkflows(root, wfName) {
   return names.filter((n) => /\.ya?ml$/.test(n) && n !== wfName && n !== PHASE_WORKFLOW).sort().filter((n) => {
     try {
       const text = readFileSync(join(dir, n), 'utf8')
-      return firesOnNewIssue(text) && /triage|risk:/i.test(text)
+      const named = /triage/i.test(n) || /^name\s*:.*triage/im.test(text)
+      return firesOnNewIssue(text) && (named || /risk:\s*(low|medium|high)/i.test(text))
     } catch {
       return false
     }
@@ -811,23 +832,32 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
       // each new issue. `phase: false` is the owner's choice to go without.
       if (config.phase !== false) {
         const set = typeof config.phase === 'string' && config.phase.trim() ? config.phase : null
-        const filters = [...new Set(kanban.map((v) => /milestone:(?:"([^"]+)"|(\S+))/.exec(v.filter ?? '')).filter(Boolean).map((m) => m[1] ?? m[2]))]
-        // The phase to propose: the one milestone the board's views filter to; with no
-        // board view yet, the one init is about to filter its new view to; else the
-        // repo's only open milestone. Several candidates are the owner's to choose from.
-        const target = set ?? (filters.length === 1 ? filters[0] : filters.length > 1 ? null : !kanban.length ? milestones[0] ?? DEFAULT_MILESTONE : milestones.length === 1 ? milestones[0] : null)
+        // The open milestones the board's views filter to. A negated filter (-milestone:)
+        // and a milestone that is closed hide nothing a phase could fix.
+        const filters = [...new Set(kanban.map((v) => /(?<![-\w])milestone:(?:"([^"]+)"|(\S+))/.exec(v.filter ?? '')).filter(Boolean).map((m) => m[1] ?? m[2]))].filter((m) => milestones.includes(m))
+        // The phase to propose: the one milestone the board's views filter to, or, with
+        // no board view yet, the one init is about to filter its new view to. Several are
+        // the owner's to choose from. A board with no filtered view hides nothing, so
+        // nothing is proposed.
+        const target = set ?? (filters.length === 1 ? filters[0] : filters.length > 1 ? null : !kanban.length ? milestones[0] ?? DEFAULT_MILESTONE : null)
         const phaseWf = join(root, '.github', 'workflows', PHASE_WORKFLOW)
-        const gone = set && !planned?.noRepo && milestones.length > 0 && !milestones.includes(set)
+        // A phase the repo has no open milestone for: the workflow would fail on every issue.
+        const gone = set && !planned?.noRepo && !milestones.includes(set) && !(set === DEFAULT_MILESTONE && !milestones.length)
+        // Hidden issues only exist where a view filters to a milestone, now or once init has made it.
+        const hides = filters.length > 0 || !kanban.length
         if (gone) {
           add({
             name: 'issue phase', state: 'missing', detail: `phase is "${set}", which is not an open milestone`,
-            hand: `set "phase" in ${configPath} to the current milestone (open: ${milestones.join(', ')}), or to false to leave new issues without one`,
+            hand: `set "phase" in ${configPath} to the current milestone (open: ${milestones.join(', ') || 'none'}), or to false to leave new issues without one`,
           })
         } else if (target) {
           const done = set && existsSync(phaseWf)
+          // GitHub runs the workflow from the default branch only; a file git does not
+          // track, or has changes to, is not there yet.
+          const committed = done && run('git', ['-C', root, 'ls-files', '--error-unmatch', '--', phaseWf]).ok && run('git', ['-C', root, 'diff', '--quiet', 'HEAD', '--', phaseWf, configPath]).ok
           add({
             name: 'issue phase', state: done ? 'ok' : 'missing',
-            detail: done ? `new issues get the milestone "${set}"` : `new issues get no milestone, so a board view filtered to "${target}" never shows them`,
+            detail: done ? `new issues get the milestone "${set}"${committed ? '' : ` once ${PHASE_WORKFLOW} and the config are committed to the default branch`}` : `new issues get no milestone, so a board view filtered to "${target}" never shows them`,
             fix: !done && {
               plan: `give every new issue the milestone "${target}": ${set ? '' : `set "phase" to it in ${configPath}, and `}write ${phaseWf} (it takes effect once it and the config are committed to the default branch; to change phase later, edit that one config line)`,
               note: `Commit ${configPath} and ${phaseWf} to ${config.branches?.production ?? 'the default branch'}: GitHub runs the phase workflow from the default branch only, and it reads the phase from the config there.`,
@@ -843,7 +873,7 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
               },
             },
           })
-          const bare = planned?.noRepo ? [] : issuesWithoutMilestone(root)
+          const bare = planned?.noRepo || !hides ? [] : issuesWithoutMilestone(root)
           if (bare === null) {
             add({ name: 'issues without a milestone', required: false, state: 'unknown', detail: 'cannot list the repository\'s issues' })
           } else if (bare.length) {
@@ -879,7 +909,7 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
       const intake = (config.board.statuses ?? DEFAULT_STATUSES)[0]
       const enabled = (name) => (project.workflows?.nodes ?? []).some((w) => w?.enabled && (w.name === name || (name === 'Auto-add to project' && /^Auto-add(?! sub-issues)/.test(w.name))))
       const apiOn = { add: enabled('Auto-add to project'), status: enabled('Item added to project') }
-      const timeline = !planned?.newBoard && (!apiOn.add || !apiOn.status) ? intakeFromTimeline(root) : null
+      const timeline = !planned?.newBoard && (!apiOn.add || !apiOn.status) ? intakeFromTimeline(root, owner, number) : null
       const stateOf = (apiSays, botSays) => (apiSays || botSays ? 'ok' : timeline && !timeline.checked ? 'unknown' : 'missing')
       add({
         name: 'board auto-adds new issues', state: stateOf(apiOn.add, timeline?.addedToProject),
@@ -1011,7 +1041,7 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
       },
     })
   }
-  if ((existsSync(wf) || forInit) && !declined && !keep) {
+  if ((existsSync(wf) || forInit) && !declined && !keep && !(rivals.length && !hasWf && !choice)) {
     // Names only. A repo init is about to create has no secrets; one whose secrets this
     // account cannot list is unknown, never missing.
     const slug = planned?.slug ?? (run('gh', ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'], { cwd: root }).out || null)
@@ -1423,7 +1453,7 @@ function bootstrap(cwd, sit, opts) {
   }
 
   const notes = []
-  if (sit.hasCommits) notes.push(`Commit ${configPath} and ${wf} to ${production}: GitHub runs the triage workflow from the default branch only.`)
+  if (sit.hasCommits) notes.push({ withWorkflow: `Commit ${configPath} and ${wf} to ${production}: GitHub runs the triage workflow from the default branch only.`, without: `Commit ${configPath} to ${production}, so the setup is there for everyone who works in the repository.` })
   notes.push(`No deploy gate is set. If merges into ${production} deploy, add deployGate to the config (see the README).`)
   return { steps, notes, planned: { config, newBoard, noRepo, firstCommit: !sit.hasCommits, slug } }
 }
@@ -1447,6 +1477,8 @@ function setup(cwd, sit, opts) {
   const fixes = fixable(list)
   const hand = missing(list).filter((c) => !c.fix)
   const printHand = printSteps
+  // Winston's triage workflow is not written while another one waits on the owner's choice, or is kept.
+  const bootNotes = (l) => (boot?.notes ?? []).map((n) => (typeof n === 'string' ? n : l.some((c) => c.conflict && (!c.fix || opts.triage === 'keep')) ? n.without : n.withWorkflow))
   // A second triage workflow is the owner's choice, never a guess: asked until answered.
   const printChoice = (l) => {
     const c = l.find((x) => x.conflict && !x.fix)
@@ -1472,7 +1504,7 @@ function setup(cwd, sit, opts) {
     printChoice(list)
     printMaybe(list)
     printOwnerSteps(list)
-    for (const n of [...(boot?.notes ?? []), ...fixes.map((c) => c.fix.note).filter(Boolean)]) console.log(`\nNote: ${n}`)
+    for (const n of [...bootNotes(list), ...fixes.map((c) => c.fix.note).filter(Boolean)]) console.log(`\nNote: ${n}`)
     if (plans.length) console.log('\nNothing was changed. Rerun with --yes to do these. Safe to run again: steps already done are skipped, and nothing existing is overwritten.')
     return 0
   }
@@ -1510,7 +1542,7 @@ function setup(cwd, sit, opts) {
   printMaybe(after)
   if (written) printBlanks(written, policyBlanks(written))
   printOwnerSteps(after)
-  for (const n of [...(boot?.notes ?? []), ...ranNotes]) console.log(`\nNote: ${n}`)
+  for (const n of [...bootNotes(after), ...ranNotes]) console.log(`\nNote: ${n}`)
   console.log(`\n${failed ? `${failed} ${failed === 1 ? 'step' : 'steps'} failed. ` : ''}Safe to run again: steps already done are skipped. winston doctor shows what is left.`)
   return failed ? 1 : 0
 }
