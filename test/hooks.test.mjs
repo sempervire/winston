@@ -217,3 +217,72 @@ echo '{"ok":true,"claims":[{"resource":"resource:orchestrator","session_id":"win
   assert.equal(stop({ turn_id: 'x' }).decision, 'block', 'Codex gets a block');
   assert.equal(stop({}, { ...env, WINSTON_SKIP_PARALLELISM_CHECK: '1' }), '');
 });
+
+// ---- start-branch
+
+function repoWithOrigin(t, config = { branches: { integration: 'staging', production: 'main' } }) {
+  const r = repoWithWorktree(t, config);
+  const origin = join(r.tmp, 'origin.git');
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+  r.git(r.main, 'remote', 'add', 'origin', origin);
+  r.git(r.main, 'push', '-q', 'origin', 'main', 'main:staging');
+  r.git(r.main, 'fetch', '-q', 'origin');
+  r.git(r.main, 'branch', '-q', '--track', 'staging', 'origin/staging');
+  // A commit that reaches origin/staging from elsewhere, as a merged pull request does.
+  r.advance = () => {
+    r.git(r.wt, 'commit', '-q', '--allow-empty', '-m', 'merged elsewhere');
+    r.git(r.wt, 'push', '-q', 'origin', 'HEAD:staging');
+    return r.git(r.wt, 'rev-parse', 'HEAD');
+  };
+  r.start = (cwd = r.main, extra = {}) => {
+    const out = r.run('start-branch.mjs', { hook_event_name: 'SessionStart', cwd }, { CI: '', GITHUB_ACTIONS: '', ...extra });
+    return out ? out.hookSpecificOutput.additionalContext : '';
+  };
+  return r;
+}
+
+test('start-branch: a clean main checkout on production moves to integration and fast-forwards', (t) => {
+  const r = repoWithOrigin(t);
+  const tip = r.advance();
+  assert.match(r.start(), /switched this checkout from main to staging \(fast-forwarded to [0-9a-f]{7}\)/);
+  assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'staging');
+  assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), tip);
+  assert.equal(r.start(), '', 'already on integration and current: silent');
+  const next = r.advance();
+  assert.match(r.start(), /^start-branch: staging fast-forwarded to/);
+  assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), next);
+});
+
+test('start-branch: leaves uncommitted changes, other branches, worktrees and opted-out repos alone', (t) => {
+  const r = repoWithOrigin(t);
+  writeFileSync(join(r.main, '.gitignore'), 'edited\n');
+  assert.match(r.start(), /on main with uncommitted changes, so it was left there/);
+  assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'main');
+  r.git(r.main, 'checkout', '-q', '--', '.gitignore');
+
+  r.git(r.main, 'switch', '-q', '-c', 'feature');
+  assert.equal(r.start(), '', 'a branch someone chose is not second-guessed');
+  assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'feature');
+  r.git(r.main, 'switch', '-q', 'main');
+
+  assert.equal(r.start(r.main, { GITHUB_ACTIONS: 'true' }), '', 'a CI checkout is the ref the workflow chose');
+  assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'main');
+
+  assert.equal(r.start(r.wt), '', 'a linked worktree is never switched');
+  assert.equal(r.git(r.wt, 'symbolic-ref', '--short', 'HEAD'), 'worktree-thing');
+
+  writeFileSync(join(r.main, '.winston/config.json'), JSON.stringify({ branches: { integration: 'staging', production: 'main' }, startBranch: false }));
+  r.git(r.main, 'commit', '-qam', 'opt out');
+  assert.equal(r.start(), '');
+  assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'main');
+});
+
+test('start-branch: local commits on integration are never rewritten', (t) => {
+  const r = repoWithOrigin(t);
+  r.git(r.main, 'switch', '-q', 'staging');
+  r.git(r.main, 'commit', '-q', '--allow-empty', '-m', 'local only');
+  const local = r.git(r.main, 'rev-parse', 'HEAD');
+  r.advance();
+  assert.match(r.start(), /staging diverged from origin\/staging, left as is/);
+  assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), local);
+});
