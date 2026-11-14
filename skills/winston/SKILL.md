@@ -275,7 +275,9 @@ In order:
    `permissions.deny` list beside them: an allow pattern cannot leave out a flag, so
    `git push origin *` alone would also cover a force push, a push to the production
    branch and a branch deletion, and `gh pr review * --comment*` an approval. Deny wins
-   over allow, so those stay blocked. It prints the allow and the deny additions
+   over allow, so those stay blocked. That includes `--force-with-lease`: a branch that
+   is already pushed is brought up to date by merging its base into it and pushing
+   normally, never by rebasing it. It prints the allow and the deny additions
    separately, keeps every existing rule, and never removes or loosens a deny or ask
    entry. Never run
    `--apply` yourself, never edit a settings file to grant yourself a permission, and never

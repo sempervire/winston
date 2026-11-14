@@ -79,7 +79,8 @@ Relay its one command, `winston permissions --apply`, for the owner to run thems
 their terminal, or with the `!` prefix). Never run `--apply` yourself or edit a settings
 file to grant yourself a permission. It writes only the project's `.claude/settings.json`:
 the allow rules, and a short deny list for what an allow pattern cannot leave out (force
-pushes, pushes to the production branch, PR approvals, forced deletions). Deny wins over
+pushes including `--force-with-lease`, pushes to the production branch, PR approvals,
+forced deletions; so a pushed branch is updated by merging its base, not by rebasing). Deny wins over
 allow, and an allow rule never clears a deny or ask rule, a hook, production approval or a
 secret grant.
 

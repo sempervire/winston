@@ -677,8 +677,8 @@ test('permission rules come from the config: a narrow allow list and a deny list
   assert.ok(permissionRules({ deployGate: { guarded: [{ kind: 'pr-merge', base: 'main' }] } }).allow.includes('Bash(gh pr merge *)'));
   // What `git push origin *` and `gh pr review * --comment*` would otherwise let through.
   const blocked = (command) => deny.some((d) => coveredBy(`Bash(${command})`, [d]));
-  for (const command of ['git push origin feat/x --force', 'git push --force-with-lease origin feat/x', 'git push -f origin feat/x', 'git push origin main', 'git push origin HEAD:main', 'git push origin feat/x:refs/heads/main', 'git push origin --all', 'git push --mirror origin', 'git push -u origin main --tags', 'git push origin --delete feat/x', 'gh pr review 5 --comment -b ok --approve', 'gh pr review 5 -a', 'git branch -D feat/x', 'git branch --delete --force feat/x', 'git worktree remove --force ../wt', 'git worktree remove -f ../wt']) assert.ok(blocked(command), command);
-  for (const command of ['git push origin feat/x', 'git push -u origin feat/maintenance', 'gh pr review 5 --comment -b ok', 'git branch --list', 'git worktree remove ../wt']) assert.ok(!blocked(command), command);
+  for (const command of ['git push origin feat/x --force', 'git push --force-with-lease origin feat/x', 'git push -f origin feat/x', 'git push origin main', 'git push origin HEAD:main', 'git push origin HEAD:main --tags', 'git push origin +main', 'git push origin +feat/x', 'git push -u origin +feat/x:feat/x', 'git push origin refs/heads/main', 'git push origin refs/heads/main --tags', 'git push origin feat/x:refs/heads/main', 'git push origin --all', 'git push --mirror origin', 'git push -u origin main --tags', 'git push origin --delete feat/x', 'gh pr review 5 --comment -b ok --approve', 'gh pr review 5 -a', 'git branch -D feat/x', 'git branch --delete --force feat/x', 'git worktree remove --force ../wt', 'git worktree remove -f ../wt']) assert.ok(blocked(command), command);
+  for (const command of ['git push origin feat/x', 'git push -u origin feat/x', 'git push -u origin feat/maintenance', 'git push origin HEAD:maintenance', 'git push origin maintenance', 'git push origin refs/heads/maintenance', 'git push origin feat/x:refs/heads/maintenance', 'git push origin a+b', 'gh pr review 5 --comment -b ok', 'git branch --list', 'git worktree remove ../wt']) assert.ok(!blocked(command), command);
   assert.ok(!permissionRules({}).deny.some((d) => d.includes('undefined')), 'no production branch, no production rule');
   assert.ok(!deny.some((d) => /:\*\)$/.test(d)), 'no deny rule ends in Claude Code\'s prefix syntax, which would deny the whole command');
 
@@ -709,6 +709,7 @@ test('winston permissions lists the rules; --apply adds only the missing ones an
   assert.match(listed.stdout, /^  missing  Bash\(gh project item-list 2\*\)$/m);
   assert.match(listed.stdout, /^Deny \([^\n]*deny wins over allow\):\n  missing  Bash\(git push\*--force\*\)$/m);
   assert.match(listed.stdout, /^  missing  Bash\(git push\* main\)$/m);
+  assert.match(listed.stdout, /\nThe deny list blocks every force push, --force-with-lease included\. To update a branch that is already pushed, merge its base branch into it and push normally; do not rebase it\.\n/);
   assert.match(listed.stdout, /winston permissions --apply\nAn allow rule only removes a prompt, and deny wins over allow: deny and ask rules, hooks, production approval and secret grants still apply\./);
   assert.ok(!existsSync(file));
   const created = s.cli(['permissions', '--apply']);
@@ -728,7 +729,7 @@ test('winston permissions lists the rules; --apply adds only the missing ones an
   const before = {
     env: { TZ: 'UTC' },
     permissions: {
-      allow: ['Bash(make *)', 'Bash(git status*)', 'Bash(gh pr comment *)', 'Bash(git push origin feat/*)', 'mcp__claude-in-chrome__navigate'],
+      allow: ['Bash(make *)', 'Bash(git status*)', 'Bash(gh pr comment *)', 'Bash(git push origin feat/*)', 'mcp__claude-in-chrome__navigate', 'Bash(git push origin main)'],
       deny: ['Bash(git push*--force*)', 'Bash(gh issue edit *)', 'Bash(rm -rf *)'],
       ask: ['Bash(gh pr create*)'],
     },
@@ -745,10 +746,13 @@ test('winston permissions lists the rules; --apply adds only the missing ones an
   assert.equal(statSync(file).mode & 0o777, 0o600, 'the file keeps its mode');
   assert.deepEqual(Object.keys(after), Object.keys(before));
   assert.deepEqual([after.env, after.hooks, after.permissions.ask], [before.env, before.hooks, before.permissions.ask]);
-  assert.deepEqual(after.permissions.allow.slice(0, 5), before.permissions.allow, 'existing allow rules first, untouched');
+  assert.deepEqual(after.permissions.allow.slice(0, 6), before.permissions.allow, 'existing allow rules first, untouched');
+  // A new deny that covers an allow rule the project already had is pointed out, not hidden.
+  assert.match(applied.stdout, /These deny rules cover allow rules the project already had[^\n]*\n  Bash\(git push\* main\) now overrides the existing allow rule Bash\(git push origin main\)\n/);
+  assert.match(applied.stdout, /\nThe deny list blocks every force push, --force-with-lease included\./);
   assert.deepEqual(after.permissions.deny.slice(0, 3), before.permissions.deny, 'existing deny rules first, none removed or loosened');
   for (const list of [after.permissions.allow, after.permissions.deny]) assert.equal(new Set(list).size, list.length, 'no duplicate entries');
-  const added = after.permissions.allow.slice(5);
+  const added = after.permissions.allow.slice(6);
   assert.ok(added.includes('Bash(npm test*)') && added.includes('Bash(git worktree add *)'));
   for (const not of ['Bash(git status*)', 'Bash(gh pr comment *)', 'Bash(gh issue edit * --add-label *)', 'Bash(git push origin *)', 'Bash(gh pr create *)']) assert.ok(!added.includes(not), not);
   assert.match(applied.stdout, /^denied   Bash\(gh issue edit \* --add-label \*\)  — not added: the deny rule Bash\(gh issue edit \*\) covers it$/m);

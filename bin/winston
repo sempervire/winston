@@ -267,8 +267,14 @@ export function permissionRules(config, extra = []) {
   const deny = [
     // No `git push* :*` for the colon form of a deletion: a trailing `:*` is Claude Code's
     // prefix syntax, so that rule would deny every push.
-    'git push*--force*', 'git push* -f*', 'git push*--delete*', 'git push*--all*', 'git push*--mirror*',
-    ...(production ? [`git push* ${production}`, `git push* ${production} *`, `git push*:${production}*`, `git push*:refs/heads/${production}*`] : []),
+    // `--force*` takes --force-with-lease with it, and a refspec that starts with + is a
+    // force push too. The production branch is named in each form a push can give it, as
+    // a whole word, so a branch that merely starts with its name is left alone.
+    'git push*--force*', 'git push* -f*', 'git push* +*', 'git push*--delete*', 'git push*--all*', 'git push*--mirror*',
+    ...(production ? ['', ':', ' refs/heads/', ':refs/heads/'].flatMap((form) => {
+      const ref = form === '' ? ` ${production}` : `${form}${production}`
+      return [`git push*${ref}`, `git push*${ref} *`]
+    }) : []),
     'gh pr review*--approve*', 'gh pr review* -a*',
     'git branch* -D*', 'git branch*--force*', 'git worktree remove*--force*', 'git worktree remove* -f*',
   ]
@@ -300,8 +306,13 @@ export function coveredBy(rule, list) {
     if (d === m[1]) return true
     const dm = RULE.exec(d)
     if (!dm?.[2] || dm[1] !== m[1]) return false
-    const pattern = dm[2].replace(/ ?:?\*$/, '*').split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')
-    return new RegExp(`^${pattern}$`, 's').test(text)
+    // As Claude Code reads a pattern: `*` is any text, and a trailing ` *` is a word
+    // boundary (the bare command, or the command and its arguments), so `main *` does not
+    // take `maintenance`. A trailing `:*` is the older prefix form.
+    const spaced = / \*$/.test(dm[2])
+    const body = dm[2].replace(spaced ? / \*$/ : /:\*$/, spaced ? '' : '*')
+    const pattern = body.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')
+    return new RegExp(`^${pattern}${spaced ? '( .*)?' : ''}$`, 's').test(text)
   }) ?? null
 }
 
@@ -365,6 +376,7 @@ function permissionState(root, config, extra = []) {
   return { path, text, data, rules, denies }
 }
 
+const NO_FORCE = 'The deny list blocks every force push, --force-with-lease included. To update a branch that is already pushed, merge its base branch into it and push normally; do not rebase it.'
 const GATES = 'An allow rule only removes a prompt, and deny wins over allow: deny and ask rules, hooks, production approval and secret grants still apply.'
 
 /**
@@ -389,6 +401,7 @@ function permissions(cwd, opts) {
     for (const r of st.rules) console.log(`  ${r.state.padEnd(8)} ${r.rule}${r.note ? `  — ${r.note}` : ''}`)
     console.log('\nDeny (an allow pattern cannot leave out a flag, so these keep force pushes, pushes to production, approvals and forced deletions blocked; deny wins over allow):')
     for (const r of st.denies) console.log(`  ${r.state.padEnd(8)} ${r.rule}`)
+    console.log(`\n${NO_FORCE}`)
     console.log(lacking.length || denies.length ? `\nAdd the ${lacking.length} missing allow and ${denies.length} missing deny rules to the project's settings: winston permissions --apply` : '\nNothing is missing.')
     console.log(GATES)
     return 0
@@ -424,6 +437,14 @@ function permissions(cwd, opts) {
   if (denies.length) {
     console.log('\nAdded to permissions.deny, which wins over allow (no existing deny or ask rule was removed or loosened):')
     for (const r of denies) console.log(`denied   ${r.rule}`)
+    // An allow entry the project already had that a new deny now covers: say so.
+    const allowed = (had.allow ?? []).filter((a) => typeof a === 'string')
+    const overridden = denies.flatMap((d) => allowed.filter((a) => coveredBy(a, [d.rule])).map((a) => `${d.rule} now overrides the existing allow rule ${a}`))
+    if (overridden.length) {
+      console.log('\nThese deny rules cover allow rules the project already had, so those actions are now blocked (remove the deny rule by hand if that is not what you want):')
+      for (const line of overridden) console.log(`  ${line}`)
+    }
+    console.log(`\n${NO_FORCE}`)
   }
   console.log(`\n${lacking.length} allow and ${denies.length} deny ${lacking.length + denies.length === 1 ? 'rule' : 'rules'} added in ${st.path}. ${GATES}`)
   return 0
