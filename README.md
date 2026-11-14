@@ -54,6 +54,19 @@ GitHub in that Chrome, and connect it with `/chrome` (or start with `claude --ch
 Without browser control it prints the two steps for you to do, and doctor reports them
 until they are done.
 
+## Updating
+
+Winston says when a newer version is out: a notice at the start of a session (it asks
+GitHub at most once a day) and a line in `/winston:doctor`, both with the command to run.
+It never updates itself, because an update replaces hooks and skills and needs a restart.
+
+```
+claude plugin marketplace update winston && claude plugin update winston@winston
+```
+
+Add `--scope project`, run from the project, for a project-scope install. Then restart
+Claude Code. `"updateCheck": false` in the config turns the session notice off.
+
 ## Commands
 
 | Command | What it does |
@@ -100,6 +113,7 @@ Top-level keys merge shallowly; the repo wins. See `templates/config.sample.json
 | `advisors` | Repo-specific agent names for Debbie, Sheldon and Radar. |
 | `deployGate` | Approval phrase and the guarded actions (`pr-merge` into a base, `workflow-run`). |
 | `secretGrant` | The phrase that grants secret handling for one session. |
+| `updateCheck` | `false` turns off the session-start notice that a newer Winston is out. |
 | `startBranch` | `false` leaves the main checkout on whatever branch it is on at session start. |
 | `worktree`, `launcher` | Files copied or linked into new worktrees; the repo the launchers open. |
 

@@ -30,6 +30,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadLayers, repoRoot, winstonHome } from '../lib/config.mjs'
 import { recordTitle } from '../hooks/session-title.mjs'
+import { installedVersion, installScope, newer, updateSteps } from '../lib/update.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -391,13 +392,28 @@ function printSteps(items) {
   }
 }
 
+/** The installed version against the latest, asked now. Never a required check: a stale Winston still works. */
+function versionCheck(cwd) {
+  const have = installedVersion()
+  const asked = run(process.execPath, [join(ROOT, 'lib', 'update.mjs')], { timeout: 8000 })
+  let latest = null
+  try {
+    latest = JSON.parse(asked.out).latest
+  } catch {}
+  if (!latest) return { name: 'Winston version', required: false, state: 'off', detail: `${have} installed; could not reach GitHub to check for a newer one` }
+  if (!newer(latest, have)) return { name: 'Winston version', required: false, state: 'ok', detail: `${have}, the latest` }
+  return { name: 'Winston version', required: false, state: 'old', detail: `${have} installed, ${latest} available`, update: updateSteps('claude', installScope(cwd)) }
+}
+
 function doctor(cwd) {
-  const list = checks(cwd)
+  const version = versionCheck(cwd)
+  const list = [version, ...checks(cwd)]
   for (const c of list) console.log(`${c.state.padEnd(8)} ${c.name}${c.detail ? `  — ${c.detail}` : ''}`)
   const bad = missing(list)
   printSteps(bad.filter((c) => !c.fix && c.hand))
   if (bad.some((c) => c.unconfigured)) console.log('\nNot set up for Winston here. winston init asks which setup fits: join, new or adopt.')
   else if (bad.some((c) => c.fix)) console.log('\nFix: winston init --mode adopt')
+  if (version.update) console.log(`\nUpdate Winston: ${version.update}.`)
   return bad.length ? 1 : 0
 }
 

@@ -16,3 +16,7 @@ When it reports missing setup, or that the repo is not set up for Winston, offer
 needs its own confirmation. Its **In the browser** list (the board's intake workflows,
 which GitHub has no API for) is work `/winston:init` does through browser control: offer
 that rather than leaving it with the user. Relay its **By hand** list as it stands.
+
+When the output ends with an **Update Winston:** line, a newer version is out. Give the
+user that line as it stands, command included: they run it and restart. Do not run the
+update yourself; it replaces the hooks and skills this session is running on.
