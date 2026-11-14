@@ -39,6 +39,12 @@ changing anything:
 
 `/winston:doctor` checks the result at any time.
 
+A board Winston builds has six Status columns, in order: `New`, `Ready`, `In Progress`,
+`Verify`, `Verified`, `Done`, with fixed colours and descriptions, and a board view filtered
+to a milestone whose cards show labels. On a board that already exists, missing columns are
+added in that order and Labels is switched on for the view; nothing already there is
+renamed, recoloured or removed.
+
 Two steps cannot go through GitHub's API, which can delete a project workflow but not
 create or enable one: on the board's Workflows page, **Auto-add to project** (this
 repository, filter `is:issue`) and **Item added to project** (set Status to `New`). Without

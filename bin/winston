@@ -51,7 +51,21 @@ export const REQUIRED_LABELS = [
 ]
 
 const DEFAULT_STATUSES = ['New', 'Ready', 'Verify', 'Verified']
-const STATUS_COLORS = ['GRAY', 'BLUE', 'YELLOW', 'GREEN']
+// The board Winston builds: six columns in this order, with these colours and
+// descriptions. Four are the Winston roles, named by config `board.statuses`; In Progress
+// and Done are GitHub's own, which the board's closing workflows point at.
+const COLUMNS = [
+  { role: 0, name: 'New', color: 'BLUE', description: 'Issues That Need To Be Evaluated' },
+  { role: 1, name: 'Ready', color: 'GREEN', description: 'Triaged by a human. Ready to code.' },
+  { name: 'In Progress', color: 'YELLOW', description: 'This is actively being worked on' },
+  { role: 2, name: 'Verify', color: 'RED', description: 'Deployed to staging and ready for verification.' },
+  { role: 3, name: 'Verified', color: 'GRAY', description: 'Confirmed on staging, ready to push to prod.' },
+  { name: 'Done', color: 'PURPLE', description: 'This has been completed and pushed to prod' },
+]
+const columns = (statuses = DEFAULT_STATUSES) => COLUMNS.map(({ role, ...c }) => ({ ...c, name: role === undefined ? c.name : statuses[role] ?? c.name }))
+// What a card on the kanban view shows, in order; a field the board lacks is skipped.
+const CARD_FIELDS = ['Title', 'Assignees', 'Status', 'Labels', 'Linked pull requests', 'Sub-issues progress', 'Start date', 'Target date']
+const DATE_FIELDS = ['Start date', 'Target date']
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 const TRIAGE_SECRETS = ['GH_PAT', 'CLAUDE_CODE_OAUTH_TOKEN']
 const INTEGRATION_NAMES = ['staging', 'develop', 'dev', 'development']
@@ -89,10 +103,20 @@ const BOARD_QUERY = `query($owner:String!,$number:Int!){ repositoryOwner(login:$
   ... on Organization{ projectV2(number:$number){ ...F } } ... on User{ projectV2(number:$number){ ...F } } } }
 fragment F on ProjectV2 { id title fields(first:100){ nodes{ ... on ProjectV2FieldCommon{ id name } ... on ProjectV2SingleSelectField{ options{ id name color description } } } }
   workflows(first:50){ nodes{ name enabled } }
-  views(first:50){ nodes{ layout groupByFields(first:10){ nodes{ ... on ProjectV2FieldCommon{ name } } } } } }`
+  views(first:50){ nodes{ id name layout fields(first:50){ nodes{ ... on ProjectV2FieldCommon{ id name } } }
+    groupByFields(first:10){ nodes{ ... on ProjectV2FieldCommon{ name } } } verticalGroupByFields(first:10){ nodes{ ... on ProjectV2FieldCommon{ name } } } } } }`
 
-const CREATE_VIEW_MUTATION = `mutation($projectId:ID!,$name:String!){ createProjectV2View(input:{projectId:$projectId,name:$name,layout:BOARD_LAYOUT}){ view{ id } } }`
-const FILTER_VIEW_MUTATION = `mutation($viewId:ID!,$filter:String!){ updateProjectV2View(input:{viewId:$viewId,filter:$filter}){ view{ id } } }`
+const CREATE_VIEW_MUTATION = `mutation($projectId:ID!,$name:String!){ createProjectV2View(input:{projectId:$projectId,name:$name,layout:BOARD_LAYOUT}){ projectV2View{ id } } }`
+
+/** A board view's columns are its vertical grouping; older data carries it as groupByFields. */
+const isKanban = (v) => v?.layout === 'BOARD_LAYOUT' && [...(v.verticalGroupByFields?.nodes ?? []), ...(v.groupByFields?.nodes ?? [])].some((f) => f?.name === 'Status')
+
+/** Set which fields a view's cards show, and optionally its filter. */
+function updateView(viewId, fieldIds, filter) {
+  const input = `viewId:$viewId,configuration:{visibleFieldIds:${JSON.stringify(fieldIds)}}${filter === undefined ? '' : `,filter:${JSON.stringify(filter)}`}`
+  const r = run('gh', ['api', 'graphql', '-f', `query=mutation($viewId:ID!){ updateProjectV2View(input:{${input}}){ projectV2View{ id } } }`, '-f', `viewId=${viewId}`])
+  if (!r.ok) throw new Error(`update view: ${r.err || r.out}`)
+}
 
 const LINKED_BOARDS_QUERY = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ projectsV2(first:50){ nodes{ number title closed
   owner{ ... on Organization{ login } ... on User{ login } } } } } }`
@@ -122,7 +146,10 @@ function setOptions(fieldId, options) {
   if (!r.ok) throw new Error(`set field options: ${r.err || r.out}`)
 }
 
-const statusOption = (name, i) => ({ name, color: STATUS_COLORS[i] ?? 'GRAY' })
+function createDateField(owner, number, name) {
+  const r = run('gh', ['project', 'field-create', String(number), '--owner', owner, '--name', name, '--data-type', 'DATE'])
+  if (!r.ok) throw new Error(`create the ${name} field: ${r.err}`)
+}
 
 function createPriorityField(owner, number, name) {
   const r = run('gh', ['project', 'field-create', String(number), '--owner', owner, '--name', name, '--data-type', 'SINGLE_SELECT', '--single-select-options', PRIORITIES.join(',')])
@@ -136,17 +163,17 @@ function createMilestone(root, title) {
   if (!r.ok) throw new Error(`create milestone ${title}: ${r.err}`)
 }
 
-function createKanbanView(root, projectId) {
+function createKanbanView(root, project) {
   const milestone = openMilestones(root)[0] ?? (createMilestone(root, DEFAULT_MILESTONE), DEFAULT_MILESTONE)
-  const created = run('gh', ['api', 'graphql', '-f', `query=${CREATE_VIEW_MUTATION}`, '-f', `projectId=${projectId}`, '-f', `name=${milestone}`])
+  const created = run('gh', ['api', 'graphql', '-f', `query=${CREATE_VIEW_MUTATION}`, '-f', `projectId=${project.id}`, '-f', `name=${milestone}`])
   let viewId
   try {
-    viewId = JSON.parse(created.out).data.createProjectV2View.view.id
+    viewId = JSON.parse(created.out).data.createProjectV2View.projectV2View.id
   } catch {
     throw new Error(`create view: ${created.err || created.out}`)
   }
-  const filtered = run('gh', ['api', 'graphql', '-f', `query=${FILTER_VIEW_MUTATION}`, '-f', `viewId=${viewId}`, '-f', `filter=milestone:"${milestone}"`])
-  if (!filtered.ok) throw new Error(`filter view to milestone:"${milestone}": ${filtered.err}`)
+  const ids = new Map(project.fields.nodes.filter((f) => f?.name).map((f) => [f.name, f.id]))
+  updateView(viewId, CARD_FIELDS.map((n) => ids.get(n)).filter(Boolean), `milestone:"${milestone}"`)
 }
 
 function writeTriageWorkflow(wf) {
@@ -226,15 +253,16 @@ export function checks(cwd, planned = null) {
         add({ name: 'board reachable', state: 'ok', detail: `${where}: ${project.title}` })
         const fields = project.fields.nodes.filter((n) => n?.name)
         const status = fields.find((f) => f.name === 'Status')
-        const wanted = config.board.statuses ?? DEFAULT_STATUSES
-        const have = new Set((status?.options ?? []).map((o) => o.name))
-        const lacking = wanted.filter((s) => !have.has(s))
+        const wanted = columns(config.board.statuses)
+        const have = new Map((status?.options ?? []).map((o) => [o.name, o]))
+        const lacking = wanted.filter((c) => !have.has(c.name)).map((c) => c.name)
         add({
           name: 'board Status options', state: lacking.length ? 'missing' : 'ok', detail: lacking.length ? `add: ${lacking.join(', ')}` : '', board: true,
           hand: `add the Status options ${lacking.join(', ')} in the board's settings`,
           fix: lacking.length && status?.id && {
-            plan: `add Status options to the board: ${lacking.join(', ')} (its existing options are kept)`,
-            run: () => setOptions(status.id, [...status.options, ...lacking.map((name) => statusOption(name, wanted.indexOf(name)))]),
+            plan: `add Status columns to the board, in Winston's order: ${lacking.join(', ')} (its existing options are kept as they are)`,
+            // Existing options go back by id, untouched; ones Winston does not know follow.
+            run: () => setOptions(status.id, [...wanted.map((c) => have.get(c.name) ?? c), ...status.options.filter((o) => !wanted.some((c) => c.name === o.name))]),
           },
         })
         const priority = config.board.priorityField ?? 'Priority'
@@ -244,12 +272,25 @@ export function checks(cwd, planned = null) {
           fix: !hasPriority && { plan: `add a single-select ${priority} field to the board (${PRIORITIES.join(', ')})`, run: () => createPriorityField(owner, number, priority) },
         })
       }
-      const hasKanbanView = project.views.nodes.some((v) => v.layout === 'BOARD_LAYOUT' && v.groupByFields.nodes.some((f) => f?.name === 'Status'))
+      const kanban = project.views.nodes.filter(isKanban)
       add({
-        name: 'board kanban view', state: hasKanbanView ? 'ok' : 'missing',
-        detail: hasKanbanView ? '' : 'no BOARD_LAYOUT view grouped by Status', board: true,
-        fix: !hasKanbanView && { plan: 'create a BOARD_LAYOUT view on the board, filtered to a milestone', run: () => createKanbanView(root, project.id) },
+        name: 'board kanban view', state: kanban.length ? 'ok' : 'missing',
+        detail: kanban.length ? '' : 'no board view with Status columns', board: true,
+        fix: !kanban.length && { plan: 'create a board view with Status columns, filtered to a milestone, its cards showing labels', run: () => createKanbanView(root, project) },
       })
+      const labels = project.fields.nodes.find((f) => f?.name === 'Labels')
+      const bare = kanban.filter((v) => !(v.fields?.nodes ?? []).some((f) => f?.name === 'Labels'))
+      if (kanban.length) {
+        add({
+          name: 'kanban cards show labels', state: bare.length ? 'missing' : 'ok',
+          detail: bare.length ? `not shown on: ${bare.map((v) => v.name).join(', ')}` : '', board: true,
+          hand: 'on the view, open View and tick Labels under Fields',
+          fix: bare.length && labels?.id && bare.every((v) => v.id) && {
+            plan: `show Labels on the cards of: ${bare.map((v) => v.name).join(', ')}`,
+            run: () => { for (const v of bare) updateView(v.id, [...v.fields.nodes.filter((f) => f?.id).map((f) => f.id), labels.id]) },
+          },
+        })
+      }
       const hasMilestone = !planned?.noRepo && openMilestones(root).length > 0
       add({
         name: 'starting milestone', state: hasMilestone ? 'ok' : 'missing',
@@ -496,19 +537,20 @@ function bootstrap(cwd, sit, opts) {
 
   const steps = []
   if (!sit.root) steps.push({ plan: `git init in ${root}, on branch ${production}`, run: () => must(run('git', ['init', '-q', '-b', production, root]), 'git init') })
-  // A new project's own workflows point at two of its default options: "Item added to
-  // project" at Todo, and the closing ones at Done. Renaming Todo in place (same id) makes
-  // the first set the intake status; Done stays; In Progress goes.
+  // A new project's own workflows point at its default options: "Item added to project" at
+  // Todo, and the closing ones at Done. Each stock option is kept by id under the column
+  // that takes its place, so Todo becomes the intake column and that workflow sets it.
   const configureNewBoard = () => {
     const status = fetchBoard(ghOwner, config.board.number).project?.fields.nodes.find((f) => f?.name === 'Status')
     if (!status?.id) throw new Error('cannot read the new project\'s Status field')
-    const stock = (n) => status.options.find((o) => o.name === n)
-    setOptions(status.id, [{ ...statusOption(statuses[0], 0), id: stock('Todo')?.id }, ...statuses.slice(1).map((n, i) => statusOption(n, i + 1)), ...(stock('Done') ? [stock('Done')] : [])])
+    const stock = (n) => status.options.find((o) => o.name === n)?.id
+    setOptions(status.id, columns(statuses).map((c, i) => ({ ...c, id: stock(i === 0 ? 'Todo' : c.name) })))
     createPriorityField(ghOwner, config.board.number, 'Priority')
+    for (const name of DATE_FIELDS) createDateField(ghOwner, config.board.number, name)
   }
   if (newBoard) {
     steps.push({
-      plan: `create a private GitHub Project "${name}" under ${ghOwner}, with Status ${statuses.join(' / ')} and a Priority field (${PRIORITIES.join(', ')})`,
+      plan: `create a private GitHub Project "${name}" under ${ghOwner}, with Status columns ${columns(statuses).map((c) => c.name).join(' / ')}, a Priority field (${PRIORITIES.join(', ')}) and Start and Target date fields`,
       run: () => {
         const made = run('gh', ['project', 'create', '--owner', ghOwner, '--title', name, '--format', 'json'])
         must(made, 'gh project create')
