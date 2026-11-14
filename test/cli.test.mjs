@@ -207,8 +207,13 @@ function fakeGh(s) {
       *projectsV2*) cat "${s.tmp}/linked.json";;
       *) cat "${s.tmp}/board.json" 2>/dev/null || exit 1;;
       esac;;
-    "api --method") cat "${s.tmp}/milestones" 2>/dev/null; true;;
+    "api --method") case "$4" in
+      "repos/{owner}/{repo}/milestones") cat "${s.tmp}/milestones" 2>/dev/null; true;;
+      "repos/{owner}/{repo}/issues") cat "${s.tmp}/issues" 2>/dev/null; true;;
+      *) exit 1;;
+    esac;;
     "api repos/{owner}/{repo}/milestones") echo "Phase 1.0" >> "${s.tmp}/milestones";;
+    "api repos/{owner}/{repo}/issues/"*) n="\${2##*/issues/}"; n="\${n%/timeline}"; cat "${s.tmp}/timeline-$n" 2>/dev/null; true;;
     *) exit 1;;
   esac`);
   s.fake('claude', 'exit 0');
@@ -314,7 +319,9 @@ test('init --mode new creates the repo, both branches, the board and the config,
   assert.ok(calls.indexOf('project create') < calls.indexOf('repo create') && calls.indexOf('repo create') < calls.indexOf('project link'));
   assert.match(readFileSync(join(s.tmp, 'labels'), 'utf8'), /^risk: high$/m);
   assert.match(made.stdout, /done\s+create a board view with Status columns/);
-  assert.match(made.stdout, /In the browser[^]*open https:\/\/github\.com\/users\/pat\/projects\/7\/workflows, choose "Auto-add to project", click Edit, pick this repository and set the filter to is:issue/);
+  // The board is brand new and has no issues yet, so the "off" from the API cannot be told
+  // apart from "on but not yet proven" (#45): not a required step, just an optional one.
+  assert.match(made.stdout, /Could not confirm \(may already be on; optional, in the browser\):\n {2}- board auto-adds new issues: open https:\/\/github\.com\/users\/pat\/projects\/7\/workflows, choose "Auto-add to project", click Edit, pick this repository and set the filter to is:issue/);
 });
 
 test('init --mode adopt fits the config to the repo and adds to its board without replacing anything', (t) => {
@@ -431,6 +438,9 @@ test('doctor checks the board\'s two intake workflows and the triage workflow\'s
   writeFileSync(join(s.repo, '.github/workflows/triage-on-new-issue.yml'), '');
   writeFileSync(join(s.tmp, 'board.json'), boardJson({ options: ['Inbox', 'Ready', 'Verify', 'Verified'], workflows: ['Item added to project'], views: KANBAN }));
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\n');
+  // An issue exists, but github-project-automation[bot] never touched it: both sources agree it is off.
+  writeFileSync(join(s.tmp, 'issues'), '9\n');
+  writeFileSync(join(s.tmp, 'timeline-9'), 'commented\n');
   const off = s.cli(['doctor']);
   assert.equal(off.status, 1);
   assert.match(off.stdout, /^needs you\s+board auto-adds new issues\s+— the board's "Auto-add to project" workflow is off/m);
@@ -446,6 +456,38 @@ test('doctor checks the board\'s two intake workflows and the triage workflow\'s
   assert.match(on.stdout, /^done\s+board auto-adds new issues$/m);
   assert.match(on.stdout, /^done\s+triage workflow secrets\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN set$/m);
   assert.doesNotMatch(on.stdout, /\d\. (board auto-adds|board sets|triage workflow)/);
+});
+
+test('doctor trusts github-project-automation[bot]\'s timeline over a stale workflows listing, and says "could not check" with no issues to read one from (#45)', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  mkdirSync(join(s.repo, '.winston'));
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ board: { owner: 'acme', number: 6 } }));
+  // The API's workflows listing omits "Auto-add to project" entirely (not merely disabled),
+  // the exact shape #45 reports, yet the bot's own timeline on a recent issue shows it ran.
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: ['Item added to project'], views: KANBAN }));
+  writeFileSync(join(s.tmp, 'issues'), '44\n43\n');
+  writeFileSync(join(s.tmp, 'timeline-44'), 'added_to_project_v2\nproject_v2_item_status_changed\n');
+  const confirmed = s.cli(['doctor']);
+  assert.match(confirmed.stdout, /^done\s+board auto-adds new issues\s+— on \(confirmed by issue #44's timeline\)$/m);
+  assert.match(confirmed.stdout, /^done\s+board sets New on added items\s+— on; GitHub's API does not show which Status it sets$/m);
+  assert.doesNotMatch(confirmed.stdout, /In the browser|\d\. board (auto-adds|sets)/, 'confirmed by the bot: no browser step, required or optional');
+
+  // Control: a board whose API already says both are on (project 2 in #45) is unaffected,
+  // and never asks the issue timeline at all.
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
+  rmSync(join(s.tmp, 'gh-calls'));
+  const already = s.cli(['doctor']);
+  assert.match(already.stdout, /^done\s+board auto-adds new issues$/m);
+  assert.doesNotMatch(s.calls(), /issues\/\d+\/timeline/, 'both workflows already read as on: the timeline is never consulted');
+
+  // No issues at all yet: neither source can be trusted over the other, so doctor says so
+  // rather than sending the owner to redo a step that may already be on.
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: ['Item added to project'], views: KANBAN }));
+  rmSync(join(s.tmp, 'issues'));
+  const blind = s.cli(['doctor']);
+  assert.match(blind.stdout, /^could not check {2}board auto-adds new issues\s+— could not check — file one test issue and rerun doctor$/m);
+  assert.doesNotMatch(blind.stdout, /\d\. board auto-adds new issues/, 'not a required step: never counted as missing');
 });
 
 test('doctor says unknown, not missing, when it cannot list secrets, and flags a run of failed triage runs', (t) => {
