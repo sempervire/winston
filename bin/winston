@@ -32,7 +32,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -307,7 +307,11 @@ function permissions(cwd, opts) {
   const data = { ...st.data, permissions: { ...st.data.permissions, allow: [...(st.data.permissions?.allow ?? []), ...lacking.map((r) => r.rule)] } }
   const indent = st.text?.match(/^([ \t]+)\S/m)?.[1] ?? 2
   mkdirSync(dirname(st.path), { recursive: true })
-  writeFileSync(st.path, JSON.stringify(data, null, indent) + (st.text === null || st.text.endsWith('\n') ? '\n' : ''))
+  // Written beside the file and renamed over it, so a hard link to a file elsewhere is
+  // replaced rather than written through.
+  const tmp = `${st.path}.winston-${process.pid}`
+  writeFileSync(tmp, JSON.stringify(data, null, indent) + (st.text === null || st.text.endsWith('\n') ? '\n' : ''), { flag: 'wx' })
+  renameSync(tmp, st.path)
   for (const r of lacking) console.log(`added    ${r.rule}`)
   console.log(`\n${lacking.length} ${lacking.length === 1 ? 'rule' : 'rules'} added to permissions.allow in ${st.path}. ${GATES}`)
   return 0

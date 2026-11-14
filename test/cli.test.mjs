@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { loadConfig, loadLayers } from '../lib/config.mjs';
@@ -681,6 +681,13 @@ test('winston permissions lists the rules; --apply adds only the missing ones an
     assert.equal(readFileSync(file, 'utf8'), broken);
   }
   assert.match(s.cli(['doctor']).stdout, /^unknown\s+project permission rules\s+— .*settings\.json is not/m);
+  // A settings file hard-linked to one elsewhere is replaced, not written through.
+  rmSync(file);
+  linkSync(userFile, file);
+  assert.equal(s.cli(['permissions', '--apply']).status, 0);
+  assert.equal(readFileSync(userFile, 'utf8'), '{"permissions":{"allow":[]}}');
+  assert.ok(JSON.parse(readFileSync(file, 'utf8')).permissions.allow.length > 0);
+  assert.deepEqual(readdirSync(join(s.repo, '.claude')), ['settings.json'], 'no temporary file is left');
   // A settings file that is a link out of the repository is not followed.
   rmSync(file);
   symlinkSync(userFile, file);
