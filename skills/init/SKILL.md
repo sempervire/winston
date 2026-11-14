@@ -59,19 +59,37 @@ It runs in five steps and never skips the first two.
      rather not, or the harness has no browser control (Codex), give them the two lines
      from the output to do by hand, and run `winston doctor` once they say they have.
 
-5. **Relay the secrets steps.** When the output has **Secrets the triage workflow needs**,
-   the workflow `winston init` installed cannot triage until the repo has two Actions
-   secrets, `GH_PAT` and `CLAUDE_CODE_OAUTH_TOKEN`. The CLI checked their names only. The
-   numbered steps under that heading are the owner's: present them unaltered, commands
-   included, as the last thing the owner has to do, and say that new issues stay untriaged
-   until they are done. Never create a token, run `claude setup-token`, run
-   `gh secret set`, or ask for a token's value in chat: the owner runs those in their own
-   terminal, where `gh secret set` prompts for the value. The owner doing it by hand needs
-   no secret-grant phrase (config `secretGrant.phrase`); that phrase governs an agent
-   handling secrets, and here no agent does. When they say it is done, run
-   `winston doctor`: `triage workflow secrets` should read `on`, and after the proving run
-   `triage workflow runs` should show `last run: success`. In **join** the secrets are the
-   repo owner's; say so and stop.
+5. **Carry the plan's notes through as help, not status.** `winston init`'s output can end
+   with `Note:` lines and a **Secrets the triage workflow needs** list, and `winston doctor`
+   can report `triage workflow secrets` as `off` — all are non-blocking, so don't present
+   them as bare facts or errors; say what to do about them, and always offer the next step.
+   - **A note to commit the config and workflow:** it names the exact files and the reason
+     (GitHub runs the triage workflow from the default branch only). Relay that reason, and
+     offer to commit those two files yourself now (`git add` and `git commit` them) rather
+     than leaving the user to work out why they're uncommitted.
+   - **`triage workflow secrets: off`, or the Secrets list:** the workflow skips cleanly
+     without them, so frame this as an optional next step, not a problem; until it is done,
+     new issues are not triaged automatically. Explain both secrets in plain terms: `GH_PAT`
+     is a token over this repo with Issues read/write and Projects read/write on the board
+     owner (`GITHUB_TOKEN` cannot reach an org/user project); `CLAUDE_CODE_OAUTH_TOKEN`
+     comes from running `claude setup-token`. The numbered steps under **Secrets the triage
+     workflow needs** are the walkthrough: the CLI checked which of the two names exist
+     (names only), and prints the exact commands for the missing ones. Present those steps
+     unaltered. Use the token type they name, not a guess: a fine-grained token for a
+     board an organization owns, a classic token (`repo`, `project`) for a board a user
+     owns, because GitHub's fine-grained tokens cannot reach a user's projects. With
+     browser control, offer to open the token settings page the steps give so the user
+     can create the token there. Without browser control, give them the same steps to do
+     by hand and wait.
+   - **The token's value stays with the owner.** They run `claude setup-token` and the two
+     `gh secret set` lines in their own terminal, where `gh secret set` prompts for the
+     value. Never create a token, never ask for a token's value in chat, and never run
+     `gh secret set` with a value yourself. The owner doing it by hand needs no
+     secret-grant phrase (config `secretGrant.phrase`); that phrase governs an agent
+     handling secrets, and here no agent does.
+   - **When they say it is done,** run `winston doctor`: `triage workflow secrets` should
+     read `on`, and after the proving run in the steps `triage workflow runs` should show
+     `last run: success`. In **join** the secrets are the repo owner's; say so and stop.
 
 **Permission rules** in the output is one more step for the owner: the project lacks some
 of the Claude Code allow rules a Winston run uses, so those actions would prompt mid-run.
