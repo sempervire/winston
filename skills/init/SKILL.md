@@ -6,7 +6,7 @@ description: Set Winston up in this repo, after asking which of three situations
 # /winston:init
 
 `winston init` sets up one of three things, and which one is the user's call, never a guess.
-It runs in four steps and never skips the first two.
+It runs in five steps and never skips the first two.
 
 1. **Ask which setup.** Run `winston init` from the repository root (or the empty directory
    for a new project), with no flags. It changes nothing and prints the three setups and
