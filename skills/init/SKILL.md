@@ -6,7 +6,7 @@ description: Set Winston up in this repo, after asking which of three situations
 # /winston:init
 
 `winston init` sets up one of three things, and which one is the user's call, never a guess.
-It runs in four steps and never skips the first two.
+It runs in five steps and never skips the first two.
 
 1. **Ask which setup.** Run `winston init` from the repository root (or the empty directory
    for a new project), with no flags. It changes nothing and prints the three setups and
@@ -58,6 +58,23 @@ It runs in four steps and never skips the first two.
      `claude --chrome`). When they say it is on, carry out the steps. If they would
      rather not, or the harness has no browser control (Codex), give them the two lines
      from the output to do by hand, and run `winston doctor` once they say they have.
+
+5. **Carry the plan's notes through as help, not status.** `winston init`'s plan can end with
+   `Note:` lines and `winston doctor` can report `triage workflow secrets` as `off` — both are
+   non-blocking, so don't present them as bare facts or errors; say what to do about them.
+   - **A note to commit the config and workflow:** it names the exact files and the reason
+     (GitHub runs the triage workflow from the default branch only). Relay that reason, and
+     offer to commit those two files yourself now (`git add` and `git commit` them) rather
+     than leaving the user to work out why they're uncommitted.
+   - **`triage workflow secrets: off`:** the workflow skips cleanly without them, so frame
+     this as an optional next step, not a problem. Explain both secrets in plain terms: `GH_PAT`
+     is a fine-grained token over this repo with Issues read/write and Projects read/write on
+     the board owner (`GITHUB_TOKEN` cannot reach an org/user project); `CLAUDE_CODE_OAUTH_TOKEN`
+     comes from running `claude setup-token`. With browser control, offer to open GitHub's
+     token settings (Settings → Developer settings → Personal access tokens → Fine-grained
+     tokens) so the user can create it, then run `gh secret set GH_PAT` and
+     `gh secret set CLAUDE_CODE_OAUTH_TOKEN` yourself once they give you the values. Without
+     browser control, give them those same two lines to do by hand and wait.
 
 Anything under **By hand** needs a person: access someone else grants, or a missing policy
 file. Relay it as it stands.
