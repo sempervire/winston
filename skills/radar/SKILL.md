@@ -19,7 +19,8 @@ and the repo's `.winston/config.json`, repo winning).
 
 - **Which agent.** Config `advisors.radar` names a repo-specific Radar when set. Otherwise use
   the generic one: `winston:radar` in Claude Code, `radar` in Codex (installed by
-  `winston install-codex-agents`). If it is not available, say so in one line and stop.
+  `winston install-codex-agents`). If it is not available, say so in one line, end with
+  "Run /winston:doctor to see what is missing and how to fix it.", and stop.
 - **Profile.** If config `profiles.winston` names a file, read its `## /winston:radar` section,
   if any, completely and follow it; it replaces the state checks, relay and follow-up steps
   below where it covers them. Use exactly one flow; never combine the two.

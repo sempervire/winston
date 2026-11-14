@@ -37,7 +37,11 @@ changing anything:
 | `new` | A new project. | Creates the GitHub repo, both branches, the board, the config, labels and triage workflow. |
 | `adopt` | An existing repo Winston did not set up. | Fits a config to its default branch, an integration branch, a board already linked to it and its process docs; adds only what is missing. |
 
-`/winston:doctor` checks the result at any time.
+`/winston:doctor` is the one place to look afterwards, and safe to run as often as you
+like. It prints a checklist (`done`, `needs you`, `could not check`), says for each open
+item why it matters and how to fix it, and ends with a single **Next step:** line. A newer
+Winston shows up there as one more item, with the update command. If its last run left
+items open, the next session in that repo starts with one line saying so.
 
 A board Winston builds has six Status columns, in order: `New`, `Ready`, `In Progress`,
 `Verify`, `Verified`, `Done`, with fixed colours and descriptions, and a board view filtered
@@ -107,7 +111,7 @@ production approval or secret grants.
 Hooks: a production-deploy gate (blocks configured deploy actions until the owner types the
 approval phrase in that session), a secret-handling grant, session titles, a starting-branch check (a session opened in the
 main checkout on the production branch is moved to the integration branch and
-fast-forwarded, when the checkout is clean), worktree setup, a
+fast-forwarded, when the checkout is clean), worktree setup, a one-line setup reminder at session start, a
 browser-tab guard, and a once-per-turn Parallelism check nudge in Winston sessions (those
 holding chattr's `resource:orchestrator` claim).
 

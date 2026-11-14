@@ -5,33 +5,44 @@ description: Check Winston's setup in this repo and on this machine - config, Gi
 
 # /winston:doctor
 
-Run `winston doctor` from the repository root and show its output unaltered. It is read-only.
+Run `winston doctor` from the repository root and show its output unaltered. It is read-only
+and safe to run again at any time.
 
 If the `winston` command is not on PATH, say so in one line: the plugin's `bin/` is not on
 this harness's PATH, so run it by its path inside the plugin (`<plugin root>/bin/winston
 doctor`, the plugin root being two directories above this skill's directory).
 
-When it reports missing setup, or that the repo is not set up for Winston, offer
-`/winston:init` in one line. Do not run it: init asks which setup fits, writes to GitHub and
-needs its own confirmation. Its **In the browser** list (the board's intake workflows,
-which GitHub has no API for) is work `/winston:init` does through browser control: offer
-that rather than leaving it with the user. Relay its **By hand** list as it stands.
+The output is a checklist. Each line starts with a plain status:
 
-A **Triage workflow** list means the installed triage workflow is not triaging: its secrets
-are missing, or its latest runs failed. Say so plainly, since nothing else reports it, and
-offer `/winston:init`, which prints the owner's steps for the secrets. A missing `triage policy` means the policy file is
-absent or has no triage rules, so a triage run changes nothing; `/winston:init` offers a
-`TRIAGE.md` starter. `unknown` on either
-workflow line means this account cannot see them, not that they are missing. Never create a token or
-set a secret yourself.
+- `done`
+- `needs you`
+- `could not check`: this account or network cannot see it. That is not the same as
+  missing; never report it as missing.
+- `on` or `off`, for an optional tool.
 
-`off` on `triage policy blanks` means the policy still has lines that say "fill this in"
-or hold a `{{placeholder}}`; the owner writes those values.
+Under **Needs you**, every open item says why it matters and how to fix it. The last line,
+**Next step:**, names the first open item, so the user never has to choose. Offer that one
+step in plain words, one command at a time, and after they do it run `winston doctor`
+again. With nothing open it says setup is complete. `winston doctor --copy` also puts the
+next step's command on the clipboard (macOS); use it only when the user asks for that.
 
-`off` on `project permission rules` counts the allow and deny rules a Winston run uses that
-the project's `.claude/settings.json` lacks (deny wins over allow). The fix is one command the owner runs,
-`winston permissions --apply`; relay it, never run it yourself.
+Who does what:
 
-When the output ends with an **Update Winston:** line, a newer version is out. Give the
-user that line as it stands, command included: they run it and restart. Do not run the
-update yourself; it replaces the hooks and skills this session is running on.
+- A fix that reads `winston init --mode adopt` is setup `/winston:init` creates. Offer
+  `/winston:init` in one line. Do not run it: init asks which setup fits, writes to GitHub
+  and needs its own confirmation.
+- The board's two intake workflows (GitHub has no API for them) are work `/winston:init`
+  does through browser control: offer that rather than leaving it with the user.
+- **triage workflow secrets** and **triage workflow runs** mean the installed triage
+  workflow is not triaging. Say so plainly, since nothing else reports it, and relay the
+  numbered steps. Never create a token or set a secret yourself.
+- **triage policy**: the policy file is absent or has no triage rules, so a triage run
+  changes nothing; `/winston:init` offers a `TRIAGE.md` starter. **triage policy blanks**:
+  lines that still say "fill this in". **triage risk tiers**: the starter's example tiers
+  have not been rewritten for this repo; offer to propose tiers from reading the repo, and
+  write them only after the user approves.
+- **project permission rules**: one command the owner runs, `winston permissions --apply`
+  (deny wins over allow). Relay it, never run it yourself.
+- **Winston version**: a newer version is out. Give the user the update line as it stands,
+  command included: they run it and restart. Do not run the update yourself; it replaces
+  the hooks and skills this session is running on.

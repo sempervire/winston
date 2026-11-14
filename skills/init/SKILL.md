@@ -103,6 +103,10 @@ it. init never overwrites an existing `TRIAGE.md` or edits the doc the config po
 Anything under **By hand** needs a person: access someone else grants, or a missing policy
 file. Relay it as it stands.
 
+`winston init` is safe to run again: it shows what is left, skips what is done, and never
+overwrites a finished step. Whenever it stops on something missing, point the user at
+`/winston:doctor`, the one checklist of what is open and how to fix it.
+
 If the `winston` command is not on PATH, run it by its path inside the plugin
 (`<plugin root>/bin/winston`, the plugin root being two directories above this skill's
 directory). If init fails partway, report what it did and what it did not; do not retry or
