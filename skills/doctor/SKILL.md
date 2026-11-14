@@ -13,5 +13,6 @@ doctor`, the plugin root being two directories above this skill's directory).
 
 When it reports missing setup, or that the repo is not set up for Winston, offer
 `/winston:init` in one line. Do not run it: init asks which setup fits, writes to GitHub and
-needs its own confirmation. Relay its **By hand** list to the user as it stands: those are
-steps GitHub has no API for, such as turning on the board's intake workflows.
+needs its own confirmation. Its **In the browser** list (the board's intake workflows,
+which GitHub has no API for) is work `/winston:init` does through browser control: offer
+that rather than leaving it with the user. Relay its **By hand** list as it stands.
