@@ -200,6 +200,8 @@ function fakeGh(s) {
     "secret list") if [ -f "${s.tmp}/secrets-denied" ]; then echo "HTTP 403: Resource not accessible" >&2; exit 1; fi; cat "${s.tmp}/secrets" 2>/dev/null; true;;
     "secret set"|"workflow run") echo "never run by winston" >&2; exit 1;;
     "run list") cat "${s.tmp}/runs" 2>/dev/null || exit 1;;
+    "issue list") if [ -f "${s.tmp}/issues-denied" ]; then exit 1; fi; cat "${s.tmp}/issues-bare" 2>/dev/null; true;;
+    "issue edit") : > "${s.tmp}/issues-bare";;
     "api graphql") case "$*" in
       *createProjectV2View*) echo '{"data":{"createProjectV2View":{"projectV2View":{"id":"VIEW1"}}}}';;
       *updateProjectV2View*) echo '{}';;
@@ -496,6 +498,101 @@ test('a second workflow that triages new issues is the owner\'s choice: doctor r
   assert.ok(existsSync(ours) && !existsSync(theirs));
 });
 
+test('a new issue gets the current phase\'s milestone: doctor reports hidden issues, init sets the phase and installs the workflow', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  existingRepo(s);
+  s.git('push', '-q', 'origin', 'main:staging');
+  mkdirSync(join(s.repo, '.winston'));
+  const configPath = join(s.repo, '.winston/config.json');
+  const write = (extra = {}) => writeFileSync(configPath, JSON.stringify({ branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, ...extra }));
+  const config = () => JSON.parse(readFileSync(configPath, 'utf8'));
+  const filtered = (...names) => names.map((name, i) => ({ ...KANBAN[0], id: `VIEW${i}`, name, filter: `milestone:"${name}" is:open` }));
+  write();
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: filtered('Pilot') }));
+  writeFileSync(join(s.tmp, 'milestones'), 'Pilot\nLater\n');
+  writeFileSync(join(s.tmp, 'labels'), 'risk: low\nrisk: medium\nrisk: high\nauto-merge\nauto-verify\nhuman-verify\n');
+  writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
+  writeFileSync(join(s.repo, 'TRIAGE.md'), '# Triage policy\n');
+  const dir = join(s.repo, '.github/workflows');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'triage-on-new-issue.yml'), '');
+  writeFileSync(join(s.tmp, 'issues-bare'), '7\n13\n');
+  const wf = join(dir, 'set-issue-phase.yml');
+
+  const doc = s.cli(['doctor']);
+  assert.equal(doc.status, 1);
+  assert.match(doc.stdout, /^needs you\s+issue phase\s+— new issues get no milestone, so a board view filtered to "Pilot" never shows them$/m);
+  assert.match(doc.stdout, /^needs you\s+issues without a milestone\s+— 2 open issues have no milestone and are hidden from a board view filtered to "Pilot"$/m);
+  assert.match(doc.stdout, /\d\. issue phase\n   Why: A board view filtered to a milestone hides[^\n]+\n   Fix:\n     winston init --mode adopt   \([^\n]*give every new issue the milestone "Pilot"/);
+
+  const plan = s.cli(['init', '--mode', 'adopt']);
+  assert.match(plan.stdout, /- give every new issue the milestone "Pilot": set "phase" to it in .*config\.json, and write .*set-issue-phase\.yml \(it takes effect once it and the config are committed to the default branch/);
+  assert.match(plan.stdout, /- set the milestone "Pilot" on the 2 open issues that have none \(#7, #13\), so the board view shows them; an issue that has a milestone is not touched/);
+  assert.ok(!existsSync(wf) && config().phase === undefined, 'a plan changes nothing');
+  assert.doesNotMatch(s.calls(), /issue edit/);
+
+  const made = s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.equal(made.status, 0, made.stdout + made.stderr);
+  assert.equal(config().phase, 'Pilot');
+  assert.deepEqual(config().board, { owner: 'acme', number: 1 }, 'the rest of the config is as it was');
+  assert.equal(readFileSync(wf, 'utf8'), readFileSync(join(ROOT, 'templates/set-issue-phase.yml'), 'utf8'));
+  assert.match(s.calls(), /issue edit 7 --milestone Pilot\n[^]*issue edit 13 --milestone Pilot\n/);
+  const after = s.cli(['doctor']);
+  assert.match(after.stdout, /^done\s+issue phase\s+— new issues get the milestone "Pilot"$/m);
+  assert.doesNotMatch(after.stdout, /issues without a milestone|triage workflow conflicts/, 'nothing reported when none is hidden; the phase workflow is not a second triage');
+  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /very required check passes\. Nothing was changed/);
+
+  // The phase is one line: a milestone that is not open is the owner's to correct.
+  write({ phase: 'Gone' });
+  assert.match(s.cli(['doctor']).stdout, /^needs you\s+issue phase\s+— phase is "Gone", which is not an open milestone$/m);
+  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /By hand:\n\s+- issue phase: set "phase" in .*config\.json to the current milestone \(open: Pilot, Later\), or to false/);
+
+  // Views filtered to several milestones: which is current is the owner's to say.
+  write();
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: filtered('Pilot', 'Later') }));
+  const several = s.cli(['doctor']);
+  assert.match(several.stdout, /^needs you\s+issue phase\s+— the board's views filter to several milestones \(Pilot, Later\) and none is named as current$/m);
+  assert.match(several.stdout, /add "phase": "<one of Pilot, Later>" to /);
+  assert.doesNotMatch(s.cli(['init', '--mode', 'adopt', '--yes']).stdout, /give every new issue/);
+  write({ phase: 'Later' });
+  assert.match(s.cli(['doctor']).stdout, /^done\s+issue phase\s+— new issues get the milestone "Later"$/m);
+
+  // Issues that cannot be listed are unknown, never clean; phase: false goes without.
+  writeFileSync(join(s.tmp, 'issues-denied'), '');
+  assert.match(s.cli(['doctor']).stdout, /^could not check\s+issues without a milestone/m);
+  write({ phase: false });
+  assert.doesNotMatch(s.cli(['doctor']).stdout, /issue phase|issues without a milestone/);
+});
+
+test('with no board view yet, the phase is the milestone init is about to filter the new view to', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  existingRepo(s);
+  s.git('push', '-q', 'origin', 'main:staging');
+  mkdirSync(join(s.repo, '.winston'));
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 } }));
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE }));
+  writeFileSync(join(s.tmp, 'issues-bare'), '4\n');
+  const made = s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.equal(made.status, 0, made.stdout + made.stderr);
+  assert.match(made.stdout, /done\s+create a board view with Status columns, filtered to a milestone/);
+  assert.match(made.stdout, /done\s+give every new issue the milestone "Phase 1\.0"/);
+  assert.match(made.stdout, /done\s+set the milestone "Phase 1\.0" on the 1 open issue that has none \(#4\), so the board view shows it/);
+  assert.equal(JSON.parse(readFileSync(join(s.repo, '.winston/config.json'), 'utf8')).phase, 'Phase 1.0');
+  assert.match(s.calls(), /issue edit 4 --milestone Phase 1\.0\n/);
+});
+
+test('the phase workflow runs on a new issue and daily, needs no secret, and never changes a set milestone', () => {
+  const text = readFileSync(join(ROOT, 'templates/set-issue-phase.yml'), 'utf8');
+  assert.equal(firesOnNewIssue(text), true);
+  assert.match(text, /schedule:\n\s+- cron:/);
+  assert.match(text, /permissions:\n\s+contents: read\n\s+issues: write\n/);
+  assert.doesNotMatch(text, /secrets\./);
+  assert.match(text, /if \[ -z "\$has" \]; then\n\s+gh issue edit "\$n" --milestone "\$phase"/);
+  assert.doesNotMatch(text.slice(text.indexOf('run: |')), /\$\{\{/, 'nothing is interpolated into the script');
+});
+
 test('init --mode adopt asks which board when several are linked, and refuses a repo with no origin', (t) => {
   const s = sandbox(t);
   fakeGh(s);
@@ -526,7 +623,7 @@ test('init --mode join reports access as the joiner\'s, repo gaps as the owner\'
   assert.equal(s.cli(['init', '--mode', 'join']).status, 1, 'no config: not a Winston repo');
   existingRepo(s);
   mkdirSync(join(s.repo, '.winston'));
-  const repoConfig = JSON.stringify({ owner: 'Dana', branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 } });
+  const repoConfig = JSON.stringify({ owner: 'Dana', branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, phase: false });
   writeFileSync(join(s.repo, '.winston/config.json'), repoConfig);
 
   const plan = s.cli(['init', '--mode', 'join']);
@@ -745,7 +842,7 @@ test('doctor flags a policy with no triage rules; init writes a starter, repoint
   s.git('push', '-q', 'origin', 'main:staging');
   mkdirSync(join(s.repo, '.winston'));
   const configPath = join(s.repo, '.winston/config.json');
-  const write = (policy) => writeFileSync(configPath, JSON.stringify({ owner: 'Dana', branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, triage: { policy, workflow: 'triage-on-new-issue.yml' } }));
+  const write = (policy) => writeFileSync(configPath, JSON.stringify({ owner: 'Dana', branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, phase: false, triage: { policy, workflow: 'triage-on-new-issue.yml' } }));
 
   // The repo's rules doc is named as the policy and says nothing about triage.
   write('AGENTS.md');
@@ -992,7 +1089,7 @@ function gappedRepo(s) {
   writeFileSync(join(s.repo, '.github/workflows/triage-on-new-issue.yml'), '');
   s.git('push', '-q', 'origin', 'main:staging');
   mkdirSync(join(s.repo, '.winston'));
-  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ owner: 'Dana', branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, triage: { policy: 'AGENTS.md', workflow: 'triage-on-new-issue.yml' } }));
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ owner: 'Dana', branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, phase: false, triage: { policy: 'AGENTS.md', workflow: 'triage-on-new-issue.yml' } }));
 }
 const lastLine = (out) => out.trimEnd().split('\n').at(-1);
 

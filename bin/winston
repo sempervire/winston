@@ -90,6 +90,8 @@ const TRIAGE_CHOICES = ['keep', 'replace', 'both']
 const PUSH_TIMEOUT = 600000
 const DEFAULT_TRIAGE_WORKFLOW = 'triage-on-new-issue.yml'
 const DEFAULT_MILESTONE = 'Phase 1.0'
+// Sets the current phase's milestone on a new issue (config `phase`).
+const PHASE_WORKFLOW = 'set-issue-phase.yml'
 const DEFAULT_POLICY = 'TRIAGE.md'
 /** Where every stop on a missing prerequisite sends the reader. */
 export const DOCTOR_POINTER = 'Run /winston:doctor to see what is missing and how to fix it.'
@@ -125,7 +127,7 @@ const BOARD_QUERY = `query($owner:String!,$number:Int!){ repositoryOwner(login:$
   ... on Organization{ projectV2(number:$number){ ...F } } ... on User{ projectV2(number:$number){ ...F } } } }
 fragment F on ProjectV2 { id title fields(first:100){ nodes{ ... on ProjectV2FieldCommon{ id name } ... on ProjectV2SingleSelectField{ options{ id name color description } } } }
   workflows(first:50){ nodes{ name enabled } }
-  views(first:50){ nodes{ id name layout fields(first:50){ nodes{ ... on ProjectV2FieldCommon{ id name } } }
+  views(first:50){ nodes{ id name layout filter fields(first:50){ nodes{ ... on ProjectV2FieldCommon{ id name } } }
     groupByFields(first:10){ nodes{ ... on ProjectV2FieldCommon{ name } } } verticalGroupByFields(first:10){ nodes{ ... on ProjectV2FieldCommon{ name } } } } } }`
 
 const CREATE_VIEW_MUTATION = `mutation($projectId:ID!,$name:String!){ createProjectV2View(input:{projectId:$projectId,name:$name,layout:BOARD_LAYOUT}){ projectV2View{ id } } }`
@@ -247,6 +249,12 @@ export function policyBlanks(file) {
   return text.split('\n').flatMap((line, i) => (/\{\{[^}]*\}\}/.test(line) || line.includes(FILL_IN) ? [`line ${i + 1}: ${line.trim().slice(0, 140)}`] : []))
 }
 
+/** The open issues that have no milestone, by number; null when gh cannot list them. */
+function issuesWithoutMilestone(root) {
+  const r = run('gh', ['issue', 'list', '--state', 'open', '--limit', '500', '--json', 'number,milestone', '--jq', '.[] | select(.milestone == null) | .number'], { cwd: root })
+  return r.ok ? r.out.split('\n').filter(Boolean) : null
+}
+
 function writeTriageWorkflow(wf) {
   mkdirSync(dirname(wf), { recursive: true })
   copyFileSync(join(ROOT, 'templates', 'triage-on-new-issue.yml'), wf)
@@ -295,7 +303,7 @@ function otherTriageWorkflows(root, wfName) {
   } catch {
     return []
   }
-  return names.filter((n) => /\.ya?ml$/.test(n) && n !== wfName).sort().filter((n) => {
+  return names.filter((n) => /\.ya?ml$/.test(n) && n !== wfName && n !== PHASE_WORKFLOW).sort().filter((n) => {
     try {
       const text = readFileSync(join(dir, n), 'utf8')
       return firesOnNewIssue(text) && /triage|risk:/i.test(text)
@@ -766,12 +774,75 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
           },
         })
       }
-      const hasMilestone = !planned?.noRepo && openMilestones(root).length > 0
+      const milestones = planned?.noRepo ? [] : openMilestones(root)
+      const hasMilestone = milestones.length > 0
       add({
         name: 'starting milestone', state: hasMilestone ? 'ok' : 'missing',
         detail: hasMilestone ? '' : 'no open milestone', board: true,
         fix: !hasMilestone && { plan: `create milestone "${DEFAULT_MILESTONE}" on the repo`, run: () => { if (!openMilestones(root).length) createMilestone(root, DEFAULT_MILESTONE) } },
       })
+      // A view filtered to a milestone hides every issue that has none, and a new issue
+      // has none. The current phase (config `phase`) names the milestone a workflow gives
+      // each new issue. `phase: false` is the owner's choice to go without.
+      if (config.phase !== false) {
+        const set = typeof config.phase === 'string' && config.phase.trim() ? config.phase : null
+        const filters = [...new Set(kanban.map((v) => /milestone:(?:"([^"]+)"|(\S+))/.exec(v.filter ?? '')).filter(Boolean).map((m) => m[1] ?? m[2]))]
+        // The phase to propose: the one milestone the board's views filter to; with no
+        // board view yet, the one init is about to filter its new view to; else the
+        // repo's only open milestone. Several candidates are the owner's to choose from.
+        const target = set ?? (filters.length === 1 ? filters[0] : filters.length > 1 ? null : !kanban.length ? milestones[0] ?? DEFAULT_MILESTONE : milestones.length === 1 ? milestones[0] : null)
+        const phaseWf = join(root, '.github', 'workflows', PHASE_WORKFLOW)
+        const gone = set && !planned?.noRepo && milestones.length > 0 && !milestones.includes(set)
+        if (gone) {
+          add({
+            name: 'issue phase', state: 'missing', detail: `phase is "${set}", which is not an open milestone`,
+            hand: `set "phase" in ${configPath} to the current milestone (open: ${milestones.join(', ')}), or to false to leave new issues without one`,
+          })
+        } else if (target) {
+          const done = set && existsSync(phaseWf)
+          add({
+            name: 'issue phase', state: done ? 'ok' : 'missing',
+            detail: done ? `new issues get the milestone "${set}"` : `new issues get no milestone, so a board view filtered to "${target}" never shows them`,
+            fix: !done && {
+              plan: `give every new issue the milestone "${target}": ${set ? '' : `set "phase" to it in ${configPath}, and `}write ${phaseWf} (it takes effect once it and the config are committed to the default branch; to change phase later, edit that one config line)`,
+              run: () => {
+                if (!set) {
+                  const data = JSON.parse(readFileSync(configPath, 'utf8'))
+                  writeFileSync(configPath, JSON.stringify({ ...data, phase: target }, null, 2) + '\n')
+                }
+                if (!existsSync(phaseWf)) {
+                  mkdirSync(dirname(phaseWf), { recursive: true })
+                  copyFileSync(join(ROOT, 'templates', PHASE_WORKFLOW), phaseWf)
+                }
+              },
+            },
+          })
+          const bare = planned?.noRepo ? [] : issuesWithoutMilestone(root)
+          if (bare === null) {
+            add({ name: 'issues without a milestone', required: false, state: 'unknown', detail: 'cannot list the repository\'s issues' })
+          } else if (bare.length) {
+            const many = bare.length === 1 ? 'issue has' : 'issues have'
+            add({
+              name: 'issues without a milestone', state: 'missing',
+              detail: `${bare.length} open ${many} no milestone and ${bare.length === 1 ? 'is' : 'are'} hidden from a board view filtered to "${target}"`,
+              fix: {
+                plan: `set the milestone "${target}" on the ${bare.length} open ${many.replace(/ ha(s|ve)$/, '')} that ${bare.length === 1 ? 'has' : 'have'} none (${bare.slice(0, 12).map((n) => `#${n}`).join(', ')}${bare.length > 12 ? ', …' : ''}), so the board view shows ${bare.length === 1 ? 'it' : 'them'}; an issue that has a milestone is not touched`,
+                run: () => {
+                  for (const n of issuesWithoutMilestone(root) ?? []) {
+                    const r = run('gh', ['issue', 'edit', n, '--milestone', target], { cwd: root })
+                    if (!r.ok) throw new Error(`gh issue edit ${n}: ${r.err}`)
+                  }
+                },
+              },
+            })
+          }
+        } else if (filters.length > 1) {
+          add({
+            name: 'issue phase', required: false, state: 'off', detail: `the board's views filter to several milestones (${filters.join(', ')}) and none is named as current`,
+            problem: `new issues get no milestone, so no filtered view shows them. Say which milestone is current: add "phase": "<one of ${filters.join(', ')}>" to ${configPath} (or "phase": false to go without), then run winston init --mode adopt`,
+          })
+        }
+      }
       // New issues reach the board, at the intake status, through two of the board's own
       // workflows. GitHub's API can delete a project workflow but not create, edit or
       // enable one, so these are `browser` steps: done on the board's web page, by the
@@ -976,6 +1047,8 @@ const WHY = [
   [/^board (Status|Priority)/, 'Winston moves work through these statuses and sorts it by priority.'],
   [/^board kanban view/, 'A board view grouped by status is how you see the work at a glance.'],
   [/^starting milestone/, 'The board view is filtered to a milestone, so there must be one.'],
+  [/^issue phase/, 'A board view filtered to a milestone hides an issue that has none, and a new issue has none.'],
+  [/^issues without a milestone/, 'They are on the board and missing from the view filtered to the current milestone.'],
   [/^board (auto-adds|sets)/, 'Without this a new issue never shows up on the board.'],
   [/^triage labels/, 'Triage records its judgment with these labels.'],
   [/^triage policy blanks/, 'Triage reads these lines as they stand, so a blank becomes part of the rule.'],

@@ -68,6 +68,14 @@ only by you, in your own terminal.
 Until both are set new issues are not triaged automatically; `winston doctor` reports the
 secrets and whether the workflow's latest runs failed.
 
+The board view is filtered to one milestone, and a new issue has none, so it would reach
+the board and never show in that view. init sets `phase` in the config to that milestone
+and installs `set-issue-phase.yml`, which gives every new issue the milestone (and, once a
+day, any open issue with none). It uses the workflow's own token, needs no secret, never
+changes a milestone that is set, and runs from the default branch only. Doctor reports
+open issues that have no milestone, and init sets it on them. Moving to the next phase is
+one edit: the `phase` line.
+
 A repo that already has a workflow triaging every new issue would get a second one. Doctor
 reports it as `triage workflow conflicts`, and init writes nothing until the owner chooses:
 `--triage keep` (theirs stays, Winston installs none and records `triage.workflow: false`),
@@ -144,6 +152,8 @@ Top-level keys merge shallowly; the repo wins. See `templates/config.sample.json
 | `branches` | `integration` and `production` branch names. |
 | `board` | Projects v2 owner, number, statuses, priority field. |
 | `processDocs`, `triage.policy` | The repo docs whose rules win over Winston's. |
+| `phase` | The current milestone, given to every new issue. `false` to go without. |
+| `triage.workflow`, `triage.alongside` | The triage workflow's file name, or `false` when another workflow is the repo's triage; other triage workflows kept knowingly. |
 | `profiles.winston` | A repo-specific profile, read after each skill (one `## /winston:<skill>` section per skill). |
 | `advisors` | Repo-specific agent names for Debbie, Sheldon and Radar. |
 | `deployGate` | Approval phrase and the guarded actions (`pr-merge` into a base, `workflow-run`). |

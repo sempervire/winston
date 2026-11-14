@@ -155,6 +155,19 @@ show them to the user; write them into `TRIAGE.md` only after an explicit yes. T
 the user to review the file and commit it to the default branch, where the workflow reads
 it. init never overwrites an existing `TRIAGE.md` or edits the doc the config pointed at.
 
+A plan line that gives every new issue a milestone is the **issue phase**. The board view
+is filtered to one milestone, and a new issue has none, so without this it reaches the
+board and never appears in that view. init sets `phase` in the config to that milestone
+and writes `.github/workflows/set-issue-phase.yml`, which sets it on each new issue and
+once a day on any open issue with none; it needs no secret and never changes a milestone
+that is set. A second line sets the milestone on the open issues that have none now. Say
+in plain words that both only take effect once the workflow and the config are committed
+to the default branch, and offer to commit them. To move to the next phase the owner
+edits that one `phase` line. If doctor says the board's views filter to several
+milestones, ask the user which is the current one in a question box, write it as `phase`
+in `.winston/config.json` after their answer, and rerun the plan. `"phase": false` means
+the owner chose to go without.
+
 Anything under **By hand** needs a person: access someone else grants, or a missing policy
 file. Relay it as it stands.
 
