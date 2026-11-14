@@ -182,6 +182,31 @@ function createPriorityField(owner, number, name) {
 
 const openMilestones = (root) => run('gh', ['api', '--method', 'GET', 'repos/{owner}/{repo}/milestones', '-f', 'state=open', '--jq', '.[].title'], { cwd: root }).out.split('\n').filter(Boolean)
 
+const INTAKE_BOT = 'github-project-automation[bot]'
+
+/**
+ * Whether the board's two intake workflows have actually run recently, read from
+ * `github-project-automation[bot]`'s REST timeline on the repo's most recent issues: only
+ * that bot's `added_to_project_v2` and `project_v2_item_status_changed` events come from
+ * them. A second source, since the GraphQL `ProjectV2.workflows` listing can say a workflow
+ * is off while GitHub is visibly still running it (#45). `checked` is false when the repo
+ * has no issues yet to prove it either way.
+ */
+function intakeFromTimeline(root) {
+  const issues = run('gh', ['api', '--method', 'GET', 'repos/{owner}/{repo}/issues', '-f', 'state=all', '-f', 'per_page=5', '--jq', '.[].number'], { cwd: root })
+  const numbers = issues.ok ? issues.out.split('\n').filter(Boolean) : []
+  const result = { checked: numbers.length > 0, addedToProject: null, statusChanged: null }
+  for (const n of numbers) {
+    const timeline = run('gh', ['api', `repos/{owner}/{repo}/issues/${n}/timeline`, '--jq', `.[] | select(.actor.login=="${INTAKE_BOT}") | .event`], { cwd: root })
+    if (!timeline.ok) continue
+    const events = new Set(timeline.out.split('\n').filter(Boolean))
+    if (result.addedToProject === null && events.has('added_to_project_v2')) result.addedToProject = n
+    if (result.statusChanged === null && events.has('project_v2_item_status_changed')) result.statusChanged = n
+    if (result.addedToProject !== null && result.statusChanged !== null) break
+  }
+  return result
+}
+
 function createMilestone(root, title) {
   const r = run('gh', ['api', 'repos/{owner}/{repo}/milestones', '-f', `title=${title}`], { cwd: root })
   if (!r.ok) throw new Error(`create milestone ${title}: ${r.err}`)
@@ -848,18 +873,28 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
       // workflows. GitHub's API can delete a project workflow but not create, edit or
       // enable one, so these are `browser` steps: done on the board's web page, by the
       // agent through browser control (skills/init) or by a person. The API shows only
-      // whether each is on, not what it is set to do.
+      // whether each is on, not what it is set to do — and can say a workflow is off while
+      // it is visibly still running (#45), so a workflow the API says is off gets a second
+      // look at the bot's own timeline before being called missing.
       const intake = (config.board.statuses ?? DEFAULT_STATUSES)[0]
       const enabled = (name) => (project.workflows?.nodes ?? []).some((w) => w?.enabled && (w.name === name || (name === 'Auto-add to project' && /^Auto-add(?! sub-issues)/.test(w.name))))
+      const apiOn = { add: enabled('Auto-add to project'), status: enabled('Item added to project') }
+      const timeline = !planned?.newBoard && (!apiOn.add || !apiOn.status) ? intakeFromTimeline(root) : null
+      const stateOf = (apiSays, botSays) => (apiSays || botSays ? 'ok' : timeline && !timeline.checked ? 'unknown' : 'missing')
       add({
-        name: 'board auto-adds new issues', state: enabled('Auto-add to project') ? 'ok' : 'missing',
-        detail: enabled('Auto-add to project') ? '' : 'the board\'s "Auto-add to project" workflow is off', board: true,
+        name: 'board auto-adds new issues', state: stateOf(apiOn.add, timeline?.addedToProject),
+        detail: apiOn.add ? '' : timeline?.addedToProject ? `on (confirmed by issue #${timeline.addedToProject}'s timeline)`
+          : timeline && !timeline.checked ? 'could not check — file one test issue and rerun doctor' : 'the board\'s "Auto-add to project" workflow is off',
+        board: true,
         browser: true,
         hand: `open ${page}, choose "Auto-add to project", click Edit, pick this repository and set the filter to is:issue, then click "Save and turn on workflow"`,
       })
       add({
-        name: `board sets ${intake} on added items`, state: enabled('Item added to project') ? 'ok' : 'missing',
-        detail: enabled('Item added to project') ? `on; GitHub's API does not show which Status it sets` : 'the board\'s "Item added to project" workflow is off', board: true,
+        name: `board sets ${intake} on added items`, state: stateOf(apiOn.status, timeline?.statusChanged),
+        detail: apiOn.status ? `on; GitHub's API does not show which Status it sets`
+          : timeline?.statusChanged ? `on (confirmed by issue #${timeline.statusChanged}'s timeline); GitHub's API does not show which Status it sets`
+          : timeline && !timeline.checked ? 'could not check — file one test issue and rerun doctor' : 'the board\'s "Item added to project" workflow is off',
+        board: true,
         browser: true,
         hand: `open ${page}, choose "Item added to project", click Edit, under Set value choose Status: ${intake}, then click "Save and turn on workflow"`,
       })
@@ -1100,6 +1135,18 @@ function printSteps(items) {
     console.log('\nBy hand:')
     for (const c of hand) console.log(`  - ${c.name}: ${c.hand || c.detail}`)
   }
+}
+
+/**
+ * Browser checks doctor could not confirm either way (state `unknown`, e.g. no issues yet
+ * to read a timeline from, #45): never required, never performed automatically, but still
+ * worth the owner's or agent's knowledge that the step exists, in case it is genuinely off.
+ */
+function printMaybe(list) {
+  const maybe = list.filter((c) => c.browser && c.state === 'unknown')
+  if (!maybe.length) return
+  console.log('\nCould not confirm (may already be on; optional, in the browser):')
+  for (const c of maybe) console.log(`  - ${c.name}: ${c.hand}`)
 }
 
 /**
@@ -1411,6 +1458,7 @@ function setup(cwd, sit, opts) {
   if (!boot && !fixes.length && !hand.length) {
     console.log(`${ownerSteps(list) ? 'Every required check passes' : 'Nothing to do: every required check passes'}. Nothing was changed. Safe to run again.`)
     printChoice(list)
+    printMaybe(list)
     printOwnerSteps(list)
     return 0
   }
@@ -1422,6 +1470,7 @@ function setup(cwd, sit, opts) {
     }
     printHand(hand)
     printChoice(list)
+    printMaybe(list)
     printOwnerSteps(list)
     for (const n of [...(boot?.notes ?? []), ...fixes.map((c) => c.fix.note).filter(Boolean)]) console.log(`\nNote: ${n}`)
     if (plans.length) console.log('\nNothing was changed. Rerun with --yes to do these. Safe to run again: steps already done are skipped, and nothing existing is overwritten.')
@@ -1458,6 +1507,7 @@ function setup(cwd, sit, opts) {
   }
   printHand(missing(after).filter((c) => !c.fix))
   printChoice(after)
+  printMaybe(after)
   if (written) printBlanks(written, policyBlanks(written))
   printOwnerSteps(after)
   for (const n of [...(boot?.notes ?? []), ...ranNotes]) console.log(`\nNote: ${n}`)
