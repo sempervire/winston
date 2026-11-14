@@ -830,8 +830,8 @@ const WHY = [
   [/^starting milestone/, 'The board view is filtered to a milestone, so there must be one.'],
   [/^board (auto-adds|sets)/, 'Without this a new issue never shows up on the board.'],
   [/^triage labels/, 'Triage records its judgment with these labels.'],
-  [/^triage policy/, 'Triage takes every rule from this file. Without rules a triage run finishes and changes nothing.'],
   [/^triage policy blanks/, 'Triage reads these lines as they stand, so a blank becomes part of the rule.'],
+  [/^triage policy/, 'Triage takes every rule from this file. Without rules a triage run finishes and changes nothing.'],
   [/^triage risk tiers/, 'The example tiers describe no real repository, so triage cannot judge risk here until they are rewritten.'],
   [/^triage-on-new-issue workflow/, 'This is what triages a new issue without anyone asking.'],
   [/^triage workflow secrets/, 'The workflow cannot sign in to GitHub or Claude without them, so new issues stay untriaged.'],
@@ -873,7 +873,11 @@ function printSteps(items) {
   }
 }
 
-/** The installed version against the latest, asked now. Never a required check: a stale Winston still works. */
+/**
+ * The installed version against the latest. The answer comes from the update check's
+ * cache, so GitHub is asked at most once a day (once an hour after a failed lookup).
+ * Never a required check: a stale Winston still works.
+ */
 function versionCheck(cwd) {
   const have = installedVersion()
   const asked = run(process.execPath, [join(ROOT, 'lib', 'update.mjs')], { timeout: 8000 })
@@ -919,6 +923,7 @@ function doctor(cwd, copy = false) {
   }
   const code = missing(list).length ? 1 : 0
   if (!open.length) {
+    if (copy) console.log('\nNothing was copied: there is no next step.')
     console.log(`\nSetup is complete: nothing needs you.${blind.length ? ` ${blind.length} ${blind.length === 1 ? 'item' : 'items'} could not be checked from this account or network.` : ''}`)
     return code
   }
@@ -933,7 +938,11 @@ function doctor(cwd, copy = false) {
   }
   const { command } = fixes[0]
   let copied = ''
-  if (copy && command && process.platform === 'darwin') copied = spawnSync('pbcopy', { input: command }).status === 0 ? '   (copied to the clipboard)' : ''
+  if (copy) {
+    const done = command && process.platform === 'darwin' && spawnSync('pbcopy', { input: command }).status === 0
+    if (done) copied = '   (copied to the clipboard)'
+    else console.log(`\nNothing was copied: ${!command ? 'the next step is several steps, not one command' : process.platform !== 'darwin' ? '--copy works on macOS only' : 'pbcopy did not run'}.`)
+  }
   console.log(`\nNext step: ${open[0].name} – ${command ? `run: ${command}${copied}` : `follow the steps under 1 above`}. Then run winston doctor again.`)
   return code
 }
@@ -1034,7 +1043,7 @@ function bootstrap(cwd, sit, opts) {
   else {
     heads = git('ls-remote', '--heads', 'origin').out.split('\n').map((l) => l.split('refs/heads/')[1]).filter(Boolean)
     production = git('ls-remote', '--symref', 'origin', 'HEAD').out.match(/^ref: refs\/heads\/(\S+)\s+HEAD/m)?.[1]
-    if (!production) throw new Error('cannot read origin\'s default branch (is the remote empty?)')
+    if (!production) throw new Error(`cannot read origin's default branch (is the remote empty?)\n${DOCTOR_POINTER}`)
   }
   const integration = opts.integration || INTEGRATION_NAMES.find((b) => b !== production && heads.includes(b)) || 'staging'
 
@@ -1044,14 +1053,14 @@ function bootstrap(cwd, sit, opts) {
     const [owner, number] = opts.board.split('/')
     if (!owner || !/^\d+$/.test(number ?? '')) throw new Error(`--board takes <owner>/<number> or new, got: ${opts.board}`)
     board = { owner, number: Number(number) }
-    if (!fetchBoard(owner, board.number).project) throw new Error(`--board ${opts.board}: no such project, or this account has no access to it`)
+    if (!fetchBoard(owner, board.number).project) throw new Error(`--board ${opts.board}: no such project, or this account has no access to it\n${DOCTOR_POINTER}`)
   } else if (!opts.board && !noRepo) {
     const linked = run('gh', ['api', 'graphql', '-f', `query=${LINKED_BOARDS_QUERY}`, '-f', `owner=${ghOwner}`, '-f', `name=${name}`])
     let nodes = []
     try {
       nodes = JSON.parse(linked.out).data.repository.projectsV2.nodes.filter((n) => n && !n.closed)
     } catch {
-      throw new Error(`cannot list the projects linked to ${slug}: ${linked.err || linked.out}`)
+      throw new Error(`cannot list the projects linked to ${slug}: ${linked.err || linked.out}\n${DOCTOR_POINTER}`)
     }
     if (nodes.length > 1) return { boards: nodes.map((n) => ({ owner: n.owner.login, number: n.number, title: n.title })) }
     if (nodes.length === 1) board = { owner: nodes[0].owner.login, number: nodes[0].number }

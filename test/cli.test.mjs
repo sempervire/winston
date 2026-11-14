@@ -377,7 +377,7 @@ test('init --mode adopt asks which board when several are linked, and refuses a 
   rmSync(join(s.tmp, 'board.json'));
   const gone = s.cli(['init', '--mode', 'adopt', '--board', 'acme/99', '--yes']);
   assert.equal(gone.status, 1, 'a board this account cannot read is refused before anything is written');
-  assert.match(gone.stderr, /--board acme\/99: no such project/);
+  assert.match(gone.stderr, /--board acme\/99: no such project[^\n]*\nRun \/winston:doctor to see what is missing and how to fix it\.\n$/);
   assert.ok(!existsSync(join(s.repo, '.winston')));
   writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
   assert.match(s.cli(['init', '--mode', 'adopt', '--board', 'new']).stdout, /create a private GitHub Project "thing" under acme/);
@@ -548,7 +548,9 @@ test('doctor says when a newer Winston is out, with the command, and stays quiet
   const s = sandbox(t);
   fakeGh(s);
   const have = JSON.parse(readFileSync(join(ROOT, '.claude-plugin/plugin.json'), 'utf8')).version;
-  const latest = (v) => writeFileSync(join(s.tmp, 'latest.json'), JSON.stringify({ version: v }));
+  // doctor reads the update check's cached answer; forgetting it stands in for a day passing.
+  const cache = join(s.home, 'state/update-check/latest.json');
+  const latest = (v) => { rmSync(cache, { force: true }); writeFileSync(join(s.tmp, 'latest.json'), JSON.stringify({ version: v })); };
 
   const unknown = s.cli(['doctor']);
   assert.match(unknown.stdout, new RegExp(`^could not check\\s+Winston version\\s+— ${have} installed; could not reach GitHub`, 'm'));
@@ -565,6 +567,11 @@ test('doctor says when a newer Winston is out, with the command, and stays quiet
   assert.match(old.stdout, /\d\. Winston version\n   Why: [^\n]+\n   Fix:\n     To update, run `claude plugin marketplace update winston && claude plugin update winston@winston`, then restart Claude Code[^\n]*\n     Winston never updates itself/);
   assert.doesNotMatch(s.calls(), /plugin update/, 'doctor never updates');
   assert.equal(s.cli(['doctor', '--fix']).status, 1, 'an unknown flag is refused');
+  // GitHub is asked at most once a day: a new answer there is not seen until the cache ages out.
+  writeFileSync(join(s.tmp, 'latest.json'), JSON.stringify({ version: have }));
+  assert.match(s.cli(['doctor']).stdout, /^needs you\s+Winston version\s+— .* installed, 99\.0\.0 available$/m);
+  writeFileSync(cache, JSON.stringify({ ...JSON.parse(readFileSync(cache, 'utf8')), checkedAt: Date.now() - 25 * 60 * 60 * 1000 }));
+  assert.match(s.cli(['doctor']).stdout, /^done\s+Winston version/m, 'a day later it asks again');
   assert.equal(old.status, unknown.status, 'an old Winston is reported, never a failed check');
 
   latest('0.0.1');
@@ -871,7 +878,9 @@ test('doctor lists what needs the owner with why and how, names the first as the
   assert.equal(second.status, 0, 'an example tier is flagged, not a failed setup');
 
   // Then the secrets, then the permission rules.
-  assert.match(lastLine(s.cli(['doctor']).stdout), /^Next step: triage workflow secrets – follow the steps under 1 above\./);
+  const steps = s.cli(['doctor', '--copy']).stdout;
+  assert.match(lastLine(steps), /^Next step: triage workflow secrets – follow the steps under 1 above\./);
+  assert.match(steps, /\nNothing was copied: (the next step is several steps, not one command|--copy works on macOS only)\.\n/);
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
   const third = s.cli(['doctor']);
   assert.match(third.stdout, /^done\s+triage workflow secrets/m);
@@ -881,6 +890,7 @@ test('doctor lists what needs the owner with why and how, names the first as the
   assert.equal(complete.status, 0, complete.stdout);
   assert.doesNotMatch(complete.stdout, /^needs you/m);
   assert.match(lastLine(complete.stdout), /^Setup is complete: nothing needs you\./);
+  assert.match(s.cli(['doctor', '--copy']).stdout, /\nNothing was copied: there is no next step\.\n/);
 
   // init on the finished repo changes nothing and says so.
   const before = s.git('status', '--porcelain');
@@ -898,6 +908,11 @@ test('doctor --copy puts the next step\'s command on the clipboard', { skip: pro
   rmSync(join(s.tmp, 'clipboard'));
   s.cli(['doctor']);
   assert.ok(!existsSync(join(s.tmp, 'clipboard')), 'only when asked');
+  // When nothing reaches the clipboard it says so, and the next step is still the last line.
+  s.fake('pbcopy', 'exit 1');
+  const failed = s.cli(['doctor', '--copy']).stdout;
+  assert.match(failed, /\nNothing was copied: pbcopy did not run\.\n/);
+  assert.match(lastLine(failed), /^Next step: gh auth with project scope – run: gh auth login\. Then/);
 });
 
 test('every stop on a missing prerequisite points at /winston:doctor', (t) => {

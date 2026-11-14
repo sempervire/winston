@@ -14,14 +14,18 @@
  * Fails open: any error exits 0 with no output. A setup reminder is never worth
  * blocking a session over.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { doctorResultPath, stateDir } from '../lib/config.mjs'
 import { readInput } from '../lib/harness.mjs'
 
-/** The checkout's top directory, found by walking up to `.git`: no git process to wait on. */
+/**
+ * The checkout's top directory, found by walking up to `.git`: no git process to wait on.
+ * From the real path, as git reports it and doctor keys its result, so a session opened
+ * through a symlink finds the same result.
+ */
 function topLevel(cwd) {
-  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
+  for (let dir = realpathSync(resolve(cwd)); ; dir = dirname(dir)) {
     if (existsSync(join(dir, '.git'))) return dir
     if (dir === dirname(dir)) return null
   }

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { armMatcher, CREDENTIAL_URL, urlsIn } from '../hooks/secret-grant.mjs';
@@ -217,6 +217,20 @@ test('doctor-nudge: one line per session when the last doctor run left open item
   rmSync(doctorResultPath(repo));
   assert.equal(start('eeeeeeee-5'), '');
   assert.equal(s.run('doctor-nudge.mjs', undefined), '', 'no payload at all');
+
+  // No session id: nothing to remember it by, so it still speaks, and still never fails.
+  result({ root: repo, open: 2 });
+  const anonymous = () => s.run('doctor-nudge.mjs', { hook_event_name: 'SessionStart', cwd: repo });
+  assert.equal(anonymous().systemMessage, 'Winston setup has 2 open items – run /winston:doctor.');
+  assert.equal(anonymous().systemMessage, 'Winston setup has 2 open items – run /winston:doctor.');
+  // A session opened through a symlink to the checkout finds the same result.
+  symlinkSync(repo, join(s.tmp, 'link'));
+  assert.equal(start('ffffffff-6', join(s.tmp, 'link')).systemMessage, 'Winston setup has 2 open items – run /winston:doctor.');
+  // Outside any git repository, and in a directory that does not exist: silent.
+  mkdirSync(join(s.tmp, 'plain/.winston'), { recursive: true });
+  writeFileSync(join(s.tmp, 'plain/.winston/config.json'), '{}');
+  assert.equal(start('gggggggg-7', join(s.tmp, 'plain')), '');
+  assert.equal(start('hhhhhhhh-8', join(s.tmp, 'gone')), '');
 
   // It is registered at session start, and reads nothing but local files.
   const hooks = JSON.parse(readFileSync(join(HOOKS, 'hooks.json'), 'utf8')).hooks;
