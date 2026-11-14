@@ -19,7 +19,8 @@ function sandbox(t) {
   execFileSync('git', ['init', '-q', repo]);
   const bin = join(tmp, 'bin');
   mkdirSync(bin);
-  const env = { ...process.env, WINSTON_HOME: home, CODEX_HOME: join(tmp, 'codex'), PATH: `${bin}:${process.env.PATH}` };
+  // No test asks the network for the latest version: the lookup reads a file that is absent unless a test writes it.
+  const env = { ...process.env, WINSTON_HOME: home, CODEX_HOME: join(tmp, 'codex'), CLAUDE_CONFIG_DIR: join(tmp, 'claude'), WINSTON_UPDATE_URL: `file://${join(tmp, 'latest.json')}`, PATH: `${bin}:${process.env.PATH}` };
   const cli = (args, cwd = repo) => spawnSync(process.execPath, [CLI, ...args], { cwd, env, encoding: 'utf8' });
   const fake = (name, script) => { writeFileSync(join(bin, name), `#!/bin/sh\n${script}\n`); chmodSync(join(bin, name), 0o755); };
   return { tmp, home, repo, env, cli, fake };
@@ -443,4 +444,31 @@ test('the triage workflow template skips, rather than fails, without its secrets
   const gated = steps.split(/\n      - /).filter((step) => /^uses: /.test(step));
   assert.equal(gated.length, 2);
   for (const step of gated) assert.match(step, /if: steps\.secrets\.outputs\.ready == 'true'/);
+});
+
+test('doctor says when a newer Winston is out, with the command, and stays quiet otherwise', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  const have = JSON.parse(readFileSync(join(ROOT, '.claude-plugin/plugin.json'), 'utf8')).version;
+  const latest = (v) => writeFileSync(join(s.tmp, 'latest.json'), JSON.stringify({ version: v }));
+
+  const unknown = s.cli(['doctor']);
+  assert.match(unknown.stdout, new RegExp(`^off\\s+Winston version\\s+— ${have} installed; could not reach GitHub`, 'm'));
+  assert.doesNotMatch(unknown.stdout, /Update Winston/);
+
+  latest(have);
+  const current = s.cli(['doctor']);
+  assert.match(current.stdout, new RegExp(`^ok\\s+Winston version\\s+— ${have}, the latest$`, 'm'));
+  assert.doesNotMatch(current.stdout, /Update Winston/);
+
+  latest('99.0.0');
+  const old = s.cli(['doctor']);
+  assert.match(old.stdout, new RegExp(`^old\\s+Winston version\\s+— ${have} installed, 99\\.0\\.0 available$`, 'm'));
+  assert.match(old.stdout, /\nUpdate Winston: run `claude plugin marketplace update winston && claude plugin update winston@winston`, then restart Claude Code/);
+  assert.equal(old.status, unknown.status, 'an old Winston is reported, never a failed check');
+
+  latest('0.0.1');
+  assert.match(s.cli(['doctor']).stdout, /^ok\s+Winston version/m, 'an older "latest" is not an update');
+  latest('not-a-version; rm -rf');
+  assert.match(s.cli(['doctor']).stdout, /^off\s+Winston version/m, 'a manifest that is not a version is ignored');
 });
