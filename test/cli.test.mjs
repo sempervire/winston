@@ -5,7 +5,7 @@ import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, rea
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { loadConfig, loadLayers } from '../lib/config.mjs';
-import { coveredBy, DOCTOR_POINTER, permissionRules, policyBlanks, policyState, tokenUrl } from '../bin/winston';
+import { coveredBy, DOCTOR_POINTER, firesOnNewIssue, permissionRules, policyBlanks, policyState, tokenUrl } from '../bin/winston';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const CLI = join(ROOT, 'bin/winston');
@@ -395,6 +395,105 @@ test('with a config already here, init creates the integration branch it names w
   const wrong = s.cli(['init', '--mode', 'adopt']);
   assert.doesNotMatch(wrong.stdout, /create branch/);
   assert.match(wrong.stdout, /By hand:\n(\s+- [^\n]+\n)*\s+- integration branch on origin: develop\n/);
+});
+
+test('a workflow fires on a new issue when its on: names issues, with opened or with no types', () => {
+  const yes = [
+    'on: issues\n',
+    'on: [push, issues]\n',
+    'on:\n  issues:\n    types: [opened]\njobs: {}\n',
+    'on:\n  issues:\n    types:\n      - edited\n      - opened\n',
+    'on:\n  issues:\n  push:\n',
+    'on:\n  - issues\n',
+    '"on":\n  issues: { types: [opened, reopened] }\n',
+    'name: x\n# on: nothing\non:\n  workflow_dispatch:\n  issues:\n    types: [opened] # new ones\n',
+  ];
+  const no = [
+    'on: push\n',
+    'on:\n  issues:\n    types: [closed, labeled]\n',
+    'on:\n  issue_comment:\n    types: [created]\n',
+    'on:\n  push:\njobs:\n  issues:\n    types: [opened]\n',
+    'jobs: {}\n',
+  ];
+  for (const text of yes) assert.equal(firesOnNewIssue(text), true, text);
+  for (const text of no) assert.equal(firesOnNewIssue(text), false, text);
+  assert.equal(firesOnNewIssue(readFileSync(join(ROOT, 'templates/triage-on-new-issue.yml'), 'utf8')), true);
+});
+
+test('a second workflow that triages new issues is the owner\'s choice: doctor reports it, init asks before writing', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  existingRepo(s);
+  s.git('push', '-q', 'origin', 'main:staging');
+  mkdirSync(join(s.repo, '.winston'));
+  const configPath = join(s.repo, '.winston/config.json');
+  const base = { branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, phase: false };
+  const reset = () => writeFileSync(configPath, JSON.stringify(base));
+  const config = () => JSON.parse(readFileSync(configPath, 'utf8'));
+  reset();
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
+  writeFileSync(join(s.tmp, 'milestones'), 'Pilot\n');
+  writeFileSync(join(s.tmp, 'labels'), 'risk: low\nrisk: medium\nrisk: high\nauto-merge\nauto-verify\nhuman-verify\n');
+  writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
+  writeFileSync(join(s.repo, 'TRIAGE.md'), '# Triage policy\n');
+  const dir = join(s.repo, '.github/workflows');
+  mkdirSync(dir, { recursive: true });
+  const ours = join(dir, 'triage-on-new-issue.yml');
+  const theirs = join(dir, 'auto-triage.yml');
+  const rival = () => writeFileSync(theirs, 'name: auto-triage\non:\n  issues:\n    types: [opened]\njobs:\n  triage:\n    steps:\n      - run: echo "risk: high"\n');
+  // Runs on a new issue and does not triage; a workflow that triages and runs on something else.
+  writeFileSync(join(dir, 'greet.yml'), 'on:\n  issues:\n    types: [opened]\njobs:\n  hello:\n    steps:\n      - run: echo welcome\n');
+  writeFileSync(join(dir, 'weekly.yml'), 'on:\n  schedule:\n    - cron: "0 6 * * 1"\njobs:\n  triage:\n    steps:\n      - run: echo sweep\n');
+
+  // Only Winston's: nothing new.
+  writeFileSync(ours, '');
+  assert.doesNotMatch(s.cli(['doctor']).stdout, /triage workflow conflicts/);
+  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /very required check passes\. Nothing was changed/);
+
+  // Both on disk: doctor reports it, and init asks rather than guess.
+  rival();
+  const doc = s.cli(['doctor']);
+  assert.match(doc.stdout, /^needs you\s+triage workflow conflicts\s+— auto-triage\.yml also triages every new issue$/m);
+  assert.match(doc.stdout, /\d\. triage workflow conflicts\n   Why: Two workflows[^\n]+\n   Fix:\n     auto-triage\.yml and triage-on-new-issue\.yml would both triage every new issue[^\n]*--triage keep[^\n]*--triage replace[^\n]*--triage both/);
+  assert.doesNotMatch(doc.stdout, /greet\.yml|weekly\.yml/);
+  const asked = s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.equal(asked.status, 0, asked.stdout);
+  assert.match(asked.stdout, /Triage workflow, your choice: auto-triage\.yml also triages every new issue, and Winston's would too\. Rerun with one of:\n  --triage keep  [^\n]+\n  --triage replace [^\n]+\n  --triage both  [^\n]+\nUntil you choose, init leaves the triage workflows as they are\./);
+  assert.ok(existsSync(ours) && existsSync(theirs), 'nothing is deleted without the choice');
+  assert.equal(s.cli(['init', '--mode', 'adopt', '--triage', 'sometimes']).status, 2);
+
+  // replace: Winston's stays, the other goes.
+  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace']).stdout, /would:\n\s+- make Winston's workflow the only triage: delete .*auto-triage\.yml/);
+  assert.ok(existsSync(theirs), 'a plan changes nothing');
+  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace', '--yes']).stdout, /done\s+make Winston's workflow the only triage/);
+  assert.ok(existsSync(ours) && !existsSync(theirs) && existsSync(join(dir, 'greet.yml')));
+  assert.doesNotMatch(s.cli(['doctor']).stdout, /triage workflow conflicts/);
+
+  // both: recorded, so it is asked once.
+  rival();
+  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'both', '--yes']).stdout, /done\s+keep both, knowingly: record auto-triage\.yml under triage\.alongside/);
+  assert.deepEqual(config().triage, { alongside: ['auto-triage.yml'] });
+  assert.ok(existsSync(ours) && existsSync(theirs));
+  assert.doesNotMatch(s.cli(['doctor']).stdout, /triage workflow conflicts/);
+
+  // keep: the other stays, Winston's goes, and doctor stops asking for it.
+  reset();
+  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'keep', '--yes']).stdout, /done\s+keep auto-triage\.yml as this repository's triage: delete .*triage-on-new-issue\.yml, and set triage\.workflow to false/);
+  assert.ok(!existsSync(ours) && existsSync(theirs));
+  assert.equal(config().triage.workflow, false);
+  const kept = s.cli(['doctor']);
+  assert.match(kept.stdout, /^off\s+triage-on-new-issue workflow\s+— not installed, by choice/m);
+  assert.doesNotMatch(kept.stdout, /triage workflow (conflicts|secrets|runs)/);
+  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /very required check passes\. Nothing was changed/);
+
+  // The other one first, Winston's not yet written: it is not written until the owner chooses.
+  reset();
+  const held = s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.match(held.stdout, /Triage workflow, your choice/);
+  assert.ok(!existsSync(ours));
+  assert.match(s.cli(['doctor']).stdout, /^off\s+triage-on-new-issue workflow\s+— not written: auto-triage\.yml already triages new issues$/m);
+  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace', '--yes']).stdout, /done\s+make Winston's workflow the only triage: write .*triage-on-new-issue\.yml from the template, and delete/);
+  assert.ok(existsSync(ours) && !existsSync(theirs));
 });
 
 test('init --mode adopt asks which board when several are linked, and refuses a repo with no origin', (t) => {

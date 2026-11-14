@@ -68,6 +68,12 @@ only by you, in your own terminal.
 Until both are set new issues are not triaged automatically; `winston doctor` reports the
 secrets and whether the workflow's latest runs failed.
 
+A repo that already has a workflow triaging every new issue would get a second one. Doctor
+reports it as `triage workflow conflicts`, and init writes nothing until the owner chooses:
+`--triage keep` (theirs stays, Winston installs none and records `triage.workflow: false`),
+`--triage replace` (Winston's stays, theirs is deleted) or `--triage both` (recorded under
+`triage.alongside`, so it is asked once).
+
 Triage takes every rule from the repo's policy file (`triage.policy`, `TRIAGE.md` by
 default). When that file is missing or has no triage rules (no heading that names triage,
 no `risk:` tier), doctor says so and init offers a starter `TRIAGE.md` to edit and commit;

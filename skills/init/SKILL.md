@@ -27,6 +27,14 @@ It runs in five steps and never skips the first two.
    `--board new`). Other choices the user may state: `--integration <branch>`,
    `--owner <name>`, and for a new project `--repo <owner>/<name>` and `--public` (the
    repository is private unless they ask otherwise).
+   If the plan has a **Triage workflow, your choice** block, the repo already has a
+   workflow that triages every new issue, and Winston's would be a second one. Ask the
+   user in a question box, in plain words, with the block's three lines as the options:
+   **keep** theirs (Winston installs none), **replace** it with Winston's (theirs is
+   deleted), or **both** (every new issue is triaged twice). Never pick for them. Rerun
+   the plan with `--triage <keep|replace|both>` and show it again before confirming. A
+   deleted workflow keeps running until the deletion is committed to the default branch:
+   offer to commit it with the config.
 3. **Confirm, then apply.** Ask the user to confirm in a question box, with the plan's
    actions as the question text. Silence or a general go-ahead given earlier is not
    confirmation. Only after an explicit yes, rerun the same command with `--yes`, show its
