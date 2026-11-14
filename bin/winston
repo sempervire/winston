@@ -805,6 +805,7 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
             detail: done ? `new issues get the milestone "${set}"` : `new issues get no milestone, so a board view filtered to "${target}" never shows them`,
             fix: !done && {
               plan: `give every new issue the milestone "${target}": ${set ? '' : `set "phase" to it in ${configPath}, and `}write ${phaseWf} (it takes effect once it and the config are committed to the default branch; to change phase later, edit that one config line)`,
+              note: `Commit ${configPath} and ${phaseWf} to ${config.branches?.production ?? 'the default branch'}: GitHub runs the phase workflow from the default branch only, and it reads the phase from the config there.`,
               run: () => {
                 if (!set) {
                   const data = JSON.parse(readFileSync(configPath, 'utf8'))
@@ -969,7 +970,10 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
       detail: `${names} also ${rivals.length === 1 ? 'triages' : 'triage'} every new issue`,
       problem: `${names} and ${wfName} would both triage every new issue: two comments, two risk: decisions, and one may start work the other stopped on. Choose which stays: winston init --mode adopt --triage keep   (keep ${names}), --triage replace   (keep Winston's, delete ${names}), or --triage both   (keep both, knowingly)`,
       conflict: { rivals, plans },
-      fix: plans[choice] && { plan: plans[choice], run: runs[choice] },
+      fix: plans[choice] && {
+        plan: plans[choice], run: runs[choice],
+        note: choice === 'replace' && `Commit the deletion of ${files.join(', ')} to ${config.branches?.production ?? 'the default branch'}: until then it still runs on every new issue.`,
+      },
     })
   }
   if ((existsSync(wf) || forInit) && !declined && !keep) {
@@ -1419,7 +1423,7 @@ function setup(cwd, sit, opts) {
     printHand(hand)
     printChoice(list)
     printOwnerSteps(list)
-    for (const n of boot?.notes ?? []) console.log(`\nNote: ${n}`)
+    for (const n of [...(boot?.notes ?? []), ...fixes.map((c) => c.fix.note).filter(Boolean)]) console.log(`\nNote: ${n}`)
     if (plans.length) console.log('\nNothing was changed. Rerun with --yes to do these. Safe to run again: steps already done are skipped, and nothing existing is overwritten.')
     return 0
   }
@@ -1440,9 +1444,11 @@ function setup(cwd, sit, opts) {
   const after = boot ? checks(cwd, null, true, opts.triage) : list
   let failed = 0
   let written = null
+  const ranNotes = []
   for (const c of fixable(after)) {
     try {
       c.fix.run()
+      if (c.fix.note) ranNotes.push(c.fix.note)
       if (c.fix.starter) written = c.fix.starter
       console.log(`done     ${c.fix.plan}`)
     } catch (e) {
@@ -1454,7 +1460,7 @@ function setup(cwd, sit, opts) {
   printChoice(after)
   if (written) printBlanks(written, policyBlanks(written))
   printOwnerSteps(after)
-  for (const n of boot?.notes ?? []) console.log(`\nNote: ${n}`)
+  for (const n of [...(boot?.notes ?? []), ...ranNotes]) console.log(`\nNote: ${n}`)
   console.log(`\n${failed ? `${failed} ${failed === 1 ? 'step' : 'steps'} failed. ` : ''}Safe to run again: steps already done are skipped. winston doctor shows what is left.`)
   return failed ? 1 : 0
 }

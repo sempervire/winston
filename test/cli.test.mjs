@@ -467,7 +467,7 @@ test('a second workflow that triages new issues is the owner\'s choice: doctor r
   // replace: Winston's stays, the other goes.
   assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace']).stdout, /would:\n\s+- make Winston's workflow the only triage: delete .*auto-triage\.yml/);
   assert.ok(existsSync(theirs), 'a plan changes nothing');
-  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace', '--yes']).stdout, /done\s+make Winston's workflow the only triage/);
+  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace', '--yes']).stdout, /done\s+make Winston's workflow the only triage[^]*Note: Commit the deletion of .*auto-triage\.yml to main: until then it still runs on every new issue/);
   assert.ok(existsSync(ours) && !existsSync(theirs) && existsSync(join(dir, 'greet.yml')));
   assert.doesNotMatch(s.cli(['doctor']).stdout, /triage workflow conflicts/);
 
@@ -535,6 +535,8 @@ test('a new issue gets the current phase\'s milestone: doctor reports hidden iss
   const made = s.cli(['init', '--mode', 'adopt', '--yes']);
   assert.equal(made.status, 0, made.stdout + made.stderr);
   assert.equal(config().phase, 'Pilot');
+  assert.match(made.stdout, /Note: Commit .*config\.json and .*set-issue-phase\.yml to main: GitHub runs the phase workflow from the default branch only/);
+  assert.match(plan.stdout, /Note: Commit .*set-issue-phase\.yml to main/);
   assert.deepEqual(config().board, { owner: 'acme', number: 1 }, 'the rest of the config is as it was');
   assert.equal(readFileSync(wf, 'utf8'), readFileSync(join(ROOT, 'templates/set-issue-phase.yml'), 'utf8'));
   assert.match(s.calls(), /issue edit 7 --milestone Pilot\n[^]*issue edit 13 --milestone Pilot\n/);
