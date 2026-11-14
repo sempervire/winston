@@ -359,6 +359,44 @@ test('init --mode adopt fits the config to the repo and adds to its board withou
   assert.doesNotMatch(s.cli(['init', '--mode', 'adopt', '--integration', 'develop']).stdout, /create branch/);
 });
 
+test('with a config already here, init creates the integration branch it names when origin lacks it', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  existingRepo(s);
+  mkdirSync(join(s.repo, '.winston'));
+  const write = (branches) => writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ branches, board: { owner: 'acme', number: 1 }, phase: false }));
+  write({ integration: 'staging', production: 'main' });
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
+  writeFileSync(join(s.tmp, 'milestones'), 'Pilot\n');
+  writeFileSync(join(s.tmp, 'labels'), 'risk: low\nrisk: medium\nrisk: high\nauto-merge\nauto-verify\nhuman-verify\n');
+  writeFileSync(join(s.repo, 'TRIAGE.md'), '# Triage policy\n');
+  mkdirSync(join(s.repo, '.github/workflows'), { recursive: true });
+  writeFileSync(join(s.repo, '.github/workflows/triage-on-new-issue.yml'), '');
+
+  assert.match(s.cli(['doctor']).stdout, /\d\. integration branch on origin\n   Why: [^\n]+\n   Fix:\n     winston init --mode adopt   \([^\n]*create branch staging on origin from main\)/);
+  const plan = s.cli(['init', '--mode', 'adopt']);
+  assert.match(plan.stdout, /would:\n\s+- create branch staging on origin from main\n/);
+  assert.doesNotMatch(plan.stdout, /By hand/);
+  assert.deepEqual(originHeads(s), ['main'], 'a plan changes nothing');
+
+  const made = s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.equal(made.status, 0, made.stdout + made.stderr);
+  assert.match(made.stdout, /done\s+create branch staging on origin from main/);
+  assert.deepEqual(originHeads(s), ['main', 'staging']);
+  assert.match(s.cli(['doctor']).stdout, /^done\s+integration branch on origin\s+— staging$/m);
+
+  // join changes nothing on GitHub: the gap stays the owner's.
+  write({ integration: 'develop', production: 'main' });
+  assert.match(s.cli(['init', '--mode', 'join', '--yes']).stdout, /They are [^\n]* to close[^]*- integration branch on origin — develop/);
+  assert.deepEqual(originHeads(s), ['main', 'staging']);
+
+  // A production branch origin lacks is a wrong config, not something to create.
+  write({ integration: 'develop', production: 'release' });
+  const wrong = s.cli(['init', '--mode', 'adopt']);
+  assert.doesNotMatch(wrong.stdout, /create branch/);
+  assert.match(wrong.stdout, /By hand:\n(\s+- [^\n]+\n)*\s+- integration branch on origin: develop\n/);
+});
+
 test('init --mode adopt asks which board when several are linked, and refuses a repo with no origin', (t) => {
   const s = sandbox(t);
   fakeGh(s);
