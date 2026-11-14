@@ -19,6 +19,8 @@ that rather than leaving it with the user. Relay its **By hand** list as it stan
 
 A **Triage workflow** list means the installed triage workflow is not triaging: its secrets
 are missing, or its latest runs failed. Say so plainly, since nothing else reports it, and
-offer `/winston:init`, which prints the owner's steps for the secrets. `unknown` on either
-line means this account cannot see them, not that they are missing. Never create a token or
+offer `/winston:init`, which prints the owner's steps for the secrets. A missing `triage policy` means the policy file is
+absent or has no triage rules, so a triage run changes nothing; `/winston:init` offers a
+`TRIAGE.md` starter. `unknown` on either
+workflow line means this account cannot see them, not that they are missing. Never create a token or
 set a secret yourself.

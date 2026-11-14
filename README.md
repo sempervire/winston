@@ -55,6 +55,11 @@ steps for the missing ones, with the token type GitHub requires for the board's 
 Until both are set new issues are not triaged automatically; `winston doctor` reports the
 secrets and whether the workflow's latest runs failed.
 
+Triage takes every rule from the repo's policy file (`triage.policy`, `TRIAGE.md` by
+default). When that file is missing or has no triage rules (no heading that names triage,
+no `risk:` tier), doctor says so and init offers a starter `TRIAGE.md` to edit and commit;
+it never overwrites an existing one.
+
 ## Commands
 
 | Command | What it does |

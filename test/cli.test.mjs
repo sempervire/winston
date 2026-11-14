@@ -5,6 +5,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { loadConfig, loadLayers } from '../lib/config.mjs';
+import { policyState } from '../bin/winston';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const CLI = join(ROOT, 'bin/winston');
@@ -320,7 +321,7 @@ test('init --mode adopt fits the config to the repo and adds to its board withou
   assert.match(plan.stdout, /add Status options to the board: New, Verify, Verified \(its existing options are kept\)/);
   assert.match(plan.stdout, /add a single-select Priority field/);
   assert.match(plan.stdout, /Note: Commit .*config\.json and .*triage-on-new-issue\.yml to main/);
-  assert.match(plan.stdout, /Note: There is no TRIAGE\.md/);
+  assert.match(plan.stdout, /write .*TRIAGE\.md, a starter triage policy to edit and commit/);
   assert.doesNotMatch(plan.stdout, /In the browser|By hand/, 'both intake workflows are on');
   assert.ok(!existsSync(join(s.repo, '.winston')));
 
@@ -329,6 +330,8 @@ test('init --mode adopt fits the config to the repo and adds to its board withou
   const config = JSON.parse(readFileSync(join(s.repo, '.winston/config.json'), 'utf8'));
   assert.deepEqual(config.board, { owner: 'acme', number: 3, statuses: ['New', 'Ready', 'Verify', 'Verified'], priorityField: 'Priority' });
   assert.deepEqual(config.processDocs, ['AGENTS.md']);
+  assert.equal(config.triage.policy, 'TRIAGE.md');
+  assert.equal(policyState(join(s.repo, 'TRIAGE.md')), 'ok', 'the starter itself passes the rules test');
   assert.deepEqual(originHeads(s), ['main', 'staging']);
   const calls = s.calls();
   assert.doesNotMatch(calls, /project create|repo create/);
@@ -399,6 +402,7 @@ test('init --mode join reports access as the joiner\'s, repo gaps as the owner\'
   writeFileSync(join(s.tmp, 'labels'), 'risk: low\nrisk: medium\nrisk: high\nauto-merge\nauto-verify\nhuman-verify\n');
   mkdirSync(join(s.repo, '.github/workflows'), { recursive: true });
   writeFileSync(join(s.repo, '.github/workflows/triage-on-new-issue.yml'), '');
+  writeFileSync(join(s.repo, 'TRIAGE.md'), '# Triage policy\n');
   s.git('push', '-q', 'origin', 'main:staging');
   const ready = s.cli(['init', '--mode', 'join', '--yes']);
   assert.equal(ready.status, 0, ready.stdout);
@@ -522,4 +526,70 @@ test('the triage workflow template skips, rather than fails, without its secrets
   const gated = steps.split(/\n      - /).filter((step) => /^uses: /.test(step));
   assert.equal(gated.length, 2);
   for (const step of gated) assert.match(step, /if: steps\.secrets\.outputs\.ready == 'true'/);
+});
+
+test('a policy has triage rules when a heading names triage or it carries a risk tier', (t) => {
+  const s = sandbox(t);
+  const state = (text) => { writeFileSync(join(s.tmp, 'doc.md'), text); return policyState(join(s.tmp, 'doc.md')); };
+  assert.equal(policyState(join(s.tmp, 'absent.md')), 'missing');
+  assert.equal(policyState(s.tmp), 'missing', 'a directory is not a policy');
+  assert.equal(state(''), 'empty');
+  assert.equal(state('# Rules\n\n1. Never commit data. Priority is the owner\'s call; we triage nothing here.\n'), 'empty', 'the word in prose is not a rule');
+  assert.equal(state('# Rules\n\n## Issue triage\n\nBugs first.\n'), 'ok');
+  assert.equal(state('# Rules\n\nLabel docs fixes `risk: low`.\n'), 'ok');
+  assert.equal(state('# Rules\n\nThe risk: of rain is high.\n'), 'empty');
+});
+
+test('doctor flags a policy with no triage rules; init writes a starter, repoints the config, and overwrites nothing', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  existingRepo(s);
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
+  writeFileSync(join(s.tmp, 'milestones'), 'Pilot\n');
+  writeFileSync(join(s.tmp, 'labels'), 'risk: low\nrisk: medium\nrisk: high\nauto-merge\nauto-verify\nhuman-verify\n');
+  writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
+  mkdirSync(join(s.repo, '.github/workflows'), { recursive: true });
+  writeFileSync(join(s.repo, '.github/workflows/triage-on-new-issue.yml'), '');
+  s.git('push', '-q', 'origin', 'main:staging');
+  mkdirSync(join(s.repo, '.winston'));
+  const configPath = join(s.repo, '.winston/config.json');
+  const write = (policy) => writeFileSync(configPath, JSON.stringify({ owner: 'Dana', branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, triage: { policy, workflow: 'triage-on-new-issue.yml' } }));
+
+  // The repo's rules doc is named as the policy and says nothing about triage.
+  write('AGENTS.md');
+  const doc = s.cli(['doctor']);
+  assert.equal(doc.status, 1);
+  assert.match(doc.stdout, /^missing\s+triage policy\s+— AGENTS\.md has no triage rules \(no heading that names triage, no risk: low\/medium\/high tier\): a triage pass under it changes nothing$/m);
+  assert.match(doc.stdout, /Fix: winston init --mode adopt/);
+  const plan = s.cli(['init', '--mode', 'adopt']);
+  assert.match(plan.stdout, /write .*TRIAGE\.md, a starter triage policy[^\n]*, and set triage\.policy to it in .*config\.json \(AGENTS\.md is left as it is\)/);
+  assert.ok(!existsSync(join(s.repo, 'TRIAGE.md')), 'no --yes, no change');
+  const made = s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.equal(made.status, 0, made.stdout + made.stderr);
+  assert.equal(readFileSync(join(s.repo, 'TRIAGE.md'), 'utf8'), readFileSync(join(ROOT, 'templates/TRIAGE.md'), 'utf8'));
+  assert.equal(readFileSync(join(s.repo, 'AGENTS.md'), 'utf8'), '# Rules\n');
+  const after = JSON.parse(readFileSync(configPath, 'utf8'));
+  assert.deepEqual(after.triage, { policy: 'TRIAGE.md', workflow: 'triage-on-new-issue.yml' });
+  assert.equal(after.owner, 'Dana', 'the rest of the config is kept');
+  const ok = s.cli(['doctor']);
+  assert.equal(ok.status, 0, ok.stdout);
+  assert.match(ok.stdout, /^ok\s+triage policy\s+— TRIAGE\.md$/m);
+
+  // A policy file that is not there at all.
+  write('docs/POLICY.md');
+  rmSync(join(s.repo, 'TRIAGE.md'));
+  assert.match(s.cli(['doctor']).stdout, /^missing\s+triage policy\s+— docs\/POLICY\.md not found: \/winston:triage does not run without a policy$/m);
+
+  // A TRIAGE.md with rules already in the repo is pointed at, not rewritten.
+  writeFileSync(join(s.repo, 'TRIAGE.md'), '## Triage\n\nmine\n');
+  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /set triage\.policy to TRIAGE\.md, which has triage rules/);
+  assert.equal(s.cli(['init', '--mode', 'adopt', '--yes']).status, 0);
+  assert.equal(readFileSync(join(s.repo, 'TRIAGE.md'), 'utf8'), '## Triage\n\nmine\n');
+  assert.equal(JSON.parse(readFileSync(configPath, 'utf8')).triage.policy, 'TRIAGE.md');
+
+  // An existing TRIAGE.md without rules is the owner's to fill in: never overwritten.
+  writeFileSync(join(s.repo, 'TRIAGE.md'), 'notes to self\n');
+  const kept = s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.match(kept.stdout, /By hand:\n\s+- triage policy: .*TRIAGE\.md exists and has no triage rules, and Winston does not overwrite it/);
+  assert.equal(readFileSync(join(s.repo, 'TRIAGE.md'), 'utf8'), 'notes to self\n');
 });

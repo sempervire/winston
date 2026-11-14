@@ -73,6 +73,13 @@ It runs in five steps and never skips the first two.
    `triage workflow runs` should show `last run: success`. In **join** the secrets are the
    repo owner's; say so and stop.
 
+A plan line that writes `TRIAGE.md` means the repo's triage policy (config `triage.policy`)
+is missing or holds no triage rules: no heading that names triage and no `risk:` tier. The
+triage skill takes every rule from that file, so without them a triage run finishes clean
+and changes nothing. The starter is a draft of the owner's policy: after applying, tell the
+user to read it, edit it and commit it to the default branch, where the workflow reads it.
+init never overwrites an existing `TRIAGE.md` or edits the doc the config pointed at.
+
 Anything under **By hand** needs a person: access someone else grants, or a missing policy
 file. Relay it as it stands.
 
