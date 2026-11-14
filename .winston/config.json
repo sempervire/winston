@@ -1,0 +1,35 @@
+{
+  "owner": "Dave Hecker",
+  "branches": {
+    "integration": "staging",
+    "production": "main"
+  },
+  "board": {
+    "owner": "sempervire",
+    "number": 6,
+    "statuses": [
+      "New",
+      "Ready",
+      "Verify",
+      "Verified"
+    ],
+    "priorityField": "Priority"
+  },
+  "processDocs": [
+    "AGENTS.md"
+  ],
+  "triage": {
+    "policy": "TRIAGE.md",
+    "workflow": "triage-on-new-issue.yml",
+    "labels": []
+  },
+  "worktree": {
+    "copy": [
+      ".env.local"
+    ],
+    "link": [
+      "node_modules"
+    ]
+  },
+  "phase": "Phase 1.0"
+}
