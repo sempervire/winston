@@ -221,7 +221,7 @@ export function checks(cwd, planned = null) {
         hand: `a project's access is separate from the repo's: ask ${config.owner || 'the owner'} to add this account at ${boardUrl(owner, number)}/settings/access (if the board is gone, fix board.owner and board.number in ${configPath})`,
       })
     } else {
-      const url = planned?.newBoard ? 'the new board' : boardUrl(owner, number)
+      const page = planned?.newBoard ? 'the new board\'s Workflows page' : `${boardUrl(owner, number)}/workflows`
       if (!planned?.newBoard) {
         add({ name: 'board reachable', state: 'ok', detail: `${where}: ${project.title}` })
         const fields = project.fields.nodes.filter((n) => n?.name)
@@ -257,19 +257,23 @@ export function checks(cwd, planned = null) {
         fix: !hasMilestone && { plan: `create milestone "${DEFAULT_MILESTONE}" on the repo`, run: () => { if (!openMilestones(root).length) createMilestone(root, DEFAULT_MILESTONE) } },
       })
       // New issues reach the board, at the intake status, through two of the board's own
-      // workflows. GitHub has no API that creates or enables them, so they are hand steps,
-      // and the API shows only whether each is on, not what it is set to do.
+      // workflows. GitHub's API can delete a project workflow but not create, edit or
+      // enable one, so these are `browser` steps: done on the board's web page, by the
+      // agent through browser control (skills/init) or by a person. The API shows only
+      // whether each is on, not what it is set to do.
       const intake = (config.board.statuses ?? DEFAULT_STATUSES)[0]
       const enabled = (name) => (project.workflows?.nodes ?? []).some((w) => w?.enabled && (w.name === name || (name === 'Auto-add to project' && /^Auto-add(?! sub-issues)/.test(w.name))))
       add({
         name: 'board auto-adds new issues', state: enabled('Auto-add to project') ? 'ok' : 'missing',
         detail: enabled('Auto-add to project') ? '' : 'the board\'s "Auto-add to project" workflow is off', board: true,
-        hand: `open ${url}/workflows, choose "Auto-add to project", pick this repository with the filter is:issue, then Save and turn on workflow`,
+        browser: true,
+        hand: `open ${page}, choose "Auto-add to project", click Edit, pick this repository and set the filter to is:issue, then click "Save and turn on workflow"`,
       })
       add({
         name: `board sets ${intake} on added items`, state: enabled('Item added to project') ? 'ok' : 'missing',
         detail: enabled('Item added to project') ? `on; GitHub's API does not show which Status it sets` : 'the board\'s "Item added to project" workflow is off', board: true,
-        hand: `open ${url}/workflows, choose "Item added to project", set Status to ${intake}, then Save and turn on workflow`,
+        browser: true,
+        hand: `open ${page}, choose "Item added to project", click Edit, under Set value choose Status: ${intake}, then click "Save and turn on workflow"`,
       })
     }
   }
@@ -332,15 +336,25 @@ export function checks(cwd, planned = null) {
 
 const missing = (list) => list.filter((c) => c.required && c.state === 'missing')
 
+/** The steps no API call can take: those done on a web page, then the rest. */
+function printSteps(items) {
+  const browser = items.filter((c) => c.browser)
+  const hand = items.filter((c) => !c.browser)
+  if (browser.length) {
+    console.log('\nIn the browser (GitHub has no API for these; /winston:init does them through Claude in Chrome, or do them yourself):')
+    for (const c of browser) console.log(`  - ${c.name}: ${c.hand}`)
+  }
+  if (hand.length) {
+    console.log('\nBy hand:')
+    for (const c of hand) console.log(`  - ${c.name}: ${c.hand || c.detail}`)
+  }
+}
+
 function doctor(cwd) {
   const list = checks(cwd)
   for (const c of list) console.log(`${c.state.padEnd(8)} ${c.name}${c.detail ? `  — ${c.detail}` : ''}`)
   const bad = missing(list)
-  const hand = bad.filter((c) => !c.fix && c.hand)
-  if (hand.length) {
-    console.log('\nBy hand:')
-    for (const c of hand) console.log(`  - ${c.name}: ${c.hand}`)
-  }
+  printSteps(bad.filter((c) => !c.fix && c.hand))
   if (bad.some((c) => c.unconfigured)) console.log('\nNot set up for Winston here. winston init asks which setup fits: join, new or adopt.')
   else if (bad.some((c) => c.fix)) console.log('\nFix: winston init --mode adopt')
   return bad.length ? 1 : 0
@@ -567,11 +581,7 @@ function setup(cwd, sit, opts) {
   const list = checks(cwd, boot?.planned)
   const fixes = missing(list).filter((c) => c.fix)
   const hand = missing(list).filter((c) => !c.fix)
-  const printHand = (items) => {
-    if (!items.length) return
-    console.log('\nBy hand (GitHub has no API for these, or they need someone\'s access):')
-    for (const c of items) console.log(`  - ${c.name}: ${c.hand || c.detail}`)
-  }
+  const printHand = printSteps
   if (!boot && !fixes.length && !hand.length) {
     console.log('Nothing to do: every required check passes.')
     return 0

@@ -279,7 +279,7 @@ test('init --mode new creates the repo, both branches, the board and the config,
   assert.match(plan.stdout, /create branch staging on origin from main/);
   assert.match(plan.stdout, /create labels: risk: low/);
   assert.doesNotMatch(plan.stdout, /write .*triage-on-new-issue\.yml from the template/, 'the first commit writes the workflow; it is not planned twice');
-  assert.match(plan.stdout, /By hand[^]*"Auto-add to project"/);
+  assert.match(plan.stdout, /In the browser[^]*open the new board's Workflows page, choose "Auto-add to project"/);
   assert.doesNotMatch(plan.stdout, /set Status to New/, 'a new project already has "Item added" on, and init points it at New');
   assert.ok(!existsSync(join(s.repo, '.winston')), 'no --yes, no change');
   assert.doesNotMatch(s.calls(), /project create|repo create|label create/);
@@ -301,7 +301,7 @@ test('init --mode new creates the repo, both branches, the board and the config,
   assert.ok(calls.indexOf('project create') < calls.indexOf('repo create') && calls.indexOf('repo create') < calls.indexOf('project link'));
   assert.match(readFileSync(join(s.tmp, 'labels'), 'utf8'), /^risk: high$/m);
   assert.match(made.stdout, /done\s+create a BOARD_LAYOUT view/);
-  assert.match(made.stdout, /By hand[^]*Auto-add to project/);
+  assert.match(made.stdout, /In the browser[^]*open https:\/\/github\.com\/users\/pat\/projects\/7\/workflows, choose "Auto-add to project", click Edit, pick this repository and set the filter to is:issue/);
 });
 
 test('init --mode adopt fits the config to the repo and adds to its board without replacing anything', (t) => {
@@ -319,7 +319,7 @@ test('init --mode adopt fits the config to the repo and adds to its board withou
   assert.match(plan.stdout, /add a single-select Priority field/);
   assert.match(plan.stdout, /Note: Commit .*config\.json and .*triage-on-new-issue\.yml to main/);
   assert.match(plan.stdout, /Note: There is no TRIAGE\.md/);
-  assert.doesNotMatch(plan.stdout, /By hand/, 'both intake workflows are on');
+  assert.doesNotMatch(plan.stdout, /In the browser|By hand/, 'both intake workflows are on');
   assert.ok(!existsSync(join(s.repo, '.winston')));
 
   const made = s.cli(['init', '--mode', 'adopt', '--yes']);
@@ -418,14 +418,15 @@ test('doctor checks the board\'s two intake workflows and the triage workflow\'s
   assert.match(off.stdout, /^missing\s+board auto-adds new issues\s+— the board's "Auto-add to project" workflow is off/m);
   assert.match(off.stdout, /^ok\s+board sets Inbox on added items\s+— on; GitHub's API does not show which Status it sets$/m);
   assert.match(off.stdout, /^off\s+triage workflow secrets\s+— not set: CLAUDE_CODE_OAUTH_TOKEN/m);
-  assert.match(off.stdout, /By hand:\n\s+- board auto-adds new issues: open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
+  assert.match(off.stdout, /In the browser \(GitHub has no API for these[^\n]*\n\s+- board auto-adds new issues: open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
+  assert.doesNotMatch(off.stdout, /By hand/, 'browser steps are not listed twice');
 
   writeFileSync(join(s.tmp, 'board.json'), boardJson({ options: ['Inbox', 'Ready', 'Verify', 'Verified'], workflows: INTAKE, views: KANBAN }));
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
   const on = s.cli(['doctor']);
   assert.match(on.stdout, /^ok\s+board auto-adds new issues$/m);
   assert.match(on.stdout, /^on\s+triage workflow secrets/m);
-  assert.doesNotMatch(on.stdout, /By hand/);
+  assert.doesNotMatch(on.stdout, /In the browser|By hand/);
 });
 
 test('the triage workflow template skips, rather than fails, without its secrets', () => {

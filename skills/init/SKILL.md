@@ -6,7 +6,7 @@ description: Set Winston up in this repo, after asking which of three situations
 # /winston:init
 
 `winston init` sets up one of three things, and which one is the user's call, never a guess.
-It runs in three steps and never skips the first two.
+It runs in four steps and never skips the first two.
 
 1. **Ask which setup.** Run `winston init` from the repository root (or the empty directory
    for a new project), with no flags. It changes nothing and prints the three setups and
@@ -33,9 +33,34 @@ It runs in three steps and never skips the first two.
    output unaltered, then run `winston doctor` to confirm the result. A plan with nothing
    under "would" needs no confirmation and no `--yes`.
 
-The output's **By hand** list is for the user: GitHub has no API for those steps (the
-board's two intake workflows), or they need access someone else grants. Relay it; do not
-attempt them, and do not call the setup finished while it is non-empty.
+4. **Do the browser steps.** The output's **In the browser** list is the board's two intake
+   workflows, "Auto-add to project" and "Item added to project". Without them a new issue
+   never reaches the board at its intake status. GitHub's API cannot create, edit or enable
+   a project workflow, so they are done on the board's Workflows page. They are part of
+   the setup, not an afterthought: say so in the plan you confirm in step 3, and do not
+   call the setup finished while `winston doctor` still lists them. In **join** they are
+   the owner's; relay them and stop.
+   - **With browser control** (Claude Code with Claude in Chrome: the
+     `mcp__claude-in-chrome__*` tools): do them yourself, in a new tab, exactly as each
+     line says. Open the `/workflows` address given. For "Item added to project": select
+     it, **Edit**, under **Set value** choose the Status named, **Save and turn on
+     workflow**. For "Auto-add to project": select it, **Edit**, pick this repository,
+     replace the filter with `is:issue`, **Save and turn on workflow**. Touch nothing else
+     on the page, close the tab, then run `winston doctor` and show that both checks pass.
+     With chattr, claim `resource:chrome` first and release it after.
+   - **The page shows GitHub's 404 or a Sign in link:** that Chrome is not signed in to
+     GitHub, or is signed in as an account without access to the board. Ask the user to
+     sign in to GitHub in that Chrome window as the board's owner and tell you when done.
+     Never type credentials yourself.
+   - **No browser control in this session:** tell the user how to turn it on, then wait:
+     install the Claude in Chrome extension in Chrome, sign in to GitHub there, and
+     connect it to this session with `/chrome` (or start Claude Code with
+     `claude --chrome`). When they say it is on, carry out the steps. If they would
+     rather not, or the harness has no browser control (Codex), give them the two lines
+     from the output to do by hand, and run `winston doctor` once they say they have.
+
+Anything under **By hand** needs a person: access someone else grants, or a missing policy
+file. Relay it as it stands.
 
 If the `winston` command is not on PATH, run it by its path inside the plugin
 (`<plugin root>/bin/winston`, the plugin root being two directories above this skill's
