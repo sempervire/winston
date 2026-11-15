@@ -121,11 +121,23 @@ export function unenrolledCount(coverage) {
   return short('claude') + short('codex')
 }
 
+/**
+ * Whether a peer's recorded cwd is `cwd`. A peer folder this session cannot resolve (another
+ * user's, since deleted or unreadable) is compared as spelled rather than crashing the guard.
+ */
+function sameDir(peerCwd, cwd) {
+  try {
+    return canonical(peerCwd) === cwd
+  } catch {
+    return resolve(peerCwd) === cwd
+  }
+}
+
 /** Live sessions, other than `sessionId`, whose cwd canonicalises to `cwd`. */
 export function findRepoRivals({ cwd, sessionId, sessions }) {
   return sessions
     .filter((s) => !sessionId || s.id !== sessionId)
-    .filter((s) => s.cwd && canonical(s.cwd) === cwd)
+    .filter((s) => s.cwd && sameDir(s.cwd, cwd))
 }
 
 /** Every other live session chattr reports in this repository. */

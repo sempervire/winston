@@ -3,7 +3,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -25,17 +25,28 @@ export class BusError extends Error {
 }
 
 export function open(file = process.env.CHATTR_DB || path.join(homedir(), '.agent-bridge', 'bridge.db')) {
-  mkdirSync(path.dirname(file), { recursive: true });
+  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(file);
+  ownerOnly(file);
   db.exec('PRAGMA busy_timeout = 5000');
   for (let attempt = 0; ; attempt++) {
     try {
       db.exec('PRAGMA journal_mode = WAL');
       tx(db, () => db.exec(readFileSync(path.join(HERE, 'schema.sql'), 'utf8')));
+      ownerOnly(file);
       return db;
     } catch (error) {
       if (attempt > 50 || !/locked|busy/i.test(error.message)) throw error;
     }
+  }
+}
+
+/** Messages and claims are the owner's alone: the store and its WAL files are 0600, an existing one is tightened. */
+function ownerOnly(file) {
+  for (const f of [file, `${file}-wal`, `${file}-shm`]) {
+    try {
+      if (existsSync(f)) chmodSync(f, 0o600);
+    } catch {}
   }
 }
 

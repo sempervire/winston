@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Check Winston's setup in this repo and on this machine - config, GitHub board, labels, branches, and which optional tools (Codex, Gemini key, chattr) are on or off. Use when the user runs /winston:doctor, asks whether Winston is set up correctly, or a Winston skill reports a missing prerequisite.
+description: Check Winston's setup in this repo and on this machine - config, GitHub board, labels, branches, Node, chattr's leftovers from a separate install, the shared-checkout guard, and which optional tools (Codex, Gemini key) are on or off. Use when the user runs /winston:doctor, asks whether Winston is set up correctly, or a Winston skill reports a missing prerequisite.
 ---
 
 # /winston:doctor
@@ -24,7 +24,7 @@ The output is a checklist. Each line starts with a plain status:
   missing; never report it as missing. Its detail says what to look at.
 - `after setup`: it follows from the setup `/winston:init` does. Nothing to do for it now.
 - `tip`: nothing is wrong; an optional improvement, listed under **Tips**.
-- `on` or `off`, for an optional tool. Each optional tool that is off is listed under
+- `on` or `off`, for an optional tool or a switch (the shared-checkout guard). Each optional tool that is off is listed under
   **Optional extras** with who it is for and how to turn it on. Setup is complete without
   them; mention them only if the person asks, or in one line after the setup is complete.
 
@@ -69,6 +69,21 @@ Who does what:
 - **Fewer permission prompts**: one command the owner types in this chat,
   `!winston permissions --apply` (in Codex: ask Codex to run `winston permissions --apply`; Claude is not allowed to grant itself permissions; deny
   wins over allow). Relay it, never run it yourself.
+- **separate chattr plugin**, **old chattr install.sh hooks**, **stray chattr command**:
+  chattr is part of Winston, and these are what is left of a separate install. While the
+  plugin or the old hooks are there, Winston's own copy of chattr's hooks stays off so
+  nothing runs twice. Relay the fix lines as they stand; the owner runs them in the Terminal
+  app and restarts every Claude Code and Codex session. Do not run them yourself: the
+  current session may depend on the separate copy until it restarts.
+- **Codex can write the chattr store**: give the owner the two `config.toml` lines and say
+  where the file is (`~/.codex/config.toml`); they add them, since editing the Codex config
+  is theirs to do. Without them, claims and peer messages fail inside Codex.
+- **shared-checkout guard** is `on` by default: it blocks an edit while another session
+  works in the same folder. If the owner wants it off for a repo, the line is
+  `"sharedCheckoutGuard": false` in `.winston/config.json`; say what they lose first.
+- **Node.js version**: every hook runs on the `node` on PATH, and Winston needs 24 or later;
+  relay the doctor's install line (https://nodejs.org/en/download, or `brew install node`
+  in the Terminal app).
 - **Winston version**: a newer version is out. Give the user the update line as it stands,
   command included: they run it and restart. Do not run the update yourself; it replaces
   the hooks and skills this session is running on.

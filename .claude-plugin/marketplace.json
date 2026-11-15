@@ -11,15 +11,6 @@
       "name": "winston",
       "source": "./",
       "description": "Orchestration, triage, advisors and guard hooks for Claude Code and Codex sessions."
-    },
-    {
-      "name": "chattr",
-      "source": {
-        "source": "url",
-        "url": "https://github.com/sempervire/chattr.git",
-        "ref": "v0.1.0"
-      },
-      "description": "Peer messaging and coordination between agent sessions."
     }
   ]
 }

@@ -76,7 +76,7 @@ try {
   )
 }
 
-if (process.argv.includes('--bundled') && standDownReason(kindOf(input))) allow()
+if (process.argv.includes('--bundled') && standDownReason(kindOf(input), process.env, input.cwd || process.cwd())) allow()
 if (process.env.CLAUDE_ALLOW_SHARED_CWD) allow()
 
 // The directory judged: the session's cwd, unless the edit lands in a different git worktree than

@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { codexPluginsEnabled, kindOf, standDownReason } from '../standdown.mjs';
+import { codexPluginsEnabled, gitToplevel, kindOf, pluginPresent, standDownReason } from '../standdown.mjs';
 import { compose } from '../install.mjs';
 import { open } from '../../chattr.mjs';
 
@@ -20,6 +20,9 @@ function home(t) {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(path.join(dir, '.claude'));
   mkdirSync(path.join(dir, '.codex'));
+  // The separate plugin's files, as an install leaves them; a test removes them to model a delisted plugin.
+  mkdirSync(path.join(dir, '.codex', 'plugins', 'cache', 'winston', 'chattr'), { recursive: true });
+  mkdirSync(path.join(dir, '.claude', 'plugins', 'cache', 'winston', 'chattr'), { recursive: true });
   const env = { HOME: dir, PATH: process.env.PATH, WINSTON_HOME: path.join(dir, '.winston'), CHATTR_DB: path.join(dir, 'bridge.db') };
   const write = (rel, text) => { mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); writeFileSync(path.join(dir, rel), text); };
   return { dir, env, write };
@@ -31,6 +34,15 @@ test('codexPluginsEnabled reads [plugins."chattr@…"] tables and honours enable
   assert.deepEqual(codexPluginsEnabled("[plugins.'chattr@other']\n"), ['chattr@other']);
   assert.deepEqual(codexPluginsEnabled('# [plugins."chattr@winston"]\n[plugins."winston@winston"]\n'), []);
   assert.deepEqual(codexPluginsEnabled(null), []);
+  // Dotted keys and inline tables, at the top level and under [plugins].
+  assert.deepEqual(codexPluginsEnabled('plugins."chattr@winston".enabled = true\n'), ['chattr@winston']);
+  assert.deepEqual(codexPluginsEnabled('plugins."chattr@winston".enabled = false\n'), []);
+  assert.deepEqual(codexPluginsEnabled('plugins = { "winston@winston" = { enabled = true }, "chattr@winston" = { enabled = true } }\n'), ['chattr@winston']);
+  assert.deepEqual(codexPluginsEnabled('plugins = { "chattr@winston" = { enabled = false } }\n'), []);
+  assert.deepEqual(codexPluginsEnabled('[plugins]\n"chattr@winston" = { enabled = true }\n'), ['chattr@winston']);
+  assert.deepEqual(codexPluginsEnabled('[plugins]\n"chattr@winston".enabled = false\n'), []);
+  assert.deepEqual(codexPluginsEnabled('[ plugins . "chattr@winston" ]\nenabled = true\n'), ['chattr@winston']);
+  assert.deepEqual(codexPluginsEnabled('[features]\nplugins = true\n[plugins."winston@winston"]\nenabled = true\n'), []);
 });
 
 test('kindOf: turn_id, a rollout transcript or a Codex tool name is Codex; anything else Claude', () => {
@@ -54,6 +66,7 @@ test('standDownReason: Claude reads enabledPlugins and old hooks in settings.jso
   h.write('.claude/settings.json', '{ broken');
   assert.equal(standDownReason('claude', h.env), null, 'an unparseable file is not another chattr');
   h.write('alt/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
+  mkdirSync(path.join(h.dir, 'alt', 'plugins', 'cache', 'winston', 'chattr'), { recursive: true });
   assert.match(standDownReason('claude', { ...h.env, CLAUDE_CONFIG_DIR: path.join(h.dir, 'alt') }), /alt\/settings\.json/);
 });
 
@@ -69,7 +82,30 @@ test('standDownReason: Codex reads config.toml plugins and old hooks.json, honou
   h.write('.codex/hooks.json', JSON.stringify(compose({}, 'codex', '/old/chattr')));
   assert.match(standDownReason('codex', h.env), /old chattr install\.sh hooks/);
   h.write('ch/config.toml', '[plugins."chattr@winston"]\n');
+  mkdirSync(path.join(h.dir, 'ch', 'plugins', 'cache', 'winston', 'chattr'), { recursive: true });
   assert.match(standDownReason('codex', { ...h.env, CODEX_HOME: path.join(h.dir, 'ch') }), /ch\/config\.toml/);
+});
+
+test('an enabled plugin whose files are gone does not stand Winston down', (t) => {
+  const h = home(t);
+  h.write('.codex/config.toml', '[plugins."chattr@winston"]\nenabled = true\n');
+  rmSync(path.join(h.dir, '.codex', 'plugins', 'cache', 'winston', 'chattr'), { recursive: true });
+  assert.equal(pluginPresent('codex', 'chattr@winston', h.env), false);
+  assert.equal(standDownReason('codex', h.env), null);
+
+  h.write('.claude/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
+  rmSync(path.join(h.dir, '.claude', 'plugins', 'cache'), { recursive: true });
+  assert.equal(standDownReason('claude', h.env), null, 'no record and no cache folder: not present');
+  mkdirSync(path.join(h.dir, '.claude', 'plugins', 'cache', 'winston', 'chattr'), { recursive: true });
+  assert.ok(standDownReason('claude', h.env), 'no record, cache folder on disk: present');
+  const kept = path.join(h.dir, 'cache', 'chattr', '0.1.0');
+  mkdirSync(kept, { recursive: true });
+  h.write('.claude/plugins/installed_plugins.json', JSON.stringify({ version: 2, plugins: { 'chattr@winston': [{ scope: 'user', installPath: kept }] } }));
+  assert.ok(standDownReason('claude', h.env), 'files on disk');
+  rmSync(kept, { recursive: true });
+  assert.equal(standDownReason('claude', h.env), null, 'record names a path that is gone');
+  h.write('.claude/plugins/installed_plugins.json', JSON.stringify({ version: 2, plugins: {} }));
+  assert.equal(standDownReason('claude', h.env), null, 'not installed at all');
 });
 
 const hook = (env, event, payload, extra = []) => spawnSync(process.execPath, [CHATTR, 'hook', event, ...extra], { input: JSON.stringify(payload), env, encoding: 'utf8' });
@@ -151,4 +187,45 @@ test('worktree-session-start --bundled is silent while standing down', (t) => {
   h.write('.claude/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
   assert.equal(start(['--bundled']).stdout, '');
   assert.match(start([]).stdout, /Could not enumerate live sessions/);
+});
+
+test('Claude: a project\'s own settings and project-scope installs count, for sessions in that project only', (t) => {
+  const h = home(t);
+  const repo = path.join(h.dir, 'proj');
+  const other = path.join(h.dir, 'other');
+  for (const d of [repo, other]) { mkdirSync(path.join(d, 'sub'), { recursive: true }); execFileSync('git', ['init', '-q'], { cwd: d }); }
+  const files = path.join(h.dir, 'cache-chattr');
+  mkdirSync(files);
+  const record = (entries) => h.write('.claude/plugins/installed_plugins.json', JSON.stringify({ version: 2, plugins: { 'chattr@winston': entries } }));
+  record([{ scope: 'project', projectPath: repo, installPath: files }]);
+  h.write('proj/.claude/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
+  assert.match(standDownReason('claude', h.env, path.join(repo, 'sub')), /proj\/\.claude\/settings\.json/, 'a subfolder resolves to the project');
+  assert.equal(standDownReason('claude', h.env, other), null, 'another repository runs Winston\'s copy');
+  assert.equal(standDownReason('claude', h.env), null, 'no cwd: user settings only');
+
+  h.write('proj/.claude/settings.local.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': false } }));
+  assert.equal(standDownReason('claude', h.env, repo), null, 'local false wins over project true');
+  rmSync(path.join(repo, '.claude', 'settings.local.json'));
+
+  h.write('.claude/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
+  h.write('other/.claude/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': false } }));
+  record([{ scope: 'user', installPath: files }]);
+  assert.match(standDownReason('claude', h.env, repo), /chattr@winston/, 'user install, enabled by the project');
+  assert.equal(standDownReason('claude', h.env, other), null, 'project false wins over user true');
+  record([{ scope: 'project', projectPath: other, installPath: files }]);
+  rmSync(path.join(other, '.claude', 'settings.json'));
+  assert.equal(standDownReason('claude', h.env, repo), null, 'enabled, but installed only for another project');
+  assert.ok(standDownReason('claude', h.env, other));
+});
+
+test('gitToplevel finds a main checkout and a worktree without spawning git', (t) => {
+  const h = home(t);
+  const repo = path.join(h.dir, 'r');
+  mkdirSync(path.join(repo, 'a', 'b'), { recursive: true });
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['-C', repo, 'commit', '-q', '--allow-empty', '-m', 'i']);
+  execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', path.join(repo, '.claude', 'worktrees', 'w'), '-b', 'w']);
+  assert.equal(gitToplevel(path.join(repo, 'a', 'b')), repo);
+  assert.equal(gitToplevel(path.join(repo, '.claude', 'worktrees', 'w')), path.join(repo, '.claude', 'worktrees', 'w'));
+  assert.equal(gitToplevel(h.dir), null);
 });

@@ -81,14 +81,16 @@ export async function install(argv, log = (s) => process.stdout.write(s)) {
     log('chattr is part of Winston: the Winston plugin registers its hooks. Only `chattr uninstall-hooks` remains, to remove the old installer\'s registrations.\n');
     return 2;
   }
-  const home = path.resolve(value('home') ?? homedir());
+  const home = path.resolve(value('home') ?? process.env.HOME ?? homedir());
+  // --home names a whole fixture home; without it, CLAUDE_CONFIG_DIR and CODEX_HOME are honoured.
+  const env = value('home') ? {} : process.env;
   const dryRun = flag('dry-run');
   const snapshot = value('snapshot');
   if (!dryRun && !snapshot) {
     log('chattr uninstall-hooks: pass --snapshot <dir> (receives a copy of every file it overwrites) or --dry-run\n');
     return 2;
   }
-  const files = legacyHookFiles(home).map(({ file }) => {
+  const files = legacyHookFiles(home, env).map(({ file }) => {
     const before = existsSync(file) ? readFileSync(file, 'utf8') : '{}\n';
     const config = JSON.parse(before);
     return { file, after: `${JSON.stringify(strip(config), null, 2)}\n`, pretty: `${JSON.stringify(config, null, 2)}\n` };
@@ -97,7 +99,8 @@ export async function install(argv, log = (s) => process.stdout.write(s)) {
   for (const f of files) log(diff(f.file, f.pretty, existsSync(f.file) ? f.after : f.pretty));
   if (dryRun) { log('dry run: nothing written.\n'); return 0; }
   for (const f of changed) {
-    const copy = path.join(snapshot, path.relative(home, f.file));
+    const rel = path.relative(home, f.file);
+    const copy = path.join(snapshot, rel.startsWith('..') || path.isAbsolute(rel) ? f.file.replace(/^\/+/, '') : rel);
     mkdirSync(path.dirname(copy), { recursive: true });
     copyFileSync(f.file, copy);
     writeFileSync(f.file, f.after);
@@ -106,11 +109,11 @@ export async function install(argv, log = (s) => process.stdout.write(s)) {
   return 0;
 }
 
-/** The two files the old installer wrote hooks into, for `home`. */
-export function legacyHookFiles(home = homedir()) {
+/** The two files the old installer wrote hooks into, for `home` (CLAUDE_CONFIG_DIR and CODEX_HOME in `env` win). */
+export function legacyHookFiles(home = homedir(), env = {}) {
   return [
-    { kind: 'claude', file: path.join(home, '.claude', 'settings.json') },
-    { kind: 'codex', file: path.join(home, '.codex', 'hooks.json') },
+    { kind: 'claude', file: path.join(env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'settings.json') },
+    { kind: 'codex', file: path.join(env.CODEX_HOME || path.join(home, '.codex'), 'hooks.json') },
   ];
 }
 

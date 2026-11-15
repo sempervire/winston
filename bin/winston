@@ -45,6 +45,7 @@ import { fileURLToPath } from 'node:url'
 import { doctorResultPath, loadLayers, repoRoot, winstonHome } from '../lib/config.mjs'
 import { recordTitle } from '../hooks/session-title.mjs'
 import { harnessOfRoot, installedVersion, installScope, newer, updateSteps } from '../lib/update.mjs'
+import { chattrChecks } from '../lib/chattr-checks.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -1303,6 +1304,9 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
     ],
   })
 
+  // chattr is part of Winston: what would make its hooks run twice, or not at all, plus the guard's state.
+  for (const c of chattrChecks({ root: ROOT, layers })) add(c)
+
   // Optional: features that use these degrade cleanly without them. Each that is off says
   // how to turn it on and who it is for, so "off" is never a dead end.
   const codex = onPath('codex')
@@ -1310,7 +1314,6 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
     name: 'Codex (second opinions)', required: false, optional: true, state: codex ? 'on' : 'off', detail: 'used by Rex and /winston:codex',
     turnOn: `Recommended if you have a ChatGPT plan that includes Codex; skip it otherwise. ${IN_TERMINAL}, run: npm install -g @openai/codex   then: codex login`,
   })
-  add({ name: 'chattr CLI', required: false, optional: true, state: onPath('chattr') ? 'on' : 'off', detail: 'optional: peer messages, claims' })
   const gemini = process.platform === 'darwin' && run('security', ['find-generic-password', '-s', 'GEMINI_API_KEY']).ok
   add({
     name: 'Gemini key (cheap second opinions)', required: false, optional: true, state: gemini ? 'on' : 'off', detail: 'used by /winston:gemini',
@@ -1359,6 +1362,14 @@ const WHY = [
   [/^Automatic triage keys/, 'The workflow signs in to GitHub and Claude with these two keys; without them new issues wait untriaged.'],
   [/^Automatic triage is working/, 'Failed runs mean new issues are not being triaged, and nothing else reports it.'],
   [/^Fewer permission prompts/, 'Without these rules a long run stops to ask your permission before everyday commands.'],
+  [/^Node\.js version/, 'Every Winston hook, chattr\'s message store included, runs on this Node.'],
+  [/^separate chattr plugin/, 'chattr is part of Winston; with the old plugin installed its hooks run from the old copy, and Winston\'s stay off.'],
+  [/^old chattr install\.sh hooks/, 'These old entries run chattr\'s hooks from an old copy, and Winston\'s stay off while they exist.'],
+  [/^chattr plugin left enabled/, 'An enabled entry for a plugin whose files are gone would switch Winston\'s chattr hooks off again if the files came back.'],
+  [/^chattr plugin installed in repositories/, 'In a session in those repositories, Winston\'s chattr hooks stay off and the old plugin\'s run instead.'],
+  [/^chattr plugin installed but off/, 'Turning the old plugin back on would switch Winston\'s chattr hooks off.'],
+  [/^stray chattr command/, 'A second chattr command on PATH runs an old copy that drifts from Winston\'s.'],
+  [/^Codex can write the chattr store/, 'Without it, claims and peer messages fail inside a Codex session.'],
   [/^Winston version/, 'Newer versions fix setup problems like the ones this checklist looks for.'],
 ]
 

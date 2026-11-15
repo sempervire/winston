@@ -115,7 +115,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "CHATTR_BIN=\"${CLAUDE_PLUGIN_ROOT}/chattr/chattr.mjs\" node --disable-warning=ExperimentalWarning \"${CLAUDE_PLUGIN_ROOT}/chattr/hooks/worktree-guard.mjs\" --bundled || echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Blocked: the Winston shared-checkout check could not run, so it cannot rule out another session editing this folder. Move to a worktree (the EnterWorktree tool), start the session with CLAUDE_ALLOW_SHARED_CWD=1 to share deliberately, or run winston doctor.\"}}'",
+            "command": "CHATTR_BIN=\"${CLAUDE_PLUGIN_ROOT}/chattr/chattr.mjs\" node --disable-warning=ExperimentalWarning \"${CLAUDE_PLUGIN_ROOT}/chattr/hooks/worktree-guard.mjs\" --bundled || echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Blocked: the Winston shared-checkout check could not run, so it cannot rule out another session editing this folder. Move to a worktree (the EnterWorktree tool), or start this session with CLAUDE_ALLOW_SHARED_CWD=1 to share the folder. To turn this check off for the repository, set sharedCheckoutGuard to false in .winston/config.json. Run winston doctor to see why it could not run.\"}}'",
             "timeout": 10,
             "statusMessage": "Checking for other sessions in this directory"
           }
