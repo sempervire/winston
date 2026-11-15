@@ -266,7 +266,7 @@ test('init without --mode plans the setup the folder shows, says which in plain 
   const asked = s.cli(['init']);
   assert.equal(asked.status, 0, asked.stdout + asked.stderr);
   assert.match(asked.stdout, /^Setup: new, because this project has no saved history yet\. This is a new project, so Winston sets everything up\.\n/);
-  assert.match(asked.stdout, /To choose a different setup, in this Claude Code chat, type: !winston init --mode join \(or --mode adopt\)/);
+  assert.doesNotMatch(asked.stdout, /To choose a different setup/, 'no saved history and no settings: neither join nor adopt fits');
   assert.match(asked.stdout, /Winston will:\n/);
   assert.match(asked.stdout, /To go ahead, in this Claude Code chat, type: !winston init --mode new --yes/, 'the apply command names the mode the plan used');
   const forced = s.cli(['init', '--yes']);
@@ -284,10 +284,14 @@ test('init without --mode plans the setup the folder shows, says which in plain 
 
   existingRepo(s);
   writeFileSync(join(s.tmp, 'linked.json'), linkedJson([]));
-  assert.match(s.cli(['init']).stdout, /^Setup: adopt, because this project is on GitHub and Winston has not been set up in it\. This is an existing project/);
+  const adopt = s.cli(['init']).stdout;
+  assert.match(adopt, /^Setup: adopt, because this project is on GitHub and Winston has not been set up in it\. This is an existing project/);
+  assert.match(adopt, /To choose a different setup, in this Claude Code chat, type: !winston init --mode new\n/, 'join is not offered where there are no settings to join');
   mkdirSync(join(s.repo, '.winston'));
   writeFileSync(join(s.repo, '.winston/config.json'), '{}');
-  assert.match(s.cli(['init']).stdout, /^Setup: join, because Winston's settings are already in this project\./);
+  const joined = s.cli(['init']).stdout;
+  assert.match(joined, /^Setup: join, because Winston's settings are already in this project\./);
+  assert.match(joined, /To choose a different setup, in this Claude Code chat, type: !winston init --mode adopt\n/);
 });
 
 test('init refuses the home folder and a folder of projects, and asks first where history has no GitHub link', (t) => {
@@ -298,12 +302,12 @@ test('init refuses the home folder and a folder of projects, and asks first wher
   for (const args of [['init'], ['init', '--mode', 'new']]) {
     const r = s.cli(args, s.tmp);
     assert.equal(r.status, 1, args.join(' '));
-    assert.match(r.stdout, /^This folder doesn't look like a project\. Open Claude Code in your project's folder[^\n]*\n\(Winston did not use [^\n]*: it holds other projects \(repo\)\.\)/);
+    assert.match(r.stdout, /^This folder doesn't look like a project\. Open Claude Code in your project's folder[^\n]*\n\(Winston did not use [^\n]*: it holds other projects \(repo\)\.\)\nIf repo is your project, open Claude Code there \(in the Terminal app: cd 'repo', then claude\) and run \/winston:init\. If this folder itself is your project, run git init here first/);
   }
   // Doctor there says where to go instead of sending the person to init.
   const doc = s.cli(['doctor'], s.tmp);
   assert.match(doc.stdout, /^needs you\s+Project folder uses git\s+— this folder is not a project folder: it holds other projects \(repo\)$/m);
-  assert.match(doc.stdout, /Fix:\n     This folder doesn't look like a project\. Open Claude Code in your project's folder/);
+  assert.match(doc.stdout, /Fix:\n     This folder doesn't look like a project\. Open Claude Code in your project's folder[^\n]* If repo is your project, open Claude Code there/);
   const home = spawnSync(process.execPath, [CLI, 'init', '--mode', 'new'], { cwd: s.tmp, env: { ...s.env, HOME: s.tmp }, encoding: 'utf8' });
   assert.match(home.stdout, /it is your home folder/);
   // A home folder that is itself a git repository is refused too.

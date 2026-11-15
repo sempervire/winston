@@ -24,7 +24,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { doctorResultPath, stateDir, winstonHome } from '../lib/config.mjs'
-import { readInput } from '../lib/harness.mjs'
+import { harness, readInput } from '../lib/harness.mjs'
 
 /**
  * The checkout's top directory, found by walking up to `.git`: no git process to wait on.
@@ -54,21 +54,22 @@ function setupNudgeOff() {
  * the state directory), so someone who just installed Winston learns the first step
  * without finding it in the README.
  */
-function setupNudge(root) {
+function setupNudge(root, app) {
   if (setupNudgeOff()) return
   const dir = stateDir('setup-nudge')
   const marker = join(dir, createHash('sha256').update(root).digest('hex').slice(0, 16))
   if (existsSync(marker)) return
   mkdirSync(dir, { recursive: true })
   writeFileSync(marker, root)
-  say('Winston is installed but not set up in this project. Type /winston:init to set it up (nothing changes until you say yes). This reminder shows once per project.')
+  const how = app === 'codex' ? 'Ask Codex to use the winston:init skill' : 'Type /winston:init'
+  say(`Winston is installed but not set up in this project. ${how} to set it up (nothing changes until you say yes). This reminder shows once per project.`)
 }
 
 function hook() {
   const input = readInput()
   const root = topLevel(input.cwd || process.cwd())
   if (!root) return
-  if (!existsSync(join(root, '.winston', 'config.json'))) return setupNudge(root)
+  if (!existsSync(join(root, '.winston', 'config.json'))) return setupNudge(root, harness(input))
   const result = JSON.parse(readFileSync(doctorResultPath(root), 'utf8'))
   const { open } = result
   if (!Number.isInteger(open) || open < 1) return
