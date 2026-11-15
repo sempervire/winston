@@ -20,7 +20,7 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { harness } from '../../lib/harness.mjs';
-import { loadConfig, repoRoot } from '../../lib/config.mjs';
+import { loadConfig } from '../../lib/config.mjs';
 import { legacyCommands } from './install.mjs';
 
 /** Which CLI sent a hook payload: Codex sends turn_id, a rollout-*.jsonl transcript, or its own tool names. */
@@ -108,7 +108,19 @@ function real(p) {
 /** The project Claude Code reads project settings from: the git toplevel of cwd, else cwd itself. */
 export function projectDir(cwd) {
   if (!cwd) return null;
-  return real(repoRoot(cwd) ?? cwd);
+  return real(gitToplevel(cwd) ?? cwd);
+}
+
+/**
+ * The working tree root holding `dir`: the nearest ancestor with a `.git` entry (a directory in a
+ * main checkout, a `gitdir:` file in a worktree). Found without spawning git, since every hook
+ * call runs this.
+ */
+export function gitToplevel(dir) {
+  for (let d = path.resolve(dir); ; d = path.dirname(d)) {
+    if (existsSync(path.join(d, '.git'))) return d;
+    if (path.dirname(d) === d) return null;
+  }
 }
 
 /** Claude's settings layers that can enable a plugin, lowest precedence first. */

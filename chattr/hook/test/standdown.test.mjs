@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { codexPluginsEnabled, kindOf, pluginPresent, standDownReason } from '../standdown.mjs';
+import { codexPluginsEnabled, gitToplevel, kindOf, pluginPresent, standDownReason } from '../standdown.mjs';
 import { compose } from '../install.mjs';
 import { open } from '../../chattr.mjs';
 
@@ -216,4 +216,16 @@ test('Claude: a project\'s own settings and project-scope installs count, for se
   rmSync(path.join(other, '.claude', 'settings.json'));
   assert.equal(standDownReason('claude', h.env, repo), null, 'enabled, but installed only for another project');
   assert.ok(standDownReason('claude', h.env, other));
+});
+
+test('gitToplevel finds a main checkout and a worktree without spawning git', (t) => {
+  const h = home(t);
+  const repo = path.join(h.dir, 'r');
+  mkdirSync(path.join(repo, 'a', 'b'), { recursive: true });
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['-C', repo, 'commit', '-q', '--allow-empty', '-m', 'i']);
+  execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', path.join(repo, '.claude', 'worktrees', 'w'), '-b', 'w']);
+  assert.equal(gitToplevel(path.join(repo, 'a', 'b')), repo);
+  assert.equal(gitToplevel(path.join(repo, '.claude', 'worktrees', 'w')), path.join(repo, '.claude', 'worktrees', 'w'));
+  assert.equal(gitToplevel(h.dir), null);
 });

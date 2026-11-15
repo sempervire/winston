@@ -165,7 +165,7 @@ test('mainCheckout groups Claude and plain worktrees under their main checkout',
   assert.equal(mainCheckout('/d/app'), '/d/app');
 });
 
-test('project-scope installs elsewhere: one group per main checkout, with the uninstall loop and the settings line to delete', (t) => {
+test('project-scope installs: one row, one committed change in the main checkout, never edits fanned out across worktrees', (t) => {
   const f = fixture(t);
   const other = join(f.tmp, 'Other');
   const files = join(f.tmp, 'cache-chattr');
@@ -175,16 +175,38 @@ test('project-scope installs elsewhere: one group per main checkout, with the un
   const entries = [other, join(other, '.claude/worktrees/w1'), join(other, '.claude/worktrees/gone')].map((projectPath) => ({ scope: 'project', projectPath, installPath: files }));
   entries.push({ scope: 'project', projectPath: f.repo, installPath: files });
   f.write('.claude/plugins/installed_plugins.json', JSON.stringify({ version: 2, plugins: { 'chattr@winston': entries } }));
-  const c = f.rows()['chattr plugin in other repositories'];
+  const c = f.rows()['chattr plugin installed in repositories'];
   assert.equal(c.state, 'off');
-  assert.equal(c.command, undefined, 'several steps, not one command');
+  assert.equal(c.command, undefined, 'a change for the repository owner, not one command');
   const text = c.fixLines.join('\n');
-  assert.match(c.detail, /installed for .*Other$/);
-  assert.match(text, /Other {2}\(and 2 of its worktrees, 1 still on disk\)/);
-  assert.match(text, /worktree list --porcelain .*claude plugin uninstall chattr@winston -s project\); done/);
-  assert.match(text, /One deleted worktree needs nothing/);
-  assert.match(text, /Other\/\.claude\/settings\.json turns it on: delete the line "chattr@winston": true under enabledPlugins\. That file is committed/);
-  assert.doesNotMatch(text, /repo\b/, 'this repository is the separate-plugin row\'s business');
+  assert.match(c.detail, /turned on in .*Other$/);
+  assert.match(text, /Other {2}\(install records for 2 of its worktrees, 1 still on disk\)/);
+  assert.match(text, /One change, by whoever owns that repository: in .*Other\/\.claude\/settings\.json, delete the line "chattr@winston": true under enabledPlugins, and commit it\./);
+  assert.match(text, /does the same edit to that committed file/);
+  assert.match(text, /Change nothing in the worktrees\. Each picks the change up when it next merges or pulls/);
+  assert.doesNotMatch(text, /worktree list|while read/, 'no loop over worktrees');
+  assert.doesNotMatch(text, /repo {2}\(/, 'this checkout is the separate-plugin row\'s business');
+
+  // Once the committed setting is gone the records are leftovers: listed, not a needs-you.
+  writeFileSync(join(other, '.claude/settings.json'), JSON.stringify({ enabledPlugins: {} }));
+  const after = f.rows()['chattr plugin installed in repositories'];
+  assert.equal(after.problem, false);
+  assert.match(after.detail, /3 leftover install records, harmless/);
+});
+
+test('doctor inside a repository still lists that repository\'s worktree records', (t) => {
+  const f = fixture(t);
+  const files = join(f.tmp, 'cache-chattr');
+  mkdirSync(files);
+  mkdirSync(join(f.repo, '.claude'));
+  writeFileSync(join(f.repo, '.claude/settings.json'), JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
+  f.write('.claude/plugins/installed_plugins.json', JSON.stringify({ version: 2, plugins: { 'chattr@winston': [
+    { scope: 'project', projectPath: f.repo, installPath: files },
+    { scope: 'project', projectPath: join(f.repo, '.claude/worktrees/lane'), installPath: files },
+  ] } }));
+  const r = f.rows();
+  assert.match(r['separate chattr plugin'].fixLines.join('\n'), /"-s project" also deletes the line from .*repo\/\.claude\/settings\.json, a committed file: commit that change\./);
+  assert.match(r['chattr plugin installed in repositories'].fixLines.join('\n'), /repo {2}\(install records for 1 of its worktrees, 0 still on disk\)/);
 });
 
 test('this repository\'s project-scope install is the separate-plugin row, with -s project and the by-hand fallback', (t) => {
@@ -223,5 +245,5 @@ test('a project install turned on in user settings still gets -s project; stale 
   ] } }));
   f.write('.claude/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
   assert.match(f.rows()['separate chattr plugin'].command, /^cd .*repo && claude plugin uninstall chattr@winston -s project$/);
-  assert.equal(f.rows()['chattr plugin in other repositories'], undefined);
+  assert.equal(f.rows()['chattr plugin installed in repositories'], undefined);
 });
