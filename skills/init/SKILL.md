@@ -70,8 +70,9 @@ It runs in five steps.
 3. **Confirm, then apply.** Ask the user to confirm in a question box, with the plan's
    actions as the question text. Silence or a general go-ahead given earlier is not
    confirmation. Only after an explicit yes, run the command the plan ends with
-   (`To go ahead, type in this chat: !winston init --mode <mode> ... --yes`; you run it
-   without the `!`, which is only for a person typing it), show its output, then run
+   (`To go ahead, in this Claude Code chat, type: !winston init --mode <mode> ... --yes`, or
+   in Codex `To go ahead, ask Codex to run: winston init ...`; you run it without the `!`,
+   which is only for a person typing it), show its output, then run
    `winston doctor` to confirm the result. A plan with nothing under "Winston will" needs
    no confirmation and no `--yes`.
 

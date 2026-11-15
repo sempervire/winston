@@ -204,6 +204,11 @@ test('doctor-nudge: one line per session when the last doctor run left open item
   const setup = start('aaaaaaaa-0');
   assert.equal(setup.systemMessage, 'Winston is installed but not set up in this project. Type /winston:init to set it up (nothing changes until you say yes). This reminder shows once per project.');
   assert.equal(start('aaaaaaaa-9'), '', 'shown once per repo, not once per session');
+  // In Codex (its payload carries turn_id) the line names the skill, not a slash command.
+  const codexRepo = join(s.tmp, 'codex-repo');
+  mkdirSync(codexRepo);
+  execFileSync('git', ['init', '-q', codexRepo]);
+  assert.equal(s.run('doctor-nudge.mjs', { hook_event_name: 'SessionStart', cwd: codexRepo, session_id: 'cccc-0', turn_id: 't1' }).systemMessage, 'Winston is installed but not set up in this project. Ask Codex to use the winston:init skill to set it up (nothing changes until you say yes). This reminder shows once per project.');
   mkdirSync(join(repo, '.winston'));
   writeFileSync(join(repo, '.winston/config.json'), '{}');
   const out = start('aaaaaaaa-1');

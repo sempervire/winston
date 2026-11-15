@@ -65,7 +65,8 @@ Who does what:
   changes nothing; `/winston:init` adds a `TRIAGE.md` starter. **Triage rules: blanks to
   fill**: lines that still say "fill this in". **Risk ratings for this project** (a tip):
   the starter's standard ratings work as they are; offer to tailor them from reading the
-  repo, show the draft, and write it unless the person objects.
+  repo and show the draft. By now `TRIAGE.md` may be committed or edited, so write the
+  draft only on the person's explicit yes in a question box (yes recommended).
 - **Fewer permission prompts**: one command the owner types in this chat,
   `!winston permissions --apply` (in Codex: ask Codex to run `winston permissions --apply`; Claude is not allowed to grant itself permissions; deny
   wins over allow). Relay it, never run it yourself.
