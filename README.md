@@ -160,7 +160,9 @@ The triage workflow needs two Actions secrets that only the owner can create:
   account owns the board (as on most personal projects), it must be a **classic** token
   with the `repo` and `project` scopes: GitHub's fine-grained tokens cannot reach a
   project a person owns. When an organization owns both the board and the repo, a
-  fine-grained token works.
+  fine-grained token works. Those two scopes are enough: the script reaches the board
+  through `gh api`, never the `gh project` commands, which also demand `read:org` and
+  `read:discussion`.
 - `CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token`, so triage runs on your Claude
   plan. No API key is used.
 
