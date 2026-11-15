@@ -4,7 +4,9 @@
 // hooks/hooks.json pass `--bundled`; nothing else calls this.
 //
 // Read per CLI, because each CLI loads only its own config:
-//   Claude Code  <CLAUDE_CONFIG_DIR or ~/.claude>/settings.json  enabledPlugins["chattr@…"] true, or old hooks
+//   Claude Code  <CLAUDE_CONFIG_DIR or ~/.claude>/settings.json  enabledPlugins["chattr@…"] true, or old hooks;
+//                <project>/.claude/settings.json and settings.local.json, the project being the git
+//                toplevel of the payload's cwd (a later layer wins: project over user, local over both)
 //   Codex        <CODEX_HOME or ~/.codex>/config.toml             [plugins."chattr@…"] not enabled = false
 //                <CODEX_HOME or ~/.codex>/hooks.json              old hooks
 // A file that is missing or does not parse counts as "no other chattr": running twice is the
@@ -14,11 +16,11 @@
 //   Claude Code  <config dir>/plugins/installed_plugins.json  an entry whose installPath exists
 //                (no readable record: <config dir>/plugins/cache/<marketplace>/<plugin>/)
 //   Codex        <CODEX_HOME>/plugins/cache/<marketplace>/chattr/
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { harness } from '../../lib/harness.mjs';
-import { loadConfig } from '../../lib/config.mjs';
+import { loadConfig, repoRoot } from '../../lib/config.mjs';
 import { legacyCommands } from './install.mjs';
 
 /** Which CLI sent a hook payload: Codex sends turn_id, a rollout-*.jsonl transcript, or its own tool names. */
@@ -99,41 +101,87 @@ export function configPaths(env = process.env) {
   };
 }
 
+function real(p) {
+  try { return realpathSync(p); } catch { return path.resolve(p); }
+}
+
+/** The project Claude Code reads project settings from: the git toplevel of cwd, else cwd itself. */
+export function projectDir(cwd) {
+  if (!cwd) return null;
+  return real(repoRoot(cwd) ?? cwd);
+}
+
+/** Claude's settings layers that can enable a plugin, lowest precedence first. */
+export function claudeLayers(env = process.env, cwd) {
+  const paths = configPaths(env);
+  const dir = projectDir(cwd);
+  return [
+    { scope: 'user', file: paths.claudeSettings },
+    ...(dir ? [
+      { scope: 'project', file: path.join(dir, '.claude', 'settings.json') },
+      { scope: 'local', file: path.join(dir, '.claude', 'settings.local.json') },
+    ] : []),
+  ];
+}
+
 /**
- * True while an enabled plugin's files are still on disk. Claude Code: an installed_plugins.json
- * entry whose installPath exists; without a readable record, its cache folder
+ * chattr plugins Claude Code has enabled for a session in cwd, with the settings file that says so:
+ * user, then the project's .claude/settings.json, then its settings.local.json (the later layer wins,
+ * so a project's false turns a user's true off).
+ */
+export function claudeEnabled(env = process.env, cwd) {
+  const state = new Map();
+  for (const layer of claudeLayers(env, cwd)) {
+    for (const [name, on] of Object.entries(json(layer.file)?.enabledPlugins ?? {})) {
+      if (name.startsWith('chattr@') && typeof on === 'boolean') state.set(name, { on, ...layer });
+    }
+  }
+  return [...state].filter(([, v]) => v.on).map(([name, v]) => ({ name, scope: v.scope, file: v.file }));
+}
+
+/** installed_plugins.json entries for `name`, or null when there is no readable record. */
+export function claudeInstalls(name, env = process.env) {
+  const record = json(configPaths(env).claudeInstalled);
+  if (!record?.plugins) return null;
+  return (record.plugins[name] ?? []).filter((e) => e && typeof e.installPath === 'string');
+}
+
+/**
+ * True while an enabled plugin's files are still on disk for a session in cwd.
+ * Claude Code: a user-scope installed_plugins.json entry, or a project/local-scope one for this
+ * project, whose installPath exists; without a readable record, its cache folder
  * (<config dir>/plugins/cache/<marketplace>/<plugin>). Codex: its cache folder.
  */
-export function pluginPresent(kind, name, env = process.env) {
+export function pluginPresent(kind, name, env = process.env, cwd) {
   const paths = configPaths(env);
   const [plugin, marketplace] = name.split('@');
   if (kind === 'codex') return existsSync(path.join(paths.codexCache, marketplace ?? '', plugin));
-  const record = json(paths.claudeInstalled);
-  if (!record?.plugins) return existsSync(path.join(paths.claudeInstalled, '..', 'cache', marketplace ?? '', plugin));
-  return (record.plugins[name] ?? []).some((e) => typeof e?.installPath === 'string' && existsSync(e.installPath));
+  const installs = claudeInstalls(name, env);
+  if (!installs) return existsSync(path.join(paths.claudeInstalled, '..', 'cache', marketplace ?? '', plugin));
+  const here = new Set([projectDir(cwd), cwd && real(cwd)].filter(Boolean));
+  return installs.some((e) => existsSync(e.installPath) && (e.scope === 'user' || !e.scope || (e.projectPath && here.has(real(e.projectPath)))));
 }
 
-/** Enabled chattr plugins whose files are still on disk, for this CLI. */
-export function separatePlugins(kind, env = process.env) {
+/** Enabled chattr plugins whose files are still on disk, for this CLI and a session in cwd: [{ name, file }]. */
+export function separatePlugins(kind, env = process.env, cwd) {
   const paths = configPaths(env);
   const enabled = kind === 'codex'
-    ? codexPluginsEnabled(read(paths.codexConfig))
-    : Object.entries(json(paths.claudeSettings)?.enabledPlugins ?? {}).filter(([name, on]) => on === true && name.startsWith('chattr@')).map(([name]) => name);
-  return enabled.filter((name) => pluginPresent(kind, name, env));
+    ? codexPluginsEnabled(read(paths.codexConfig)).map((name) => ({ name, file: paths.codexConfig }))
+    : claudeEnabled(env, cwd);
+  return enabled.filter((e) => pluginPresent(kind, e.name, env, cwd));
 }
 
-/** Why the bundled chattr hooks must not run for this CLI, or null when they should. */
-export function standDownReason(kind, env = process.env) {
+/** Why the bundled chattr hooks must not run for this CLI in cwd, or null when they should. */
+export function standDownReason(kind, env = process.env, cwd) {
   const paths = configPaths(env);
   if (kind === 'codex') {
-    const enabled = separatePlugins('codex', env);
-    if (enabled.length) return `the separate ${enabled[0]} plugin is enabled in ${paths.codexConfig}`;
+    const enabled = separatePlugins('codex', env, cwd);
+    if (enabled.length) return `the separate ${enabled[0].name} plugin is enabled in ${enabled[0].file}`;
     if (legacyCommands(json(paths.codexHooks)).length) return `old chattr install.sh hooks are registered in ${paths.codexHooks}`;
     return null;
   }
-  const settings = json(paths.claudeSettings);
-  const enabled = separatePlugins('claude', env);
-  if (enabled.length) return `the separate ${enabled[0]} plugin is enabled in ${paths.claudeSettings}`;
-  if (legacyCommands(settings).length) return `old chattr install.sh hooks are registered in ${paths.claudeSettings}`;
+  const enabled = separatePlugins('claude', env, cwd);
+  if (enabled.length) return `the separate ${enabled[0].name} plugin is enabled in ${enabled[0].file}`;
+  if (legacyCommands(json(paths.claudeSettings)).length) return `old chattr install.sh hooks are registered in ${paths.claudeSettings}`;
   return null;
 }

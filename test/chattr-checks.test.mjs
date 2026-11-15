@@ -6,7 +6,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { chattrChecks, nodeMajor, writableRoots } from '../lib/chattr-checks.mjs';
+import { chattrChecks, mainCheckout, nodeMajor, writableRoots } from '../lib/chattr-checks.mjs';
 import { compose } from '../chattr/hook/install.mjs';
 import { loadLayers } from '../lib/config.mjs';
 
@@ -69,7 +69,7 @@ test('the separate plugin in either app gives the exact uninstall command for ea
   mkdirSync(join(f.home, '.codex/plugins/cache/winston/chattr'), { recursive: true });
   c = f.rows()['separate chattr plugin'];
   assert.equal(c.command, 'claude plugin uninstall chattr@winston && codex plugin remove chattr@winston');
-  assert.match(c.fixLines.join('\n'), /Codex: codex plugin remove chattr@winston\n.*restart every Claude Code and Codex session/);
+  assert.match(c.fixLines.join('\n'), /Codex: codex plugin remove chattr@winston {3}\(if that fails, delete the "chattr@winston" entry[^\n]*\n.*restart every Claude Code and Codex session/);
   f.write('.claude/settings.json', '{}');
   f.write('.codex/config.toml', '[plugins."chattr@winston"]\nenabled = false\n');
   assert.equal(f.rows()['separate chattr plugin'].state, 'ok');
@@ -157,4 +157,56 @@ test('the guard row names the layer that turned it off', (t) => {
   writeFileSync(join(f.repo, '.winston/config.json'), JSON.stringify({ sharedCheckoutGuard: true }));
   f.write('.winston/config.json', JSON.stringify({ sharedCheckoutGuard: false }));
   assert.equal(f.rows()['shared-checkout guard'].state, 'on', 'the repo layer wins');
+});
+
+test('mainCheckout groups Claude and plain worktrees under their main checkout', () => {
+  assert.equal(mainCheckout('/d/ShareView/.claude/worktrees/claude-1'), '/d/ShareView');
+  assert.equal(mainCheckout('/d/app/.worktrees/lane'), '/d/app');
+  assert.equal(mainCheckout('/d/app'), '/d/app');
+});
+
+test('project-scope installs elsewhere: one group per main checkout, with the uninstall loop and the settings line to delete', (t) => {
+  const f = fixture(t);
+  const other = join(f.tmp, 'Other');
+  const files = join(f.tmp, 'cache-chattr');
+  mkdirSync(files);
+  mkdirSync(join(other, '.claude/worktrees/w1'), { recursive: true });
+  writeFileSync(join(other, '.claude/settings.json'), JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
+  const entries = [other, join(other, '.claude/worktrees/w1'), join(other, '.claude/worktrees/gone')].map((projectPath) => ({ scope: 'project', projectPath, installPath: files }));
+  entries.push({ scope: 'project', projectPath: f.repo, installPath: files });
+  f.write('.claude/plugins/installed_plugins.json', JSON.stringify({ version: 2, plugins: { 'chattr@winston': entries } }));
+  const c = f.rows()['chattr plugin in other repositories'];
+  assert.equal(c.state, 'off');
+  assert.equal(c.command, undefined, 'several steps, not one command');
+  const text = c.fixLines.join('\n');
+  assert.match(c.detail, /installed for .*Other$/);
+  assert.match(text, /Other {2}\(and 2 of its worktrees, 1 still on disk\)/);
+  assert.match(text, /worktree list --porcelain .*claude plugin uninstall chattr@winston -s project\); done/);
+  assert.match(text, /One deleted worktree needs nothing/);
+  assert.match(text, /Other\/\.claude\/settings\.json turns it on: delete the line "chattr@winston": true under enabledPlugins\. That file is committed/);
+  assert.doesNotMatch(text, /repo\b/, 'this repository is the separate-plugin row\'s business');
+});
+
+test('this repository\'s project-scope install is the separate-plugin row, with -s project and the by-hand fallback', (t) => {
+  const f = fixture(t);
+  const files = join(f.tmp, 'cache-chattr');
+  mkdirSync(files);
+  f.write('.claude/plugins/installed_plugins.json', JSON.stringify({ version: 2, plugins: { 'chattr@winston': [{ scope: 'project', projectPath: f.repo, installPath: files }] } }));
+  mkdirSync(join(f.repo, '.claude'));
+  writeFileSync(join(f.repo, '.claude/settings.json'), JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
+  const c = f.rows()['separate chattr plugin'];
+  assert.equal(c.state, 'off');
+  assert.match(c.command, /^cd .*repo && claude plugin uninstall chattr@winston -s project$/);
+  assert.match(c.fixLines.join('\n'), /if that fails, delete the line "chattr@winston": true under enabledPlugins in .*repo\/\.claude\/settings\.json \(a committed file/);
+});
+
+test('installed for the user but turned off: flagged, since turning it on would switch Winston\'s copy off', (t) => {
+  const f = fixture(t);
+  const files = join(f.tmp, 'cache-chattr');
+  mkdirSync(files);
+  f.write('.claude/plugins/installed_plugins.json', JSON.stringify({ version: 2, plugins: { 'chattr@winston': [{ scope: 'user', installPath: files }] } }));
+  f.write('.claude/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': false } }));
+  const r = f.rows();
+  assert.equal(r['separate chattr plugin'].state, 'ok');
+  assert.equal(r['chattr plugin installed but off'].command, 'claude plugin uninstall chattr@winston');
 });

@@ -188,3 +188,32 @@ test('worktree-session-start --bundled is silent while standing down', (t) => {
   assert.equal(start(['--bundled']).stdout, '');
   assert.match(start([]).stdout, /Could not enumerate live sessions/);
 });
+
+test('Claude: a project\'s own settings and project-scope installs count, for sessions in that project only', (t) => {
+  const h = home(t);
+  const repo = path.join(h.dir, 'proj');
+  const other = path.join(h.dir, 'other');
+  for (const d of [repo, other]) { mkdirSync(path.join(d, 'sub'), { recursive: true }); execFileSync('git', ['init', '-q'], { cwd: d }); }
+  const files = path.join(h.dir, 'cache-chattr');
+  mkdirSync(files);
+  const record = (entries) => h.write('.claude/plugins/installed_plugins.json', JSON.stringify({ version: 2, plugins: { 'chattr@winston': entries } }));
+  record([{ scope: 'project', projectPath: repo, installPath: files }]);
+  h.write('proj/.claude/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
+  assert.match(standDownReason('claude', h.env, path.join(repo, 'sub')), /proj\/\.claude\/settings\.json/, 'a subfolder resolves to the project');
+  assert.equal(standDownReason('claude', h.env, other), null, 'another repository runs Winston\'s copy');
+  assert.equal(standDownReason('claude', h.env), null, 'no cwd: user settings only');
+
+  h.write('proj/.claude/settings.local.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': false } }));
+  assert.equal(standDownReason('claude', h.env, repo), null, 'local false wins over project true');
+  rmSync(path.join(repo, '.claude', 'settings.local.json'));
+
+  h.write('.claude/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
+  h.write('other/.claude/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': false } }));
+  record([{ scope: 'user', installPath: files }]);
+  assert.match(standDownReason('claude', h.env, repo), /chattr@winston/, 'user install, enabled by the project');
+  assert.equal(standDownReason('claude', h.env, other), null, 'project false wins over user true');
+  record([{ scope: 'project', projectPath: other, installPath: files }]);
+  rmSync(path.join(other, '.claude', 'settings.json'));
+  assert.equal(standDownReason('claude', h.env, repo), null, 'enabled, but installed only for another project');
+  assert.ok(standDownReason('claude', h.env, other));
+});

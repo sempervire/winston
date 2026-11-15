@@ -257,7 +257,9 @@ Do it in this order: uninstall the separate plugin first (`claude plugin uninsta
 chattr@winston`, `codex plugin remove chattr@winston`), then update Winston, restart, and in
 Codex trust the new hooks with `/hooks`. The update removes chattr from Winston's
 marketplace; if you update first and the uninstall then reports the plugin missing, doctor
-shows the line to delete by hand.
+shows the line to delete by hand. A repository that installed the plugin for itself
+(project scope, or enabled in its own `.claude/settings.json`) keeps the old copy running
+in sessions there; doctor lists each such repository, with its worktrees, and the steps.
 `/winston:doctor` names what is left and gives the exact removal command for each
 (`claude plugin uninstall chattr@winston`, `codex plugin remove chattr@winston`, the old
 hooks' `uninstall-hooks`, a `~/.local/bin/chattr` link). Restart every session afterwards.
