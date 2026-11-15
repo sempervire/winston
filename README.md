@@ -132,6 +132,18 @@ only by you, in your own terminal.
 Until both are set new issues are not triaged automatically; `winston doctor` reports the
 secrets and whether the workflow's latest runs failed.
 
+The triage workflow runs Winston's triage script, checked out from this repository at a
+pinned commit: one model call per issue through the `claude` CLI, with no tools, the
+policy as the system prompt and a JSON verdict, after which code writes the `risk:` tier,
+Priority, the plan comment, the reporter as assignee, and whichever labels the policy's
+"Labels triage applies" line names. It never closes an issue. It runs on a new issue, on a
+manual dispatch (one issue, or with none the sweep; `dry_run` prints the verdict and
+writes nothing), and once a day as a sweep of up to five unstamped issues. The model is
+`opus` unless the repository variable `TRIAGE_MODEL` names another. Doctor reports which
+mechanism a repo's workflow uses: init offers to replace the older agent-based workflow
+(`claude-code-action` with a tool list), and when Winston's pin is newer it rewrites only
+the workflow's pinned `ref:` line.
+
 The board view is filtered to one milestone, and a new issue has none, so it would reach
 the board and never show in that view. init sets `phase` in the config to that milestone
 and installs `set-issue-phase.yml`, which gives every new issue the milestone (and, once a
