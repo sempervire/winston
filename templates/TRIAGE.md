@@ -1,7 +1,8 @@
-<!-- Winston starter triage policy. `{{key}}` is a key in `.winston/config.json`:
-replace each with its value (`board.statuses[0]` and `[1]` are the intake and the
-ready-to-work status). Then rewrite the three sections marked (per-repo) at the end.
-Nothing else needs editing. Delete this comment. -->
+<!-- Winston starter triage policy. winston init replaces each `{{placeholder}}`: most
+are keys in `.winston/config.json` (`board.statuses[0]` and `[1]` are the intake and the
+ready-to-work status); `priorityOptions` comes from the board's Priority field and
+`otherRules` from `processDocs`. The three sections marked
+(per-repo) at the end work as written and are the ones to tailor. Delete this comment. -->
 
 # Triage
 
@@ -28,8 +29,9 @@ that has been triaged before.
 
 If circumstances change, it's OK to alter an issue during triage to reflect new information.
 
-Everything in this file applies as written except the three sections marked
-**(per-repo)** at the end, which hold what is specific to this repository.
+Everything in this file applies as written. The three sections marked **(per-repo)** at
+the end hold what is specific to this repository; Winston fills them in, and you can edit
+them any time. You don't need to read the rest: it is instructions for Winston.
 
 ---
 
@@ -193,26 +195,26 @@ Once each qualifying issue has been processed, the triage process ends.
 <!-- per-repo:names -->
 ## Names (per-repo)
 
-<!-- Fill in from `.winston/config.json`; keep one line per item. -->
+<!-- Winston filled this in from `.winston/config.json`; edit it if you like, one line per item. -->
 
 - **Owner**: `{{owner}}`.
 - **Board**: project `{{board.number}}` of `{{board.owner}}`. Triage reads statuses
   `{{board.statuses[0]}}` and `{{board.statuses[1]}}`.
 - **Priority options**: the options of the `{{board.priorityField}}` field, most urgent
-  first. Write them out here exactly as the board spells them.
+  first: {{priorityOptions}}.
 - **Branches**: work lands on `{{branches.integration}}`; `{{branches.production}}` is
   what is released. The unattended workflow runs from the repository's default branch,
   so a change to this file or to the workflow takes effect only once it is there.
-- **Other rules**: name the file that owns the repo's working rules, if there is one.
+- **Other rules**: {{otherRules}}.
 <!-- /per-repo -->
 
 <!-- per-repo:risk-tiers -->
 ## Risk tiers (per-repo)
 
-<!-- Write three rows for THIS repo's kinds of change. Sort by what breaks for a user if
-the change is wrong, not by how large the diff is. Name real paths. Say which tier a
-change that needs an owner decision gets. The rows below are a generic example; replace
-them. -->
+<!-- These are Winston's standard risk ratings, and they work as they are. To tailor
+them, ask Claude (or run /winston:init): it reads the repo and drafts three rows for this
+repo's kinds of change, sorted by what breaks for a user if the change is wrong, not by how
+large the diff is, naming real paths. -->
 
 | Tier | Applies when the fix… |
 |---|---|

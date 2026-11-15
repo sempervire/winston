@@ -35,7 +35,7 @@
 #
 # The script comes from the Winston repository at the commit pinned below, never from a
 # moving branch. `winston doctor` reports when Winston has a newer pin, and
-# `winston init --mode adopt` rewrites only that `ref:` line.
+# `winston init` (or /winston:init) rewrites only that `ref:` line.
 #
 # This workflow triages. Putting a new issue on the board at its intake status is the
 # board's own job: its "Auto-add to project" and "Item added to project" workflows, which
