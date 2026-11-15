@@ -408,7 +408,7 @@ test('with a config already here, init creates the integration branch it names w
   write({ integration: 'develop', production: 'release' });
   const wrong = s.cli(['init', '--mode', 'adopt']);
   assert.doesNotMatch(wrong.stdout, /create branch/);
-  assert.match(wrong.stdout, /By hand:\n(\s+- [^\n]+\n)*\s+- integration branch on origin: develop\n/);
+  assert.match(wrong.stdout, /By hand \(each line says what to do next\):\n(\s+- [^\n]+\n)*\s+- integration branch on origin: develop\n/);
 });
 
 test('a workflow fires on a new issue when its on: names issues, with opened or with no types', () => {
@@ -573,7 +573,7 @@ test('a new issue gets the current phase\'s milestone: doctor reports hidden iss
   // The phase is one line: a milestone that is not open is the owner's to correct.
   write({ phase: 'Gone' });
   assert.match(s.cli(['doctor']).stdout, /^needs you\s+issue phase\s+— phase is "Gone", which is not an open milestone$/m);
-  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /By hand:\n\s+- issue phase: set "phase" in .*config\.json to the current milestone \(open: Pilot, Later\), or to false/);
+  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /By hand \(each line says what to do next\):\n\s+- issue phase: set "phase" in .*config\.json to the current milestone \(open: Pilot, Later\), or to false/);
 
   // Views filtered to several milestones: which is current is the owner's to say.
   write();
@@ -721,7 +721,7 @@ test('doctor checks the board\'s two intake workflows and the triage workflow\'s
   assert.match(off.stdout, /^done\s+board sets Inbox on added items\s+— on; GitHub's API does not show which Status it sets$/m);
   assert.match(off.stdout, /^needs you\s+triage workflow secrets\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN missing/m);
   assert.match(off.stdout, /\d\. triage workflow secrets\n   Why: [^\n]+\n   Fix:\n     Not set on acme\/thing: CLAUDE_CODE_OAUTH_TOKEN\.[^]*\n       1\. In your own terminal: claude setup-token/);
-  assert.match(off.stdout, /\d\. board auto-adds new issues\n   Why: Without this a new issue never shows up on the board\.\n   Fix:\n     \/winston:init does this for you in the browser\. By hand: open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
+  assert.match(off.stdout, /\d\. board auto-adds new issues\n   Why: Without this a new issue never shows up on the board\.\n   Fix:\n     Next: run \/winston:init and it does this for you in the browser\. To do it yourself: open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
   assert.equal(off.stdout.match(/board auto-adds new issues/g).length, 2, 'once in the checklist, once under Needs you');
 
   writeFileSync(join(s.tmp, 'board.json'), boardJson({ options: ['Inbox', 'Ready', 'Verify', 'Verified'], workflows: INTAKE, views: KANBAN }));
@@ -785,7 +785,7 @@ test('doctor names another project that auto-adds the repo\'s issues, ahead of t
   assert.equal(other.status, 1);
   assert.match(other.stdout, /^needs you\s+project 1 auto-adds this repo's issues\s+— new issues \(#48, #47\) were added to project 1 "Project 1" by its Auto-add workflow, not only to board 6$/m);
   assert.ok(other.stdout.indexOf('project 1 auto-adds this repo\'s issues\n   Why') > 0 && other.stdout.indexOf('project 1 auto-adds this repo\'s issues\n   Why') < other.stdout.indexOf('board auto-adds new issues\n   Why'), 'listed before the board\'s own workflows');
-  assert.match(other.stdout, /Fix:\n     \/winston:init does this for you in the browser\. By hand: before turning on board 6's workflows, open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
+  assert.match(other.stdout, /Fix:\n     Next: run \/winston:init and it does this for you in the browser\. To do it yourself: before turning on board 6's workflows, open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
   const plan = s.cli(['init', '--mode', 'adopt']);
   assert.match(plan.stdout, /In the browser[^\n]*\n  - project 1 auto-adds this repo's issues: before turning on board 6's workflows, open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows, choose "Auto-add to project", click Edit, remove this repository \(or turn the workflow off if this repository is its only one\), then Save\n  - board auto-adds new issues/);
 
@@ -1063,7 +1063,7 @@ test('doctor flags a policy with no triage rules; init writes a starter, repoint
   // An existing TRIAGE.md without rules is the owner's to fill in: never overwritten.
   writeFileSync(join(s.repo, 'TRIAGE.md'), 'notes to self\n');
   const kept = s.cli(['init', '--mode', 'adopt', '--yes']);
-  assert.match(kept.stdout, /By hand:\n\s+- triage policy: .*TRIAGE\.md exists and has no triage rules, and Winston does not overwrite it/);
+  assert.match(kept.stdout, /By hand \(each line says what to do next\):\n\s+- triage policy: .*TRIAGE\.md exists and has no triage rules, and Winston does not overwrite it/);
   assert.equal(readFileSync(join(s.repo, 'TRIAGE.md'), 'utf8'), 'notes to self\n');
 });
 
@@ -1317,6 +1317,22 @@ test('every stop on a missing prerequisite points at /winston:doctor', (t) => {
   assert.match(noGh.stderr, /gh is not logged in\.[^\n]*\nRun \/winston:doctor to see what is missing and how to fix it\.\n$/);
   assert.match(s.cli(['init', '--mode', 'join']).stdout, /Run \/winston:doctor to see what is missing and how to fix it\.\n$/);
   assert.match(s.cli(['permissions'], s.tmp).stderr, /is not inside a git repository\nRun \/winston:doctor to see what is missing and how to fix it\.\n$/);
+});
+
+test('skills with a closing report carry the no-bare-statement rule (#52)', () => {
+  const flat = (f) => readFileSync(join(ROOT, 'skills', f, 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  for (const skill of ['init', 'doctor', 'handoff']) {
+    const t = flat(skill);
+    assert.ok(t.includes('Closing report') && t.includes('no item without an action') || t.includes('Closing report rule'), skill);
+    assert.match(t, /already done/, skill);
+    assert.match(t, /pbcopy/, skill);
+    assert.match(t, /question-box choice with the recommended option first/, skill);
+  }
+  assert.doesNotMatch(flat('init'), /Relay it as it stands/);
+  assert.match(flat('init'), /Never use `gh pr merge --admin`/);
+  assert.match(flat('init'), /gh pr merge <n> --merge/);
+  assert.match(flat('init'), /production deploy/);
+  assert.match(flat('doctor'), /read-only and performs no fix/);
 });
 
 test('the token link fills in what GitHub documents, by who owns the board', () => {
