@@ -6,7 +6,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { chattrChecks, mainCheckout, nodeMajor, writableRoots } from '../lib/chattr-checks.mjs';
+import { chattrChecks, mainCheckout, nodeMajor, worktreeMain, writableRoots } from '../lib/chattr-checks.mjs';
 import { compose } from '../chattr/hook/install.mjs';
 import { loadLayers } from '../lib/config.mjs';
 
@@ -268,4 +268,35 @@ test('records are leftovers only when no layer turns the plugin on: user setting
   c = f.rows()['chattr plugin installed in repositories'];
   assert.match(c.detail, /turned on in/);
   assert.match(c.fixLines.join('\n'), /Your user settings \(~\/\.claude\/settings\.json\) turn it on/);
+});
+
+test('inside a worktree whose committed settings turn chattr on, no -s project command: point at the main checkout', (t) => {
+  const f = fixture(t);
+  const git = (...a) => execFileSync('git', ['-C', f.repo, ...a], { stdio: 'ignore' });
+  mkdirSync(join(f.repo, '.claude'));
+  writeFileSync(join(f.repo, '.claude/settings.json'), JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
+  git('add', '-A');
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'on');
+  const wt = join(f.repo, '.claude/worktrees/lane');
+  git('worktree', 'add', '-q', wt, '-b', 'lane');
+  assert.equal(worktreeMain(wt), f.repo);
+  assert.equal(worktreeMain(f.repo), null);
+  const files = join(f.tmp, 'cache-chattr');
+  mkdirSync(files);
+  f.write('.claude/plugins/installed_plugins.json', JSON.stringify({ version: 2, plugins: { 'chattr@winston': [{ scope: 'project', projectPath: wt, installPath: files }] } }));
+  const rowsAt = (dir) => Object.fromEntries(chattrChecks({ root: ROOT, layers: loadLayers(dir), node: { major: 24, version: 'v24' } }).map((c) => [c.name, c]));
+
+  let c = rowsAt(wt)['separate chattr plugin'];
+  assert.equal(c.state, 'off');
+  assert.equal(c.command, undefined, 'nothing paste-ready that would rewrite the worktree\'s tracked file');
+  const text = c.fixLines.join('\n');
+  assert.doesNotMatch(text, /cd [^\n]*lane && claude plugin uninstall/);
+  assert.match(text, /this is a worktree of .*repo, and its committed \.claude\/settings\.json turns chattr@winston on\. Run nothing for it here/);
+
+  // After the worktree merges the main checkout's change, the command only clears its record.
+  writeFileSync(join(wt, '.claude/settings.json'), JSON.stringify({ enabledPlugins: {} }));
+  f.write('.claude/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
+  c = rowsAt(wt)['separate chattr plugin'];
+  assert.match(c.command, /^cd .*lane && claude plugin uninstall chattr@winston -s project$/);
+  assert.doesNotMatch(c.fixLines.join('\n'), /Run nothing for it here|a committed file: commit that change/);
 });
