@@ -43,6 +43,7 @@ import { fileURLToPath } from 'node:url'
 import { doctorResultPath, loadLayers, repoRoot, winstonHome } from '../lib/config.mjs'
 import { recordTitle } from '../hooks/session-title.mjs'
 import { harnessOfRoot, installedVersion, installScope, newer, updateSteps } from '../lib/update.mjs'
+import { chattrChecks } from '../lib/chattr-checks.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -1181,9 +1182,11 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
     ],
   })
 
+  // chattr is part of Winston: what would make its hooks run twice, or not at all, plus the guard's state.
+  for (const c of chattrChecks({ root: ROOT, layers })) add(c)
+
   // Optional: features that use these degrade cleanly without them.
   add({ name: 'codex CLI', required: false, state: onPath('codex') ? 'on' : 'off', detail: 'optional: Rex, /winston:codex' })
-  add({ name: 'chattr CLI', required: false, state: onPath('chattr') ? 'on' : 'off', detail: 'optional: peer messages, claims' })
   const gemini = process.platform === 'darwin' && run('security', ['find-generic-password', '-s', 'GEMINI_API_KEY']).ok
   add({ name: 'GEMINI_API_KEY in keychain', required: false, state: gemini ? 'on' : 'off', detail: 'optional: /winston:gemini' })
   const agents = codexSources()
@@ -1222,6 +1225,14 @@ const WHY = [
   [/^triage workflow secrets/, 'The workflow cannot sign in to GitHub or Claude without them, so new issues stay untriaged.'],
   [/^triage workflow runs/, 'Failed runs mean new issues are not being triaged, and nothing else reports it.'],
   [/^project permission rules/, 'Without these rules a long run stops to ask permission for routine commands.'],
+  [/^Node\.js version/, 'Every Winston hook, chattr\'s message store included, runs on this Node.'],
+  [/^separate chattr plugin/, 'chattr is part of Winston; with the old plugin installed its hooks run from the old copy, and Winston\'s stay off.'],
+  [/^old chattr install\.sh hooks/, 'These old entries run chattr\'s hooks from an old copy, and Winston\'s stay off while they exist.'],
+  [/^chattr plugin left enabled/, 'An enabled entry for a plugin whose files are gone would switch Winston\'s chattr hooks off again if the files came back.'],
+  [/^chattr plugin installed in repositories/, 'In a session in those repositories, Winston\'s chattr hooks stay off and the old plugin\'s run instead.'],
+  [/^chattr plugin installed but off/, 'Turning the old plugin back on would switch Winston\'s chattr hooks off.'],
+  [/^stray chattr command/, 'A second chattr command on PATH runs an old copy that drifts from Winston\'s.'],
+  [/^Codex can write the chattr store/, 'Without it, claims and peer messages fail inside a Codex session.'],
   [/^Winston version/, 'Newer versions fix setup problems like the ones this checklist looks for.'],
 ]
 

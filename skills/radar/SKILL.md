@@ -65,8 +65,8 @@ git log --oneline -10
 ```
 
 Where config names a `board`, add its open items and their Status from `gh` (Projects v2 for
-`board.owner` / `board.number`). Where chattr is installed, add `chattr state` so claimed work
-is not offered; without it, say ownership is unknown.
+`board.owner` / `board.number`), and `chattr state` so claimed work is not offered. If
+`chattr state` fails, say ownership is unknown.
 
 **Repository access is a hard prerequisite.** If a required read fails, stop. Report the failed
 read and its real error; do not consult Radar from stale or remembered state. Where a check comes

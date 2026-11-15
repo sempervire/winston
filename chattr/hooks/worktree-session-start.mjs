@@ -80,7 +80,7 @@ try {
   // on rather than going quiet.
 }
 
-if (process.argv.includes('--bundled') && standDownReason(kindOf(input))) silent()
+if (process.argv.includes('--bundled') && standDownReason(kindOf(input), process.env, input.cwd || process.cwd())) silent()
 
 const myCwd = canonical(input.cwd || process.cwd())
 

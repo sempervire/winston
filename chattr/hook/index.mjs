@@ -141,7 +141,7 @@ export default async function hook(args, env = process.env, stdin = 0) {
   }
   const kind = detectKind(args, input);
   // Winston's own registrations pass --bundled: they stand down while another chattr runs these hooks.
-  if (args.includes('--bundled') && standDownReason(kind, env)) return 0;
+  if (args.includes('--bundled') && standDownReason(kind, env, input.cwd || process.cwd())) return 0;
   const adapter = await import(`./adapters/${kind}.mjs`);
   const n = adapter.normalize(input, args[0]);
   if (!n) return 0;

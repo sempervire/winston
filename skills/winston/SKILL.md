@@ -64,10 +64,11 @@ standards, or the repo's process rules.
 - `/winston plan <draft>`: **Plan mode** (below). It never implements.
 - `/winston <instruction>`: follow the instruction, under everything in this file.
 
-Optional tools degrade, never silently. Without chattr there are no claims or peer
-visibility: say so at setup and run a single-worker session rather than pretending
-concurrency is protected. Without Codex, `/winston:codex` and Rex are off; without a board,
-the work set comes from the owner in chat.
+Optional tools degrade, never silently. Without Codex, `/winston:codex` and Rex are off;
+without a board, the work set comes from the owner in chat. chattr (claims, peer messages,
+the shared-checkout guard) is part of Winston and always present; if `chattr state` fails,
+that is a setup fault to report with "Run /winston:doctor to see what is missing and how to
+fix it.", not a mode to run in.
 
 ## The owner's prompt
 
@@ -167,7 +168,7 @@ These override the prompt where they differ. Status names below are the roles in
 ## Collision avoidance
 
 The existing systems stay in force: `chattr claim`/`state`, worktree lanes, and the repo's
-parallel-work rules (chattr's own peer rules live in the chattr plugin). Four more:
+parallel-work rules (chattr's peer rules: `chattr/docs/AGENT-RULES.md` in this plugin). Four more:
 
 1. **Winston claims on the lanes' behalf.** Lane subagents are not peers. When the owner
    approves the session, claim every approved issue (`chattr claim issue:<N>`) and release
@@ -179,9 +180,6 @@ parallel-work rules (chattr's own peer rules live in the chattr plugin). Four mo
    verifications run one after another; programmatic verifications may run in parallel.
 4. **One Winston per repo.** Claim `resource:orchestrator` at setup. If it is held, name the
    owner of the claim and stop.
-
-Without chattr, skip the claims, say so once at setup, and keep to one Winston and one lane
-at a time unless the owner accepts the reduced protection.
 
 ## Parallelism check
 
