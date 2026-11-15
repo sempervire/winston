@@ -825,7 +825,7 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
   if (!root) {
     const unsuitable = unsuitableFolder(cwd)
     add({
-      name: 'Project folder uses git', state: 'missing', detail: unsuitable ? `${cwd} is not a project folder` : `${cwd} does not use git yet`,
+      name: 'Project folder uses git', state: 'missing', detail: unsuitable ? `this folder is not a project folder: ${unsuitable}` : `this folder (${basename(cwd)}) does not use git yet`,
       unconfigured: !unsuitable, hand: unsuitable ? WRONG_FOLDER : undefined,
     })
     return out

@@ -299,6 +299,10 @@ test('init refuses the home folder and a folder of projects, and asks first wher
     assert.equal(r.status, 1, args.join(' '));
     assert.match(r.stdout, /^This folder doesn't look like a project\. Open Claude Code in your project's folder[^\n]*\n\(Winston did not use [^\n]*: it holds other projects \(repo\)\.\)/);
   }
+  // Doctor there says where to go instead of sending the person to init.
+  const doc = s.cli(['doctor'], s.tmp);
+  assert.match(doc.stdout, /^needs you\s+Project folder uses git\s+— this folder is not a project folder: it holds other projects \(repo\)$/m);
+  assert.match(doc.stdout, /Fix:\n     This folder doesn't look like a project\. Open Claude Code in your project's folder/);
   const home = spawnSync(process.execPath, [CLI, 'init', '--mode', 'new'], { cwd: s.tmp, env: { ...s.env, HOME: s.tmp }, encoding: 'utf8' });
   assert.match(home.stdout, /it is your home folder/);
   // A home folder that is itself a git repository is refused too.
