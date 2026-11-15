@@ -158,6 +158,12 @@ default). When that file is missing or has no triage rules (no heading that name
 no `risk:` tier), doctor says so and init offers a starter `TRIAGE.md` to edit and commit;
 it never overwrites an existing one.
 
+## Contributing
+
+This repository is itself managed by Winston: its `.winston/config.json` and board are
+shared, so a contributor runs `winston init --mode join` (or `/winston:init`) in a clone
+to check their access and machine before working on it.
+
 ## Updating
 
 Winston says when a newer version is out: a notice at the start of a session (it asks
