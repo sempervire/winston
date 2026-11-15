@@ -97,7 +97,8 @@ visible state — a card with no `risk:` tier, which is the untriaged queue both
 `/winston:radar` and `/winston:triage` already read. The daily sweep is the backstop: it takes
 up to five open issues at `New` or `Ready` with no `risk:` tier, filed by the owner, a member
 or a collaborator, oldest first, so an issue the `opened` run missed is stamped within a
-day.
+day. It passes by an issue whose last triage comment is a stop nobody has answered (no
+comment, body edit or rename since), so unresolved stops do not use up its five.
 
 **The invariant is a normal-path guarantee, not an absolute one.** A card can still reach
 `Ready` unstamped, because nothing gates the `Ready` move.

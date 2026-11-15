@@ -318,6 +318,8 @@ function writeTriageWorkflow(wf) {
   copyFileSync(join(ROOT, 'templates', 'triage-on-new-issue.yml'), wf)
 }
 
+/** The repository the template checks the triage script out of. */
+const TRIAGE_SCRIPT_REPO = 'sempervire/winston'
 /** The template's pinned checkout of the triage script: the one line `winston init` may rewrite. */
 const TRIAGE_PIN = /^(\s*ref:\s*)([0-9a-f]{40})(\s*#\s*winston-triage-script\b.*)$/m
 
@@ -1085,11 +1087,21 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
         fix: { plan: `replace ${wf} with Winston's script-based workflow: one model call per issue with no tools, code applies the verdict, the same two secrets (edits made to the old file are not kept)`, note: commit, run: () => writeTriageWorkflow(wf) },
       })
     } else if (mech.kind === 'script' && mech.pin && want && mech.pin !== want) {
-      add({
-        name, required: false, state: 'missing', offer: true,
-        detail: `script-based, pinned to Winston ${mech.pin.slice(0, 7)}; this Winston pins ${want.slice(0, 7)}`,
-        fix: { plan: `rewrite the pinned ref: line in ${wf} to ${want} (nothing else in the file changes)`, note: commit, run: () => writeFileSync(wf, repinTriage(readFileSync(wf, 'utf8'), want)) },
-      })
+      // Only forward: an older Winston must not roll a newer pin back. GitHub says which
+      // commit descends from which; "ahead" means this Winston's pin is the newer one.
+      const order = run('gh', ['api', `repos/${TRIAGE_SCRIPT_REPO}/compare/${mech.pin}...${want}`, '--jq', '.status']).out
+      const pinned = `script-based, pinned to Winston ${mech.pin.slice(0, 7)}`
+      if (order === 'ahead') {
+        add({
+          name, required: false, state: 'missing', offer: true,
+          detail: `${pinned}; this Winston pins the newer ${want.slice(0, 7)}`,
+          fix: { plan: `rewrite the pinned ref: line in ${wf} to ${want} (nothing else in the file changes)`, note: commit, run: () => writeFileSync(wf, repinTriage(readFileSync(wf, 'utf8'), want)) },
+        })
+      } else if (order === 'behind') {
+        add({ name, state: 'ok', detail: `${pinned}, newer than this Winston's ${want.slice(0, 7)}; update Winston rather than the pin` })
+      } else {
+        add({ name, required: false, state: 'unknown', detail: `${pinned}; this Winston pins ${want.slice(0, 7)}, and GitHub could not say which is newer, so the pin is left as it is` })
+      }
     } else if (mech.kind === 'script') {
       add({ name, state: 'ok', detail: mech.pin ? `script-based, pinned to Winston ${mech.pin.slice(0, 7)}` : 'script-based, running this repository\'s own script' })
     } else {
@@ -1131,7 +1143,7 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
     const init = 'winston init --mode adopt prints the steps'
     add({
       name: 'triage workflow secrets', required: false, state: !listed.ok ? 'unknown' : lacking.length ? 'off' : 'ok',
-      detail: !listed.ok ? 'this account cannot list the repo\'s secrets' : `${TRIAGE_SECRETS.map((n) => `${n} ${have.has(n) ? 'set' : 'missing'}`).join(', ')}${lacking.length ? ' — new issues are not triaged automatically until both are set' : ''}`,
+      detail: !listed.ok ? 'this account cannot list the repo\'s secrets' : `${TRIAGE_SECRETS.map((n) => `${n} ${have.has(n) ? 'set' : 'missing'}`).join(', ')}${lacking.length ? ' — new issues are not triaged automatically until both are set' : ' (names only: doctor cannot see GH_PAT\'s scopes; a run failing with "cannot read the board" means it lacks project access)'}`,
       problem: listed.ok && lacking.length && `secrets missing: ${lacking.join(', ')}. New issues are not triaged automatically until both are set (${init})`,
       steps: (!listed.ok || lacking.length) && (() => secretSteps({ slug, known: listed.ok, want: listed.ok ? lacking : TRIAGE_SECRETS, boardOwner: config.board?.owner, wfName })),
     })

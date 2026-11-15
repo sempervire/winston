@@ -728,7 +728,7 @@ test('doctor checks the board\'s two intake workflows and the triage workflow\'s
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
   const on = s.cli(['doctor']);
   assert.match(on.stdout, /^done\s+board auto-adds new issues$/m);
-  assert.match(on.stdout, /^done\s+triage workflow secrets\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN set$/m);
+  assert.match(on.stdout, /^done\s+triage workflow secrets\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN set \(names only: doctor cannot see GH_PAT's scopes; a run failing with "cannot read the board" means it lacks project access\)$/m);
   assert.doesNotMatch(on.stdout, /\d\. (board auto-adds|board sets|triage workflow)/);
 });
 
@@ -947,7 +947,15 @@ test('doctor reports the triage mechanism; init offers to replace an agent workf
   const edited = repinTriage(template, 'a'.repeat(40)).replace('timeout-minutes: 30', 'timeout-minutes: 45');
   assert.notEqual(edited, template);
   writeFileSync(wf, edited);
-  assert.ok(s.cli(['doctor']).stdout.includes(`triage workflow mechanism  — script-based, pinned to Winston aaaaaaa; this Winston pins ${short}\n`));
+  // GitHub's compare of the installed pin with this Winston's: the fake answers from published.json.
+  writeFileSync(join(s.tmp, 'published.json'), 'behind\n');
+  assert.ok(s.cli(['doctor']).stdout.includes(`triage workflow mechanism  — script-based, pinned to Winston aaaaaaa, newer than this Winston's ${short}; update Winston rather than the pin\n`), 'a newer pin is never rolled back');
+  assert.doesNotMatch(s.cli(['init', '--mode', 'adopt']).stdout, /rewrite the pinned ref/);
+  rmSync(join(s.tmp, 'published.json'));
+  assert.match(s.cli(['doctor']).stdout, /^could not check\s+triage workflow mechanism\s+— .*GitHub could not say which is newer, so the pin is left as it is$/m);
+  writeFileSync(join(s.tmp, 'published.json'), 'ahead\n');
+  assert.match(s.calls(), /^api repos\/sempervire\/winston\/compare\/a{40}\.\.\.[0-9a-f]{40} --jq \.status$/m);
+  assert.ok(s.cli(['doctor']).stdout.includes(`triage workflow mechanism  — script-based, pinned to Winston aaaaaaa; this Winston pins the newer ${short}\n`));
   assert.match(s.cli(['init', '--mode', 'adopt', '--yes']).stdout, /^done\s+rewrite the pinned ref: line in .*triage-on-new-issue\.yml to [0-9a-f]{40} \(nothing else in the file changes\)$/m);
   assert.equal(readFileSync(wf, 'utf8'), repinTriage(edited, pin));
   assert.match(readFileSync(wf, 'utf8'), /timeout-minutes: 45/);
