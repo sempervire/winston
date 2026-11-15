@@ -1190,12 +1190,12 @@ const shq = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`
  */
 function landOnDefault(paths, message, production, remove = false) {
   const root = repoRoot(process.cwd()) ?? process.cwd()
-  const rel = paths.map((p) => (isAbsolute(p) ? relative(root, p) : p))
+  const rel = paths.map((p) => (isAbsolute(p) ? relative(root, p) : p)).filter((p) => p && !p.startsWith('..'))
   const prod = production ? shq(production) : '"$(git symbolic-ref --short refs/remotes/origin/HEAD | cut -d/ -f2-)"'
   const files = rel.map(shq).join(' ')
   const branch = `winston-setup-${Date.now().toString(36)}`
   const apply = remove ? `git -C "$T/w" rm -q -- ${files}` : `for f in ${files}; do mkdir -p "$T/w/$(dirname "$f")" && cp "$f" "$T/w/$f"; done`
-  return `cd ${shq(root)} && git fetch origin && P=${prod} && T=$(mktemp -d) && git worktree add -b ${branch} "$T/w" "origin/$P" && ${apply} && git -C "$T/w" add -A && git -C "$T/w" commit -m ${shq(message)} && git -C "$T/w" push -u origin ${branch} && (cd "$T/w" && gh pr create --base "$P" --fill); git worktree remove --force "$T/w"`
+  return `cd ${shq(root)} && git fetch origin && P=${prod} && T=$(mktemp -d) && { git worktree add -b ${branch} "$T/w" "origin/$P" && ${apply} && git -C "$T/w" add -A && git -C "$T/w" commit -m ${shq(message)} && git -C "$T/w" push -u origin ${branch} && (cd "$T/w" && gh pr create --base "$P" --fill); git worktree remove --force "$T/w"; rmdir "$T"; }`
 }
 
 function fixOf(c) {
