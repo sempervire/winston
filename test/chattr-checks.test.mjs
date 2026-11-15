@@ -181,7 +181,7 @@ test('project-scope installs: one row, one committed change in the main checkout
   const text = c.fixLines.join('\n');
   assert.match(c.detail, /turned on in .*Other$/);
   assert.match(text, /Other {2}\(install records for 2 of its worktrees, 1 still on disk\)/);
-  assert.match(text, /One change, by whoever owns that repository: in .*Other\/\.claude\/settings\.json, delete the line "chattr@winston": true under enabledPlugins, and commit it\./);
+  assert.match(text, /One change, by whoever owns that repository: in .*Other\/\.claude\/settings\.json, delete the line "chattr@winston": true under enabledPlugins \(if it is there\), and commit it\./);
   assert.match(text, /does the same edit to that committed file/);
   assert.match(text, /Change nothing in the worktrees\. Each picks the change up when it next merges or pulls/);
   assert.doesNotMatch(text, /worktree list|while read/, 'no loop over worktrees');
@@ -246,4 +246,26 @@ test('a project install turned on in user settings still gets -s project; stale 
   f.write('.claude/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
   assert.match(f.rows()['separate chattr plugin'].command, /^cd .*repo && claude plugin uninstall chattr@winston -s project$/);
   assert.equal(f.rows()['chattr plugin installed in repositories'], undefined);
+});
+
+test('records are leftovers only when no layer turns the plugin on: user settings and worktree settings count', (t) => {
+  const f = fixture(t);
+  const other = join(f.tmp, 'Other');
+  const wt = join(other, '.claude/worktrees/w1');
+  const files = join(f.tmp, 'cache-chattr');
+  mkdirSync(files);
+  mkdirSync(join(wt, '.claude'), { recursive: true });
+  f.write('.claude/plugins/installed_plugins.json', JSON.stringify({ version: 2, plugins: { 'chattr@winston': [other, wt].map((projectPath) => ({ scope: 'project', projectPath, installPath: files })) } }));
+  assert.match(f.rows()['chattr plugin installed in repositories'].detail, /leftover/);
+
+  writeFileSync(join(wt, '.claude/settings.json'), JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
+  let c = f.rows()['chattr plugin installed in repositories'];
+  assert.match(c.detail, /turned on in .*Other$/);
+  assert.match(c.fixLines.join('\n'), /One worktree still has the line in its committed \.claude\/settings\.json/);
+
+  rmSync(join(wt, '.claude/settings.json'));
+  f.write('.claude/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
+  c = f.rows()['chattr plugin installed in repositories'];
+  assert.match(c.detail, /turned on in/);
+  assert.match(c.fixLines.join('\n'), /Your user settings \(~\/\.claude\/settings\.json\) turn it on/);
 });
