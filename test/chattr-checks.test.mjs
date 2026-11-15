@@ -37,6 +37,7 @@ test('writableRoots reads the sandbox table only', () => {
   assert.deepEqual(writableRoots('[sandbox_workspace_write]\nwritable_roots = ["/a", "/h/.agent-bridge"]\n[x]\nwritable_roots = ["/no"]\n'), ['/a', '/h/.agent-bridge']);
   assert.deepEqual(writableRoots('writable_roots = ["/top"]\n[sandbox_workspace_write]\nnetwork_access = true\n'), []);
   assert.deepEqual(writableRoots(null), []);
+  assert.deepEqual(writableRoots('[sandbox_workspace_write]\nwritable_roots = [\n  "/a",  # first\n  "~/.agent-bridge",\n]\n[x]\n'), ['/a', '~/.agent-bridge']);
 });
 
 test('nodeMajor reads `node --version`; a missing node is null', () => {
@@ -83,6 +84,23 @@ test('old install.sh hooks: dry run first, then uninstall-hooks with a snapshot,
   // The command it gives really removes them, and nothing else.
   const run = spawnSync(process.execPath, [join(ROOT, 'chattr/chattr.mjs'), 'uninstall-hooks', '--snapshot', join(f.tmp, 'snap')], { env: { ...process.env, HOME: f.home }, encoding: 'utf8' });
   assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.equal(f.rows()['old chattr install.sh hooks'].state, 'ok');
+});
+
+test('uninstall-hooks honours CLAUDE_CONFIG_DIR and CODEX_HOME, as doctor\'s detection does', (t) => {
+  const f = fixture(t);
+  const claude = join(f.tmp, 'claude-alt');
+  const codex = join(f.tmp, 'codex-alt');
+  mkdirSync(claude);
+  mkdirSync(codex);
+  writeFileSync(join(claude, 'settings.json'), JSON.stringify(compose({}, 'claude', '/old/chattr')));
+  writeFileSync(join(codex, 'hooks.json'), JSON.stringify(compose({}, 'codex', '/old/chattr')));
+  process.env.CLAUDE_CONFIG_DIR = claude;
+  process.env.CODEX_HOME = codex;
+  assert.match(f.rows()['old chattr install.sh hooks'].detail, /claude-alt\/settings\.json and .*codex-alt\/hooks\.json/);
+  const run = spawnSync(process.execPath, [join(ROOT, 'chattr/chattr.mjs'), 'uninstall-hooks', '--snapshot', join(f.tmp, 'snap')], { env: { ...process.env }, encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.match(run.stdout, /removed chattr hook registrations from 2 file/);
   assert.equal(f.rows()['old chattr install.sh hooks'].state, 'ok');
 });
 
