@@ -1149,7 +1149,7 @@ const shq = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`
  */
 function landOnDefault(paths, message, production, all = false) {
   const prod = production ?? 'main'
-  const branch = 'winston-setup'
+  const branch = `winston-setup-${Date.now().toString(36)}`
   return `git switch -c ${branch} origin/${prod} && git add ${all ? '-A ' : ''}${paths.map(shq).join(' ')} && git commit -m ${shq(message)} && git push -u origin ${branch} && gh pr create --base ${prod} --fill`
 }
 
