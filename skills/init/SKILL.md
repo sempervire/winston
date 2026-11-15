@@ -71,6 +71,9 @@ It runs in five steps and never skips the first two.
    with `Note:` lines and a **Secrets the triage workflow needs** list, and `winston doctor`
    can report `triage workflow secrets` as `needs you` — all are non-blocking, so don't present
    them as bare facts or errors; say what to do about them, and always offer the next step.
+   - **A note that no deploy gate is set:** ask once in a question box whether merges into
+     the production branch deploy, "No, nothing deploys" recommended when the repo has no
+     deploy workflow; on yes, add `deployGate` to the config as the README shows.
    - **A note to commit the config and workflow:** it names the exact files and the reason
      (GitHub runs the triage workflow from the default branch only). Relay that reason, and
      offer to commit those two files yourself now (`git add` and `git commit` them) rather
@@ -169,7 +172,24 @@ in `.winston/config.json` after their answer, and rerun the plan. `"phase": fals
 the owner chose to go without.
 
 Anything under **By hand** needs a person: access someone else grants, or a missing policy
-file. Relay it as it stands.
+file. Do not relay it as a bare statement: say who must do it, then give the exact next
+action (the link to open and the fields to fill, or the command), and for a missing policy
+file offer to write the starter in a question box.
+
+**Closing report: no item without an action.** These actions are yours to take as the agent running this skill (the `winston` command only prints the plan). This covers step 5 and every "Left for
+you", "Note:" and "By hand" item. Each pending item at the end of the run is one of: (a)
+already done; (b) a concrete command, which, when it is one for the user to paste, is also
+put on the clipboard with `pbcopy` (macOS) with the report saying so; or (c) a question-box
+choice with the recommended option first. Anything init is authorized to do itself is
+simply done, not offered. Never end a line with "tell me if you want", "say if", or a
+status the user must turn into a decision. In particular: a setup PR init opened is
+reviewed (the review posted on the PR) and merged by init when the session has merge
+authority in that repo and every check passes; where it lacks that authority, or a check
+fails, ask once in a question box with "Review and merge it" first, or give the exact
+`gh pr merge` command. A `processDocs` entry in `.winston/config.json` that names a file
+that does not exist is removed by init (it says which entry it removed), or, when the
+file looks like it should exist, asked once in a question box with "Remove the entry"
+recommended.
 
 `winston init` is safe to run again: it shows what is left, skips what is done, and never
 overwrites a finished step. Whenever it stops on something missing, point the user at

@@ -57,3 +57,10 @@ Who does what:
 - **Winston version**: a newer version is out. Give the user the update line as it stands,
   command included: they run it and restart. Do not run the update yourself; it replaces
   the hooks and skills this session is running on.
+
+**Closing report: no item without an action.** Each pending item you leave the user with
+is one of: (a) already done; (b) a concrete command, which, when it is one for the user to
+paste, is also put on the clipboard with `pbcopy` (macOS) with the report saying so; or
+(c) a question-box choice with the recommended option first. Anything doctor's fixes let
+you do yourself within your authority is simply done, not offered. Never end on a bare
+statement such as "tell me if you want X".
