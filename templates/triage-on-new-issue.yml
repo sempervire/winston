@@ -110,7 +110,7 @@ jobs:
         if: steps.secrets.outputs.ready == 'true'
         with:
           repository: sempervire/winston
-          ref: 0000000000000000000000000000000000000000 # winston-triage-script
+          ref: 99262ea58db72d6596cb43eead9fced7ca69b0ef # winston-triage-script
           path: .winston-triage
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
