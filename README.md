@@ -2,34 +2,104 @@
 
 <img src="assets/winston.png" alt="Winston, the fixer: Just do exactly as I say and everything will be just fine." width="720">
 
-An orchestration plugin for Claude Code (and Codex) that runs long, unattended engineering
-sessions off a GitHub board: pick the Ready work, clear every human-needed decision up front,
-build in parallel worktree lanes, merge one PR at a time, verify, and report.
+Winston is a plugin for Claude Code (and Codex). It connects a repository to a GitHub
+Projects board, keeps that board triaged, and runs long, unattended engineering sessions off
+it: pick the Ready work, clear every human-needed decision up front, build in parallel
+worktree lanes, merge one PR at a time, verify, and report.
 
 > "I solve problems."
 
-## Install
+## Set up in three steps
 
-Claude Code:
+1. **Install the plugin.** In Claude Code:
 
-```
-/plugin marketplace add sempervire/winston
-/plugin install winston@winston
-/plugin install chattr@winston      # optional: peer coordination between sessions
-```
+   ```
+   /plugin marketplace add sempervire/winston
+   /plugin install winston@winston
+   ```
 
-Codex:
+   In Codex:
 
-```
-codex plugin marketplace add sempervire/winston
-codex plugin add winston@winston
-winston install-codex-agents        # Codex plugins cannot ship agents; this copies them
-```
+   ```
+   codex plugin marketplace add sempervire/winston
+   codex plugin add winston@winston
+   winston install-codex-agents        # Codex plugins cannot ship agents; this copies them
+   ```
 
-Codex asks you to trust the plugin's hooks once (`/hooks`).
+   Codex asks you to trust the plugin's hooks once (`/hooks`).
 
-Then, in a repo, `/winston:init`. It asks which of three setups this is and plans it before
-changing anything:
+2. **Run `/winston:init` in the repo.** It changes nothing until you confirm. You will be
+   asked:
+   - which of three setups this is: joining a repo someone already set up, a new project,
+     or an existing repo Winston did not set up (details under [Setup](#setup));
+   - to confirm the plan it prints, before anything is created;
+   - to have Claude in Chrome connected and signed in to GitHub, for two board settings
+     GitHub's API cannot change (without it, you get the two steps to click through);
+   - to create two GitHub Actions secrets yourself, if you want new issues triaged
+     automatically (init prints the steps; you can do this later);
+   - to run `winston permissions --apply` once, so long runs do not stop on permission
+     prompts.
+
+   If the repo has no triage policy and no `TRIAGE.md`, init writes a starter `TRIAGE.md`
+   at the repo root; it never overwrites an existing file. Rewrite its **Risk tiers**
+   section for your repo (init offers to draft it) and commit the file to the default
+   branch. Until you do, triage judges by the starter's example tiers and doctor flags them.
+
+3. **Run `/winston:doctor`.** It is the one place to look afterwards, changes nothing in
+   the repo or on GitHub, and is safe to run as often as you like. It prints a checklist (`done`, `needs you`,
+   `could not check`), says for each open item why it matters and how to fix it, and ends
+   with a single **Next step:** line. A newer Winston shows up there as one more item, with
+   the update command. If its last run left items open, the next session in that repo
+   starts with one line saying so.
+
+Then `/winston` starts a session from the board's Ready column. See [Commands](#commands).
+
+## What you need
+
+**Software.** Claude Code (or Codex), `git`, the GitHub CLI `gh` signed in with the
+`project` scope, and [Node.js](https://nodejs.org/en/download) 24 or later (Winston's CLI
+and hooks run on it; chattr needs Node 26 or later).
+
+**Accounts.** Plans and prices change, so this links to each vendor's page rather than
+quoting them.
+
+| Account | Needed for | Minimum |
+|---|---|---|
+| GitHub | The repo, the board, Actions | A free account ([plans](https://github.com/pricing)). |
+| Claude | Claude Code; Claude in Chrome for setup's browser steps | A Claude Pro or Max plan, or API billing ([plans](https://claude.com/pricing)). |
+| Claude, for triage in GitHub Actions | The token from `claude setup-token` | A Pro or Max plan, plus Actions minutes: free on public repos, a monthly allowance on private ones ([Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions)). Optional. |
+| ChatGPT or OpenAI | Codex: Rex, `/winston:codex`, the local review pass in build lanes, Codex sessions | A ChatGPT plan that includes Codex, or an OpenAI API key ([Codex pricing](https://developers.openai.com/codex/pricing)). Optional: each feature is off without the Codex CLI. |
+| Google Gemini | `/winston:gemini` | A paid-tier Gemini API key ([pricing](https://ai.google.dev/gemini-api/docs/pricing)). Optional. |
+| chattr | Claims and peer messages | No account. Optional; see [Who needs chattr](#who-needs-chattr). |
+
+The floor is a free GitHub account plus one agent account: Claude Code on a Pro or Max
+plan or API billing, or Codex. Winston is built around Claude Code; in Codex alone,
+setup's browser steps are yours to click through, and the triage workflow in Actions
+still needs the Claude token.
+
+**Platform.** Winston is developed and used on macOS. These parts need it:
+
+- `/winston:handoff` opens the successor session in a new tab only from Claude Code on
+  macOS with [iTerm](https://iterm2.com/); in Codex, on another system, or when a
+  prerequisite it checks is missing, it prints the prompt for you to paste.
+- The `launchers/` scripts drive iTerm through AppleScript.
+- `winston doctor --copy` uses the macOS clipboard.
+- Doctor's Gemini key check reads the macOS keychain. `/winston:gemini` itself also takes
+  the key from the `GEMINI_API_KEY` environment variable, so doctor can show the key as
+  off when the variable supplies it, and always does off macOS.
+- chattr has only been run on macOS.
+
+Nothing else is tied to a terminal or an operating system, but it is untested off macOS.
+
+**Repo shape.** Two long-lived branches (integration and production) and a GitHub Projects
+board with the six Status columns below and a Priority field. `/winston:init` sets up what
+is missing.
+
+## Setup
+
+`/winston:init` runs `winston init`, which asks which of three setups this is and plans it
+before changing anything. To skip the question, run `winston init --mode join`
+(or `new`, or `adopt`); it prints the plan, and `--yes` applies it.
 
 | Setup | When | What it does |
 |---|---|---|
@@ -37,26 +107,20 @@ changing anything:
 | `new` | A new project. | Creates the GitHub repo, both branches, the board, the config, labels and triage workflow. |
 | `adopt` | An existing repo Winston did not set up. | Fits a config to its default branch, an integration branch, a board already linked to it and its process docs; adds only what is missing. |
 
-`/winston:doctor` is the one place to look afterwards, and safe to run as often as you
-like. It prints a checklist (`done`, `needs you`, `could not check`), says for each open
-item why it matters and how to fix it, and ends with a single **Next step:** line. A newer
-Winston shows up there as one more item, with the update command. If its last run left
-items open, the next session in that repo starts with one line saying so.
-
 A board Winston builds has six Status columns, in order: `New`, `Ready`, `In Progress`,
 `Verify`, `Verified`, `Done`, with fixed colours and descriptions, and a board view filtered
 to a milestone whose cards show labels. On a board that already exists, missing columns are
 added in that order and Labels is switched on for the view; nothing already there is
-renamed, recoloured or removed.
+renamed, recoloured or removed. Doctor reports any column the board lacks.
 
 Two steps cannot go through GitHub's API, which can delete a project workflow but not
 create or enable one: on the board's Workflows page, **Auto-add to project** (this
 repository, filter `is:issue`) and **Item added to project** (set Status to `New`). Without
 them a new issue never reaches the board. `/winston:init` does both through browser
-control, so have Claude in Chrome ready during setup: install the extension, sign in to
-GitHub in that Chrome, and connect it with `/chrome` (or start with `claude --chrome`).
-Without browser control it prints the two steps for you to do, and doctor reports them
-until they are done.
+control, so have [Claude in Chrome](https://code.claude.com/docs/en/chrome) ready during
+setup: install the extension, sign in to GitHub in that Chrome, and connect it with
+`/chrome` (or start with `claude --chrome`). Without browser control it prints the two
+steps for you to do, and doctor reports them until they are done.
 
 The triage workflow needs two Actions secrets that only the owner can create: `GH_PAT`
 (Issues on the repo, Projects on the board's owner) and `CLAUDE_CODE_OAUTH_TOKEN` (from
@@ -98,7 +162,13 @@ claude plugin marketplace update winston && claude plugin update winston@winston
 ```
 
 Add `--scope project`, run from the project, for a project-scope install. Then restart
-Claude Code. `"updateCheck": false` in the config turns the session notice off.
+Claude Code. In Codex, run the following, then start a new Codex session:
+
+```
+codex plugin marketplace upgrade winston && codex plugin add winston@winston
+```
+
+`"updateCheck": false` in the config turns the session notice off.
 
 So that a run does not stop on permission prompts, `winston permissions` lists the Claude
 Code allow rules Winston runs use in the repo and which the project's
@@ -117,12 +187,13 @@ production approval or secret grants.
 | `/winston plan <draft>` | Turn a draft plan into a settled one, one decision at a time. Never implements. |
 | `/winston:triage` | Whole-board triage pass under the repo's own policy (`TRIAGE.md`). |
 | `/winston:radar` | What to work on next, batched into the time you have. |
-| `/winston:verdict` | Debbie (is it worth doing?) and Sheldon (is it true and well engineered?), together. |
+| `/winston:verdict` | Debbie (is it worth doing?) and Sheldon (is it true and well engineered?), together. Called `/winston:consult` before 0.1.15. |
 | `/winston:rex` | Session therapist and usage reports, run on Codex. |
 | `/winston:closeout` | Can this session end without stranding work? |
 | `/winston:handoff` | Hand the work to a fresh session. |
 | `/winston:codex`, `/winston:gemini` | Read-only second opinions from other model families. |
-| `/winston:doctor`, `/winston:init` | Check the setup Winston needs; join, create or adopt it. |
+| `/winston:doctor` | The setup checklist: each item `done`, `needs you` or `could not check`, with why and how to fix each open one, a line when a newer Winston is out, and one closing **Next step:** line. Changes nothing in the repo or on GitHub. `winston doctor --copy` also puts that step's command on the clipboard when it is a single command (macOS). |
+| `/winston:init` | Join, create or adopt the setup. Asks which, shows the plan, applies it only on your yes. `winston init --mode join` (or `new`, or `adopt`) plans one directly; `--yes` applies it. |
 | `winston permissions [--apply]` | List, or add to the project's settings, the allow rules Winston runs use. |
 
 Hooks: a production-deploy gate (blocks configured deploy actions until the owner types the
@@ -132,14 +203,22 @@ fast-forwarded, when the checkout is clean), worktree setup, a one-line setup re
 browser-tab guard, and a once-per-turn Parallelism check nudge in Winston sessions (those
 holding chattr's `resource:orchestrator` claim).
 
-## Requirements
+## Who needs chattr
 
-Claude Code and `gh` (with the `project` scope). Optional, each degrading cleanly when absent
-(`/winston:doctor` says what is off): Codex CLI (Rex, `/winston:codex`), Gemini CLI and key
-(`/winston:gemini`), chattr (claims and peer messages between sessions).
+chattr is a separate plugin in the same marketplace that lets agent sessions on one
+machine see and message each other and claim work. You only need it when more than one
+agent session works the same repo at the same time. Install it with
+`/plugin install chattr@winston`.
 
-The workflow assumes two long-lived branches (integration and production) and a GitHub
-Projects board with Status `New / Ready / Verify / Verified` and a Priority field.
+Without it, setup is the same, and Winston:
+
+- runs one build lane at a time, unless you accept the reduced protection;
+- skips its claims, so nothing marks an issue as taken by a session;
+- cannot stop a second Winston session on the same repo;
+- never shows the Parallelism check nudge, which recognises a Winston session by chattr's
+  `resource:orchestrator` claim.
+
+Doctor lists `chattr CLI` as `off`.
 
 ## Configuration
 
@@ -150,7 +229,7 @@ Top-level keys merge shallowly; the repo wins. See `templates/config.sample.json
 |---|---|
 | `owner` | Who approves and decides. |
 | `branches` | `integration` and `production` branch names. |
-| `board` | Projects v2 owner, number, statuses, priority field. |
+| `board` | Projects v2 owner, number, statuses, priority field. `statuses` names the four columns Winston moves cards through (`New`, `Ready`, `Verify`, `Verified` by default); `In Progress` and a `Done` column after the four are expected under those fixed names. On a board Winston creates, GitHub's own closing workflow moves closed items to `Done`; on an existing board that depends on its own workflow settings. |
 | `processDocs`, `triage.policy` | The repo docs whose rules win over Winston's. |
 | `phase` | The current milestone, given to every new issue. `false` to go without. |
 | `triage.workflow`, `triage.alongside` | The triage workflow's file name, or `false` when another workflow is the repo's triage; other triage workflows kept knowingly. |
@@ -173,7 +252,10 @@ claude plugin validate .
 claude --plugin-dir .
 ```
 
-Releases are tagged on `main`; installs pin to tags.
+Installs do not pin to tags. The marketplace installs Winston from `main` (the old tags
+stop at `v0.1.2`, and there are no GitHub releases), so the version in
+`.claude-plugin/plugin.json` on `main` is the current release, and the update notice
+compares against it.
 
 ## License
 
