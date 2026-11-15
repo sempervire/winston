@@ -17,7 +17,12 @@ satisfies no project gate unless that project's rules say it does.
 rules and the verbatim relay rule. This file covers only Gemini's invocation and quirks.
 
 **Gemini is required.** Check `command -v gemini` and that a key is available (below). If
-either is missing, say in one line which and that `/winston:gemini` is off, end with
+either is missing, say in one line which and that `/winston:gemini` is off, give the line
+that turns the missing part on (it needs a paid-tier Gemini API key, from
+https://aistudio.google.com/apikey; the CLI: in the Terminal app, run
+`npm install -g @google/gemini-cli`; the key: in the Terminal app, run
+`security add-generic-password -s GEMINI_API_KEY -a "$USER" -w` and paste the key when it
+asks, never into a chat), end with
 "Run /winston:doctor to see what is missing and how to fix it.", and stop.
 
 The user typed this, verbatim:

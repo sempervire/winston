@@ -152,7 +152,7 @@ function repoWithWorktree(t, config) {
 
 test('worktree-setup: copies and links what config lists, never overwrites, no-op on main', (t) => {
   const r = repoWithWorktree(t, { worktree: { copy: ['.env.local', 'absent.txt'], link: ['node_modules'] } });
-  assert.equal(r.run('worktree-setup.mjs', { hook_event_name: 'PostToolUse', tool_name: 'EnterWorktree', cwd: r.main, tool_response: { worktreePath: r.wt } }), 'worktree-setup: wt: .env.local node_modules -> main (symlink)\n');
+  assert.equal(r.run('worktree-setup.mjs', { hook_event_name: 'PostToolUse', tool_name: 'EnterWorktree', cwd: r.main, tool_response: { worktreePath: r.wt } }), 'Winston set up worktree wt: .env.local node_modules -> main (symlink)\n');
   assert.equal(readFileSync(join(r.wt, '.env.local'), 'utf8'), 'X=1\n');
   assert.ok(lstatSync(join(r.wt, 'node_modules')).isSymbolicLink());
   assert.equal(readlinkSync(join(r.wt, 'node_modules')), join(r.main, 'node_modules'));
@@ -199,15 +199,18 @@ test('doctor-nudge: one line per session when the last doctor run left open item
   const start = (id, cwd = repo) => s.run('doctor-nudge.mjs', { hook_event_name: 'SessionStart', cwd, session_id: id });
 
   result({ root: repo, open: 3 });
-  assert.equal(start('aaaaaaaa-1'), '', 'no Winston config in the repo: silent');
+  // No Winston config: the first step, once per repo ever, and never the open-items line.
+  const setup = start('aaaaaaaa-0');
+  assert.equal(setup.systemMessage, 'Winston is installed but not set up in this project. Type /winston:init to set it up (nothing changes until you say yes). This reminder shows once per project.');
+  assert.equal(start('aaaaaaaa-9'), '', 'shown once per repo, not once per session');
   mkdirSync(join(repo, '.winston'));
   writeFileSync(join(repo, '.winston/config.json'), '{}');
   const out = start('aaaaaaaa-1');
-  assert.equal(out.systemMessage, 'Winston setup has 3 open items – run /winston:doctor.');
+  assert.equal(out.systemMessage, 'Winston setup has 3 things left. Type /winston:doctor to see them.');
   assert.deepEqual(out.hookSpecificOutput, { hookEventName: 'SessionStart', additionalContext: out.systemMessage });
   assert.equal(start('aaaaaaaa-1'), '', 'a resume or compaction in the same session does not repeat it');
-  result({ root: repo, open: 1 });
-  assert.equal(start('bbbbbbbb-2', join(repo, 'src/deep')).systemMessage, 'Winston setup has 1 open item – run /winston:doctor.', 'from a subdirectory too');
+  result({ root: repo, open: 1, first: 'Fewer permission prompts' });
+  assert.equal(start('bbbbbbbb-2', join(repo, 'src/deep')).systemMessage, 'Winston setup has 1 thing left, starting with "Fewer permission prompts". Type /winston:doctor to see it.', 'from a subdirectory too, naming the first item');
 
   // Nothing open, doctor never run, or a result that does not parse: no output, exit 0.
   result({ root: repo, open: 0 });
@@ -221,16 +224,22 @@ test('doctor-nudge: one line per session when the last doctor run left open item
   // No session id: nothing to remember it by, so it still speaks, and still never fails.
   result({ root: repo, open: 2 });
   const anonymous = () => s.run('doctor-nudge.mjs', { hook_event_name: 'SessionStart', cwd: repo });
-  assert.equal(anonymous().systemMessage, 'Winston setup has 2 open items – run /winston:doctor.');
-  assert.equal(anonymous().systemMessage, 'Winston setup has 2 open items – run /winston:doctor.');
+  assert.equal(anonymous().systemMessage, 'Winston setup has 2 things left. Type /winston:doctor to see them.');
+  assert.equal(anonymous().systemMessage, 'Winston setup has 2 things left. Type /winston:doctor to see them.');
   // A session opened through a symlink to the checkout finds the same result.
   symlinkSync(repo, join(s.tmp, 'link'));
-  assert.equal(start('ffffffff-6', join(s.tmp, 'link')).systemMessage, 'Winston setup has 2 open items – run /winston:doctor.');
+  assert.equal(start('ffffffff-6', join(s.tmp, 'link')).systemMessage, 'Winston setup has 2 things left. Type /winston:doctor to see them.');
   // Outside any git repository, and in a directory that does not exist: silent.
   mkdirSync(join(s.tmp, 'plain/.winston'), { recursive: true });
   writeFileSync(join(s.tmp, 'plain/.winston/config.json'), '{}');
   assert.equal(start('gggggggg-7', join(s.tmp, 'plain')), '');
   assert.equal(start('hhhhhhhh-8', join(s.tmp, 'gone')), '');
+  // setupNudge: false in the user layer turns the not-set-up line off.
+  const other = join(s.tmp, 'other');
+  mkdirSync(other);
+  execFileSync('git', ['init', '-q', other]);
+  writeFileSync(join(s.home, 'config.json'), JSON.stringify({ setupNudge: false }));
+  assert.equal(start('iiiiiiii-9', other), '');
 
   // It is registered at session start, and reads nothing but local files.
   const hooks = JSON.parse(readFileSync(join(HOOKS, 'hooks.json'), 'utf8')).hooks;
@@ -302,19 +311,19 @@ function repoWithOrigin(t, config = { branches: { integration: 'staging', produc
 test('start-branch: a clean main checkout on production moves to integration and fast-forwards', (t) => {
   const r = repoWithOrigin(t);
   const tip = r.advance();
-  assert.match(r.start(), /switched this checkout from main to staging \(fast-forwarded to [0-9a-f]{7}\)/);
+  assert.match(r.start(), /^Winston: switched this project folder from main to staging, where work starts \(fast-forwarded to [0-9a-f]{7}\)/);
   assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'staging');
   assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), tip);
   assert.equal(r.start(), '', 'already on integration and current: silent');
   const next = r.advance();
-  assert.match(r.start(), /^start-branch: staging fast-forwarded to/);
+  assert.match(r.start(), /^Winston: staging fast-forwarded to/);
   assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), next);
 });
 
 test('start-branch: leaves uncommitted changes, other branches, worktrees and opted-out repos alone', (t) => {
   const r = repoWithOrigin(t);
   writeFileSync(join(r.main, '.gitignore'), 'edited\n');
-  assert.match(r.start(), /on main with uncommitted changes, so it was left there/);
+  assert.match(r.start(), /^Winston: this project folder is on main, the release branch, with uncommitted changes, so it was left there\. Work starts from staging: ask Claude to save or set aside those changes and switch to staging\.$/);
   assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'main');
   r.git(r.main, 'checkout', '-q', '--', '.gitignore');
 
@@ -362,7 +371,7 @@ test('start-branch: a branch name from config never reaches git as an option', (
 test('start-branch: says what it could not do, and why', (t) => {
   const r = repoWithOrigin(t);
   r.git(r.main, 'remote', 'set-url', 'origin', join(r.tmp, 'gone.git'));
-  assert.match(r.start(), /switched this checkout from main to staging \(origin could not be reached, so it may be behind\)/);
+  assert.match(r.start(), /switched this project folder from main to staging, where work starts \(GitHub \(origin\) could not be reached, so it may be behind: check your internet connection and GitHub sign-in\)/);
   r.git(r.main, 'remote', 'set-url', 'origin', join(r.tmp, 'origin.git'));
 
   // An untracked file where an incoming commit adds one: not "diverged", and the file survives.
@@ -373,7 +382,7 @@ test('start-branch: says what it could not do, and why', (t) => {
   r.git(r.wt, 'push', '-q', 'origin', 'HEAD:staging');
   writeFileSync(join(r.main, 'incoming.txt'), 'mine\n');
   const blocked = r.start();
-  assert.match(blocked, /behind origin and could not be fast-forwarded: /);
+  assert.match(blocked, /behind origin and could not be fast-forwarded \([^]*\): ask Claude to bring it up to date/);
   assert.doesNotMatch(blocked, /diverged/);
   assert.equal(readFileSync(join(r.main, 'incoming.txt'), 'utf8'), 'mine\n');
 });
@@ -383,10 +392,10 @@ test('start-branch: local commits on integration are never rewritten', (t) => {
   r.git(r.main, 'switch', '-q', 'staging');
   r.git(r.main, 'commit', '-q', '--allow-empty', '-m', 'local only');
   const local = r.git(r.main, 'rev-parse', 'HEAD');
-  assert.match(r.start(), /^start-branch: staging ahead of origin, with commits not pushed\.$/);
+  assert.match(r.start(), /^Winston: staging ahead of origin, with commits not pushed yet: Claude pushes them when the work is ready\.$/);
   assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), local);
   r.advance();
-  assert.match(r.start(), /staging diverged from origin\/staging, left as is/);
+  assert.match(r.start(), /staging diverged from origin\/staging, left as is: ask Claude to bring staging up to date/);
   assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), local);
 });
 

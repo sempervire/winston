@@ -82,7 +82,7 @@ export function setup(wt, config) {
     } catch {}
   }
 
-  const setupLine = copied.length || linked.length ? `worktree-setup: ${basename(wt)}: ${[...copied, ...linked].join(' ')}` : ''
+  const setupLine = copied.length || linked.length ? `Winston set up worktree ${basename(wt)}: ${[...copied, ...linked].join(' ')}` : ''
   const warnings = []
   let branch = ''
   try {
@@ -91,8 +91,8 @@ export function setup(wt, config) {
   const pattern = config.worktree?.branchPattern
   if (!branch) {
     warnings.push(
-      'worktree-setup: this worktree has a detached HEAD.',
-      'worktree-setup: create a branch before committing or pushing -- git switch -c <branch>.'
+      'Winston: this worktree has a detached HEAD (it is on no branch).',
+      'Winston: ask Claude to create a branch before committing or pushing (git switch -c <branch>).'
     )
   } else if (pattern && !branch.startsWith('session/')) {
     // launcher-owned holding branches; renamed before pushing
@@ -100,12 +100,12 @@ export function setup(wt, config) {
     try {
       ok = new RegExp(pattern).test(branch)
     } catch {
-      warnings.push(`worktree-setup: worktree.branchPattern is not a valid regex: ${pattern}`)
+      warnings.push(`Winston: worktree.branchPattern in .winston/config.json is not a valid regular expression, so branch names are not checked. Fix or remove it: ${pattern}`)
     }
     if (!ok) {
       warnings.push(
-        `worktree-setup: branch "${branch}" does not match this repo's branch pattern ${pattern}.`,
-        'worktree-setup: rename it before pushing -- git branch -m <branch>.'
+        `Winston: branch "${branch}" does not match this repo's branch pattern ${pattern}.`,
+        'Winston: ask Claude to rename it before pushing (git branch -m <new name>), or change worktree.branchPattern if the pattern is wrong.'
       )
     }
   }
@@ -123,7 +123,7 @@ function main() {
   try {
     config = loadConfig(wt)
   } catch (e) {
-    process.stdout.write(JSON.stringify({ systemMessage: `worktree-setup: ${e.message}` }))
+    process.stdout.write(JSON.stringify({ systemMessage: `Winston could not set up this worktree: ${e.message}` }))
     return
   }
   const result = setup(wt, config)

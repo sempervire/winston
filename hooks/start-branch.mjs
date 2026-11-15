@@ -53,7 +53,7 @@ export function startBranch(cwd) {
   const { integration, production } = config.branches ?? {}
   if (config.startBranch === false || !integration || integration === production) return null
   const root = realpathSync(layers.root)
-  if (!plainBranch(root, integration)) return `start-branch: branches.integration in the Winston config is not a plain branch name, so nothing was done: ${JSON.stringify(integration)}`
+  if (!plainBranch(root, integration)) return `Winston: branches.integration in .winston/config.json is not a plain branch name, so nothing was done. Set it to a branch name such as staging (it is ${JSON.stringify(integration)})`
   const common = run(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
   if (!common.ok || realpathSync(dirname(common.out)) !== root) return null
 
@@ -65,24 +65,24 @@ export function startBranch(cwd) {
   const remote = fetched ? run(root, ['rev-parse', '--verify', '-q', 'FETCH_HEAD^{commit}']).out : ''
 
   if (branch === production) {
-    if (dirty) return `start-branch: this checkout is on ${production} with uncommitted changes, so it was left there. Work starts from ${integration}: commit or set the changes aside, then git switch ${integration}.`
+    if (dirty) return `Winston: this project folder is on ${production}, the release branch, with uncommitted changes, so it was left there. Work starts from ${integration}: ask Claude to save or set aside those changes and switch to ${integration}.`
     const sw = run(root, ['switch', '-q', integration])
-    if (!sw.ok) return `start-branch: this checkout is on ${production} and could not be switched to ${integration}: ${sw.err}`
+    if (!sw.ok) return `Winston: this project folder is on ${production}, the release branch, and could not be switched to ${integration} (${sw.err}). Ask Claude to switch it to ${integration}.`
   }
   const head = run(root, ['rev-parse', 'HEAD']).out
   const within = (a, b) => run(root, ['merge-base', '--is-ancestor', a, b]).ok
   let state = 'up to date'
-  if (!remote) state = 'origin could not be reached, so it may be behind'
+  if (!remote) state = 'GitHub (origin) could not be reached, so it may be behind: check your internet connection and GitHub sign-in'
   else if (remote === head) state = 'up to date'
-  else if (within(remote, head)) state = 'ahead of origin, with commits not pushed'
-  else if (!within(head, remote)) state = `diverged from origin/${integration}, left as is`
-  else if (dirty) state = 'behind origin, left as is because of uncommitted changes'
+  else if (within(remote, head)) state = 'ahead of origin, with commits not pushed yet: Claude pushes them when the work is ready'
+  else if (!within(head, remote)) state = `diverged from origin/${integration}, left as is: ask Claude to bring ${integration} up to date`
+  else if (dirty) state = 'behind origin, left as is because of uncommitted changes: ask Claude to save them and bring it up to date'
   else {
     const ff = run(root, ['merge', '-q', '--ff-only', remote])
-    state = ff.ok ? `fast-forwarded to ${remote.slice(0, 7)}` : `behind origin and could not be fast-forwarded: ${ff.err}`
+    state = ff.ok ? `fast-forwarded to ${remote.slice(0, 7)}` : `behind origin and could not be fast-forwarded (${ff.err}): ask Claude to bring it up to date`
   }
-  if (branch === production) return `start-branch: switched this checkout from ${production} to ${integration} (${state}). If a project skill or command from ${integration} is missing in this session, restart it.`
-  return state === 'up to date' ? null : `start-branch: ${integration} ${state}.`
+  if (branch === production) return `Winston: switched this project folder from ${production} to ${integration}, where work starts (${state}). If a project skill or command from ${integration} is missing in this session, restart it.`
+  return state === 'up to date' ? null : `Winston: ${integration} ${state}.`
 }
 
 function main() {
@@ -95,7 +95,7 @@ function main() {
   try {
     msg = startBranch(input.cwd || process.cwd())
   } catch (e) {
-    msg = `start-branch: ${e.message}`
+    msg = `Winston could not check the starting branch: ${e.message}`
   }
   if (msg) process.stdout.write(JSON.stringify({ systemMessage: msg, hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: msg } }))
 }

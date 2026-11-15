@@ -9,5 +9,6 @@
   },
   "processDocs": ["AGENTS.md"],
   "triage": { "policy": "TRIAGE.md", "workflow": "triage-on-new-issue.yml", "labels": [] },
+  "deployGate": { "phrase": "approve production deploy", "guarded": [{ "kind": "pr-merge", "base": "main" }] },
   "worktree": { "copy": [".env.local"], "link": ["node_modules"] }
 }
