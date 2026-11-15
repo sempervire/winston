@@ -7,8 +7,10 @@
  * event rather than whenever the model remembers.
  *
  * Winston session = this session holds an unreleased `resource:orchestrator`
- * claim in `chattr state` (Winston claims it at setup). No chattr, no claim, a
- * session that never joined: not Winston, the stop goes through.
+ * claim in `chattr state` (Winston claims it at setup). chattr is the copy
+ * bundled in this plugin, called by path: Codex puts no plugin bin/ on PATH.
+ * No claim, a session that never joined, a store that cannot answer: not
+ * Winston, the stop goes through.
  *
  * FAIL OPEN. Any error lets the stop through with no output.
  *
@@ -24,7 +26,10 @@
 
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { harness, readInput } from '../lib/harness.mjs'
+
+const CHATTR = join(import.meta.dirname, '..', 'chattr', 'chattr.mjs')
 
 const MARK = 'Parallelism check (Winston)'
 const ASK =
@@ -43,7 +48,7 @@ const ASK =
 /** True when the session holds an unreleased resource:orchestrator claim. */
 export function isWinston(sessionId, cwd) {
   if (!sessionId) return false
-  const r = spawnSync('chattr', ['state', '--json'], {
+  const r = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', CHATTR, 'state', '--json'], {
     cwd: cwd || undefined,
     env: { ...process.env, CHATTR_SESSION: sessionId },
     encoding: 'utf8',

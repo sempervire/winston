@@ -10,6 +10,7 @@ import { armMatcher, CREDENTIAL_URL, urlsIn } from '../hooks/secret-grant.mjs';
 import { normalize } from '../hooks/session-title.mjs';
 import { doctorResultPath } from '../lib/config.mjs';
 import { lastOpenAndClose } from '../hooks/browser-tab-guard.mjs';
+import { claim as chattrClaim, join as chattrJoin, open as chattrOpen } from '../chattr/chattr.mjs';
 
 const HOOKS = resolve(import.meta.dirname, '../hooks');
 
@@ -20,7 +21,7 @@ function sandbox(t) {
   const env = { ...process.env, WINSTON_HOME: home, CLAUDE_CONFIG_DIR: join(tmp, 'claude'), WINSTON_UPDATE_URL: `file://${join(tmp, 'latest.json')}` };
   delete env.CLAUDE_SKIP_TAB_GUARD;
   const run = (hook, input, extra = {}, args = []) => {
-    const r = spawnSync(process.execPath, [join(HOOKS, hook), ...args], { input: input === undefined ? '' : JSON.stringify(input), env: { ...env, ...extra }, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, [join(HOOKS, hook), ...args], { input: input === undefined ? '' : JSON.stringify(input), env: { ...env, ...extra }, encoding: 'utf8', cwd: tmp });
     assert.equal(r.status, 0, r.stderr);
     return r.stdout.trim().startsWith('{') ? JSON.parse(r.stdout) : r.stdout;
   };
@@ -242,18 +243,23 @@ test('doctor-nudge: one line per session when the last doctor run left open item
 
 test('parallelism-check: asks once per turn, only in a session holding resource:orchestrator', (t) => {
   const s = sandbox(t);
-  const bin = join(s.tmp, 'bin');
-  mkdirSync(bin);
-  // Fake chattr: the orchestrator claim belongs to session "win"; "other" is not enrolled.
-  writeFileSync(join(bin, 'chattr'), `#!/bin/sh
-[ "$CHATTR_SESSION" = win ] || { echo '{"ok":false}'; exit 3; }
-echo '{"ok":true,"claims":[{"resource":"resource:orchestrator","session_id":"win","released_at":null}]}'
-`, { mode: 0o755 });
+  // The bundled chattr, by path, against a temp store: "win" holds the orchestrator claim; "other" is not enrolled.
+  const repo = join(s.tmp, 'repo');
+  mkdirSync(repo);
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  const db = chattrOpen(join(s.tmp, 'bridge.db'));
+  try {
+    chattrJoin(db, { id: 'win', kind: 'claude', pid: process.pid, cwd: repo });
+    chattrClaim(db, db.prepare('SELECT * FROM sessions WHERE id = ?').get('win'), 'resource:orchestrator', 'test');
+  } finally {
+    db.close();
+  }
   const transcript = join(s.tmp, 't.jsonl');
   const prompt = JSON.stringify({ type: 'user', message: { content: 'go' } });
   const toolResult = JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', content: 'ok' }] } });
-  const env = { PATH: `${bin}:${process.env.PATH}` };
-  const stop = (extra = {}, e = env) => s.run('parallelism-check.mjs', { hook_event_name: 'Stop', session_id: 'win', transcript_path: transcript, ...extra }, e);
+  // PATH without any chattr: the hook must find the bundled one by path (Codex puts no plugin bin on PATH).
+  const env = { CHATTR_DB: join(s.tmp, 'bridge.db'), PATH: '/usr/bin:/bin' };
+  const stop = (extra = {}, e = env) => s.run('parallelism-check.mjs', { hook_event_name: 'Stop', session_id: 'win', cwd: repo, transcript_path: transcript, ...extra }, e);
 
   writeFileSync(transcript, [prompt, toolResult].join('\n'));
   const out = stop();
@@ -270,10 +276,37 @@ echo '{"ok":true,"claims":[{"resource":"resource:orchestrator","session_id":"win
   writeFileSync(transcript, JSON.stringify({ type: 'user', message: { content: 'resume brief: Parallelism check (Winston), ...' } }));
   assert.ok(stop().hookSpecificOutput, 'a prompt quoting the ask is still a new turn');
   assert.equal(stop({ session_id: 'other' }), '', 'not a Winston session');
-  assert.equal(stop({}, { PATH: '/nonexistent' }), '', 'no chattr fails open');
+  assert.equal(stop({}, { ...env, CHATTR_DB: '/nonexistent/dir/bridge.db' }), '', 'a chattr that cannot answer fails open');
   assert.equal(stop({ transcript_path: join(s.tmp, 'missing') }), '', 'unreadable transcript fails open');
   assert.equal(stop({ turn_id: 'x' }).decision, 'block', 'Codex gets a block');
   assert.equal(stop({}, { ...env, WINSTON_SKIP_PARALLELISM_CHECK: '1' }), '');
+});
+
+// ---- bundled chattr registrations
+
+test('hooks.json: chattr groups come after every Winston group, pass --bundled, and name files that exist', () => {
+  // Codex keys hook trust by position, so chattr's groups are appended: Winston's keep their trusted slots.
+  const hooks = JSON.parse(readFileSync(join(HOOKS, 'hooks.json'), 'utf8')).hooks;
+  const isChattr = (g) => g.hooks.some((h) => h.command.includes('/chattr/'));
+  let count = 0;
+  for (const [event, groups] of Object.entries(hooks)) {
+    const first = groups.findIndex(isChattr);
+    if (first < 0) continue;
+    assert.ok(groups.slice(first).every(isChattr), `${event}: a Winston group after a chattr group`);
+    for (const g of groups.slice(first)) {
+      assert.equal(g.hooks.length, 1);
+      const { command } = g.hooks[0];
+      assert.match(command, /--bundled( |$)/, command);
+      for (const [, rel] of command.matchAll(/\$\{CLAUDE_PLUGIN_ROOT\}\/([^"]+)"/g)) assert.ok(existsSync(join(HOOKS, '..', rel)), rel);
+      count += 1;
+    }
+  }
+  assert.equal(count, 11, 'every chattr registration: 2 SessionStart, 2 PreToolUse, and one each for seven more events');
+  for (const event of ['PermissionRequest', 'StopFailure', 'Notification', 'Interrupt']) assert.ok(hooks[event], event);
+  // The guard's fallback runs when node itself cannot: it must still print a parseable deny.
+  const guard = hooks.PreToolUse.find((g) => g.hooks[0].command.includes('worktree-guard.mjs')).hooks[0].command;
+  const fallback = execFileSync('sh', ['-c', `echo ${guard.split('|| echo ')[1]}`], { encoding: 'utf8' });
+  assert.equal(JSON.parse(fallback).hookSpecificOutput.permissionDecision, 'deny');
 });
 
 // ---- start-branch

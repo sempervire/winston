@@ -1,5 +1,5 @@
 {
-  "description": "Winston guard hooks: production-deploy gate, credential-console grant, session titles, update notice, starting branch, worktree setup, a setup reminder, open browser tabs, Winston parallelism check. Each hook reads the calling CLI (Claude Code or Codex) from its payload.",
+  "description": "Winston guard hooks: production-deploy gate, credential-console grant, session titles, update notice, starting branch, worktree setup, a setup reminder, open browser tabs, Winston parallelism check. Each hook reads the calling CLI (Claude Code or Codex) from its payload. After them, chattr (bundled): session enrollment, peer message delivery, wakes, and the shared-checkout guard; these stand down while a separate chattr plugin or the old install.sh hooks are present.",
   "hooks": {
     "SessionStart": [
       {
@@ -33,6 +33,25 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --disable-warning=ExperimentalWarning \"${CLAUDE_PLUGIN_ROOT}/chattr/chattr.mjs\" hook SessionStart --bundled",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CHATTR_BIN=\"${CLAUDE_PLUGIN_ROOT}/chattr/chattr.mjs\" node --disable-warning=ExperimentalWarning \"${CLAUDE_PLUGIN_ROOT}/chattr/hooks/worktree-session-start.mjs\" --bundled",
+            "timeout": 10,
+            "statusMessage": "Checking for another session in this directory"
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -55,6 +74,15 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/deploy-gate.mjs\"",
             "timeout": 5,
             "statusMessage": "Checking for a production-deploy approval"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --disable-warning=ExperimentalWarning \"${CLAUDE_PLUGIN_ROOT}/chattr/chattr.mjs\" hook UserPromptSubmit --bundled",
+            "timeout": 10
           }
         ]
       }
@@ -81,6 +109,27 @@
             "statusMessage": "Checking secret-handling authorization"
           }
         ]
+      },
+      {
+        "matcher": "^(Edit|Write|NotebookEdit|apply_patch)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CHATTR_BIN=\"${CLAUDE_PLUGIN_ROOT}/chattr/chattr.mjs\" node --disable-warning=ExperimentalWarning \"${CLAUDE_PLUGIN_ROOT}/chattr/hooks/worktree-guard.mjs\" --bundled || echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Blocked: the Winston shared-checkout check could not run, so it cannot rule out another session editing this folder. Move to a worktree (the EnterWorktree tool), start the session with CLAUDE_ALLOW_SHARED_CWD=1 to share deliberately, or run winston doctor.\"}}'",
+            "timeout": 10,
+            "statusMessage": "Checking for other sessions in this directory"
+          }
+        ]
+      },
+      {
+        "matcher": "^(AskUserQuestion|request_user_input(_async)?)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --disable-warning=ExperimentalWarning \"${CLAUDE_PLUGIN_ROOT}/chattr/chattr.mjs\" hook PreToolUse --bundled",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -92,6 +141,15 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/worktree-setup.mjs\"",
             "timeout": 30,
             "statusMessage": "Setting up the new worktree"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --disable-warning=ExperimentalWarning \"${CLAUDE_PLUGIN_ROOT}/chattr/chattr.mjs\" hook PostToolUse --bundled",
+            "timeout": 10
           }
         ]
       }
@@ -109,6 +167,61 @@
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/parallelism-check.mjs\"",
             "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --disable-warning=ExperimentalWarning \"${CLAUDE_PLUGIN_ROOT}/chattr/chattr.mjs\" hook Stop --bundled",
+            "timeout": 20,
+            "statusMessage": "chattr: message delivery"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --disable-warning=ExperimentalWarning \"${CLAUDE_PLUGIN_ROOT}/chattr/chattr.mjs\" hook PermissionRequest --bundled",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --disable-warning=ExperimentalWarning \"${CLAUDE_PLUGIN_ROOT}/chattr/chattr.mjs\" hook StopFailure --bundled",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt|elicitation_dialog",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --disable-warning=ExperimentalWarning \"${CLAUDE_PLUGIN_ROOT}/chattr/chattr.mjs\" hook Notification --bundled",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Interrupt": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --disable-warning=ExperimentalWarning \"${CLAUDE_PLUGIN_ROOT}/chattr/chattr.mjs\" hook Interrupt --bundled",
+            "timeout": 3
           }
         ]
       }
