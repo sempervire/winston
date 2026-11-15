@@ -127,7 +127,7 @@ const WRONG_FOLDER = 'This folder doesn\'t look like a project. Open Claude Code
  * Refused: the home folder and the folders above it, the standard folders in it, and a
  * folder that holds other git repositories (a folder of projects, not a project).
  */
-export function unsuitableFolder(dir) {
+export function unsuitableFolder(dir, { nested = true } = {}) {
   let real
   try {
     real = realpathSync(resolve(dir))
@@ -141,6 +141,7 @@ export function unsuitableFolder(dir) {
   if (real === home) return 'it is your home folder'
   if (!relative(real, home).startsWith('..') && relative(real, home)) return 'it holds your home folder'
   if (dirname(real) === home && ['Desktop', 'Documents', 'Downloads', 'Library', 'Pictures', 'Movies', 'Music', 'Applications'].includes(basename(real))) return `it is your ${basename(real)} folder`
+  if (!nested) return null
   try {
     const repos = readdirSync(real, { withFileTypes: true }).filter((e) => e.isDirectory() && existsSync(join(real, e.name, '.git')))
     if (repos.length) return `it holds other projects (${repos.slice(0, 3).map((e) => e.name).join(', ')}${repos.length > 3 ? ', …' : ''})`
@@ -1389,7 +1390,10 @@ function situation(cwd) {
   // The one case detection can get wrong: history and no GitHub address may be a project
   // that is on GitHub, in a copy that lost its link. `new` would make a second repository.
   const ambiguous = mode === 'new' && hasCommits && !origin
-  return { root, hasConfig, hasCommits, origin, mode, why, ambiguous, unsuitable: root ? null : unsuitableFolder(cwd) }
+  // A git repository at the home folder (or a standard folder) is still no place for a
+  // new project; a repository that holds others (submodules, a monorepo) can be one.
+  const unsuitable = root ? (hasConfig ? null : unsuitableFolder(root, { nested: false })) : unsuitableFolder(cwd)
+  return { root, hasConfig, hasCommits, origin, mode, why, ambiguous, unsuitable }
 }
 
 /** What each setup does, in a line a person reads before the plan. */
@@ -1406,7 +1410,7 @@ function intro(sit) {
     console.log('\nCheck first: if this project is already on GitHub, connect this copy to it instead of making a second one.')
     console.log(`${IN_TERMINAL}, in this folder, run: git remote add origin <the project's GitHub address>, then run /winston:init again. If it is not on GitHub yet, go ahead with the plan below.`)
   }
-  console.log(`To choose a different setup: winston init --mode ${MODES.filter((m) => m !== sit.mode).join(' or --mode ')}\n`)
+  console.log(`To choose a different setup, type in this chat: !winston init --mode ${MODES.filter((m) => m !== sit.mode).join(' or --mode ')}\n`)
 }
 
 /** join: the repo's setup is someone else's. Report; write nothing outside this machine. */
@@ -1440,7 +1444,7 @@ function join_(cwd, sit, yes) {
     const shown = sit.root.startsWith(homedir() + '/') ? `~${sit.root.slice(homedir().length)}` : sit.root
     const plan = `set launcher.repo to ${shown} in ${userPath} (the session launchers open that checkout)`
     if (!yes) {
-      console.log(`\nOn this computer, init would:\n  - ${plan}\n\nNothing has changed yet. To go ahead: winston init --mode join --yes`)
+      console.log(`\nOn this computer, init would:\n  - ${plan}\n\nNothing has changed yet. To go ahead, type in this chat: !winston init --mode join --yes`)
     } else {
       mkdirSync(dirname(userPath), { recursive: true })
       writeFileSync(userPath, JSON.stringify({ ...layers.user.data, launcher: { ...layers.user.data.launcher, repo: shown } }, null, 2) + '\n')
@@ -1609,7 +1613,7 @@ function bootstrap(cwd, sit, opts) {
 /** new and adopt: build what is missing. With a config already here, that config is the plan. */
 function setup(cwd, sit, opts) {
   if (opts.mode === 'adopt' && !sit.hasConfig && !(sit.root && sit.hasCommits && sit.origin)) {
-    console.log(`adopt is for a project that already has saved history and is on GitHub, and ${sit.why}. For a new project: winston init --mode new   (or just /winston:init, which picks the right setup)`)
+    console.log(`adopt is for a project that already has saved history and is on GitHub, and ${sit.why}. For a new project: !winston init --mode new   (or just /winston:init, which picks the right setup)`)
     return 1
   }
   const boot = sit.hasConfig ? null : bootstrap(cwd, sit, opts)
@@ -1619,7 +1623,7 @@ function setup(cwd, sit, opts) {
     console.log(`  Recommended: --board ${pick.owner}/${pick.number}   ${pick.title}   (${boot.why})`)
     for (const b of rest) console.log(`  --board ${b.owner}/${b.number}   ${b.title}`)
     console.log('  --board new   make a new board instead')
-    console.log(`\nNothing has changed yet. To plan with the recommended board: ${applyCommand({ ...opts, board: `${pick.owner}/${pick.number}`, yes: false })}`)
+    console.log(`\nNothing has changed yet. To plan with the recommended board, type in this chat: ${applyCommand({ ...opts, board: `${pick.owner}/${pick.number}`, yes: false })}`)
     return opts.yes ? 2 : 0
   }
   const list = checks(cwd, boot?.planned, true, opts.triage)
@@ -1656,7 +1660,7 @@ function setup(cwd, sit, opts) {
     printMaybe(list)
     printOwnerSteps(list)
     for (const n of [...bootNotes(list), ...fixes.map((c) => c.fix.note).filter(Boolean)]) console.log(`\nNote: ${n}`)
-    if (plans.length) console.log(`\nNothing has changed yet. To go ahead: ${applyCommand({ ...opts, yes: true })}   (safe to run again: steps already done are skipped, and nothing existing is overwritten)`)
+    if (plans.length) console.log(`\nNothing has changed yet. To go ahead, type in this chat: ${applyCommand({ ...opts, yes: true })}   (safe to run again: steps already done are skipped, and nothing existing is overwritten)`)
     return 0
   }
 
@@ -1701,7 +1705,7 @@ function setup(cwd, sit, opts) {
 /** The init command that plans or applies exactly what this run planned, flags and all. */
 function applyCommand(opts) {
   const flags = ['mode', 'board', 'integration', 'owner', 'repo', 'triage'].filter((k) => opts[k] !== undefined).map((k) => `--${k} ${/[\s'"$`\\]/.test(opts[k]) ? JSON.stringify(opts[k]) : opts[k]}`)
-  return ['winston init', ...flags, ...(opts.public ? ['--public'] : []), ...(opts.yes ? ['--yes'] : [])].join(' ')
+  return ['!winston init', ...flags, ...(opts.public ? ['--public'] : []), ...(opts.yes ? ['--yes'] : [])].join(' ')
 }
 
 function init(cwd, opts) {

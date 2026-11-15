@@ -265,12 +265,12 @@ test('init without --mode plans the setup the folder shows, says which in plain 
   const asked = s.cli(['init']);
   assert.equal(asked.status, 0, asked.stdout + asked.stderr);
   assert.match(asked.stdout, /^Setup: new, because this project has no saved history yet\. This is a new project, so Winston sets everything up\.\n/);
-  assert.match(asked.stdout, /To choose a different setup: winston init --mode join or --mode adopt/);
+  assert.match(asked.stdout, /To choose a different setup, type in this chat: !winston init --mode join or --mode adopt/);
   assert.match(asked.stdout, /Winston will:\n/);
-  assert.match(asked.stdout, /To go ahead: winston init --mode new --yes/, 'the apply command names the mode the plan used');
+  assert.match(asked.stdout, /To go ahead, type in this chat: !winston init --mode new --yes/, 'the apply command names the mode the plan used');
   const forced = s.cli(['init', '--yes']);
   assert.equal(forced.status, 2, '--yes never picks the setup');
-  assert.match(forced.stderr, /needs the setup named: winston init --mode new --yes/);
+  assert.match(forced.stderr, /needs the setup named: !winston init --mode new --yes/);
   assert.equal(s.cli(['init', '--mode', 'sideways']).status, 2);
   // A flag missing its value never swallows the next flag, and unknown flags are refused.
   for (const bad of [['--mode', 'new', '--integration', '--yes'], ['--mode'], ['--mode', 'new', '--yess']]) {
@@ -300,6 +300,10 @@ test('init refuses the home folder and a folder of projects, and asks first wher
   }
   const home = spawnSync(process.execPath, [CLI, 'init', '--mode', 'new'], { cwd: s.tmp, env: { ...s.env, HOME: s.tmp }, encoding: 'utf8' });
   assert.match(home.stdout, /it is your home folder/);
+  // A home folder that is itself a git repository is refused too.
+  const gitHome = spawnSync(process.execPath, [CLI, 'init'], { cwd: s.repo, env: { ...s.env, HOME: s.repo }, encoding: 'utf8' });
+  assert.equal(gitHome.status, 1);
+  assert.match(gitHome.stdout, /^This folder doesn't look like a project\.[^]*it is your home folder/);
   assert.equal(s.calls(), '', 'GitHub not touched');
   // History and no GitHub address: maybe a copy that lost its link, so say how to connect it.
   s.git('symbolic-ref', 'HEAD', 'refs/heads/main');
@@ -405,7 +409,7 @@ test('init --mode adopt fits the config to the repo and adds to its board withou
   const develop = s.cli(['init', '--mode', 'adopt', '--integration', 'develop']).stdout;
   assert.match(develop, /work lands on develop first/);
   assert.doesNotMatch(develop, /Make the work branch/);
-  assert.match(develop, /To go ahead: winston init --mode adopt --integration develop --yes/, 'the apply command keeps the flags the plan was made with');
+  assert.match(develop, /To go ahead, type in this chat: !winston init --mode adopt --integration develop --yes/, 'the apply command keeps the flags the plan was made with');
 });
 
 test('with a config already here, init creates the integration branch it names when origin lacks it', (t) => {
@@ -689,7 +693,7 @@ test('init --mode adopt asks which board when several are linked, and refuses a 
   writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
   const asked = s.cli(['init', '--mode', 'adopt']);
   assert.match(asked.stdout, /Recommended: --board acme\/3\s+Roadmap\s+\(GitHub lists it first\)\n\s+--board acme\/4\s+Bugs\n\s+--board new/);
-  assert.match(asked.stdout, /To plan with the recommended board: winston init --mode adopt --board acme\/3$/m);
+  assert.match(asked.stdout, /To plan with the recommended board, type in this chat: !winston init --mode adopt --board acme\/3$/m);
   assert.equal(s.cli(['init', '--mode', 'adopt', '--yes']).status, 2);
   assert.ok(!existsSync(join(s.repo, '.winston')));
   // A board named like the repository is the recommended one.
@@ -720,7 +724,7 @@ test('init --mode join reports access as the joiner\'s, repo gaps as the owner\'
   assert.match(plan.stdout, /Its setup is Dana's: nothing in the project or on GitHub is changed/);
   assert.match(plan.stdout, /Yours to fix:\n\s+- Board access: access to a board is given separately from access to the repo: ask Dana to add your GitHub account at https:\/\/github\.com\/users\/acme\/projects\/1\/settings\/access/);
   assert.match(plan.stdout, /They are Dana's to close, not yours: send them this list, and they can run \/winston:init to fix it:[^]*- Work branch on GitHub[^]*- Triage labels/);
-  assert.match(plan.stdout, /would:\n\s+- set launcher\.repo[^]*To go ahead: winston init --mode join --yes/);
+  assert.match(plan.stdout, /would:\n\s+- set launcher\.repo[^]*To go ahead, type in this chat: !winston init --mode join --yes/);
   assert.ok(!existsSync(join(s.home, 'config.json')));
 
   const applied = s.cli(['init', '--mode', 'join', '--yes']);
