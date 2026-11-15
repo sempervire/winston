@@ -85,7 +85,7 @@ test('a plugin left enabled after its files are gone is its own needs-you, with 
   assert.equal(c.state, 'off');
   assert.equal(c.command, 'claude plugin uninstall chattr@winston && codex plugin remove chattr@winston');
   assert.match(c.fixLines.join('\n'), /delete the line "chattr@winston": true under enabledPlugins in ~\/\.claude\/settings\.json/);
-  assert.match(c.fixLines.join('\n'), /delete the \[plugins\."chattr@winston"\] table from ~\/\.codex\/config\.toml/);
+  assert.match(c.fixLines.join('\n'), /delete the "chattr@winston" entry from ~\/\.codex\/config\.toml: its \[plugins\."chattr@winston"\] table, or the line that names it/);
   mkdirSync(join(f.home, '.claude/plugins/cache/winston/chattr'), { recursive: true });
   assert.equal(f.rows()['separate chattr plugin'].command, 'claude plugin uninstall chattr@winston');
   assert.match(f.rows()['chattr plugin left enabled'].command, /^codex plugin remove chattr@winston$/);
