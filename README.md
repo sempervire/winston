@@ -139,24 +139,26 @@ The triage workflow needs two Actions secrets that only the owner can create:
 - `CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token`, so triage runs on your Claude
   plan. No API key is used.
 
-`winston init` checks which exist, by name only, and prints numbered
-steps for the missing ones, with the token type GitHub requires for the board's owner and
+`winston init` checks which exist, by name only, and prints numbered steps for the missing
+ones, with the token type GitHub requires for the board's owner and
 a link that opens GitHub's token form already filled in. With Claude in Chrome the session
 offers to check the form with you and stops before Generate; the token's value is typed
 only by you, in your own terminal.
 Until both are set new issues are not triaged automatically; `winston doctor` reports the
 secrets and whether the workflow's latest runs failed.
 
-Triage in GitHub Actions is a script, not an agent. For each issue it asks Claude once,
-with no tools, giving it the repo's triage policy and the issue, and gets back a verdict.
-The script then writes the verdict itself: the `risk:` tier, Priority, the plan comment,
+Triage in GitHub Actions is a script, not an agent. For each issue it asks Claude, with
+no tools, for one verdict, giving it the repo's triage policy and the issue (it asks once
+more only if the first answer is unusable). The script then writes the verdict itself: the `risk:` tier, Priority, the plan comment,
 the reporter as assignee, and any other labels the policy allows. Because Claude has no
 tools in this step, nothing it needs can be silently refused.
 
-- **When it runs.** On each new issue filed by the owner, a collaborator or an organization member; once a day, as
-  a sweep of up to five open issues that have no `risk:` tier yet, oldest first; and when
-  you start it by hand from the Actions tab (one issue by number, or leave the number
-  empty for the sweep). Tick `dry_run` to see the verdict without anything being written.
+- **When it runs.** On each new issue filed by the owner, a collaborator or an
+  organization member. Once a day, as a sweep of up to five open issues with no `risk:`
+  tier yet (in the board's first two columns, filed by those same people over an hour ago,
+  lowest number first, skipping any where triage stopped and is waiting for an answer).
+  And when you start it by hand from the Actions tab (one issue by number, or leave the
+  number empty for the sweep). Tick `dry_run` to see the verdict without anything being written.
   An issue that already has a `risk:` tier is left alone; re-triaging is the
   `/winston:triage` pass's job.
 - **Which labels.** The policy's "Labels triage applies" line lists them; triage writes no
