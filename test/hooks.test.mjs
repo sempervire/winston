@@ -21,7 +21,7 @@ function sandbox(t) {
   const env = { ...process.env, WINSTON_HOME: home, CLAUDE_CONFIG_DIR: join(tmp, 'claude'), WINSTON_UPDATE_URL: `file://${join(tmp, 'latest.json')}` };
   delete env.CLAUDE_SKIP_TAB_GUARD;
   const run = (hook, input, extra = {}, args = []) => {
-    const r = spawnSync(process.execPath, [join(HOOKS, hook), ...args], { input: input === undefined ? '' : JSON.stringify(input), env: { ...env, ...extra }, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, [join(HOOKS, hook), ...args], { input: input === undefined ? '' : JSON.stringify(input), env: { ...env, ...extra }, encoding: 'utf8', cwd: tmp });
     assert.equal(r.status, 0, r.stderr);
     return r.stdout.trim().startsWith('{') ? JSON.parse(r.stdout) : r.stdout;
   };
