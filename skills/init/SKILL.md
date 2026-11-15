@@ -42,19 +42,25 @@ It runs in five steps and never skips the first two.
    under "would" needs no confirmation and no `--yes`.
 
 4. **Do the browser steps.** The output's **In the browser** list is the board's two intake
-   workflows, "Auto-add to project" and "Item added to project". Without them a new issue
-   never reaches the board at its intake status. GitHub's API cannot create, edit or enable
+   workflows, "Auto-add to project" and "Item added to project", and, ahead of them when
+   another project is capturing this repo's issues, a line naming that project. Without the
+   two workflows a new issue never reaches the board at its intake status, and while the
+   other project keeps its Auto-add on, each new issue also lands on it. GitHub's API cannot create, edit or enable
    a project workflow, so they are done on the board's Workflows page. They are part of
    the setup, not an afterthought: say so in the plan you confirm in step 3, and do not
    call the setup finished while `winston doctor` still lists them. In **join** they are
    the owner's; relay them and stop.
    - **With browser control** (Claude Code with Claude in Chrome: the
      `mcp__claude-in-chrome__*` tools): do them yourself, in a new tab, exactly as each
-     line says. Open the `/workflows` address given. For "Item added to project": select
+     line says, in the order listed. Open the `/workflows` address given. For the other
+     project's line ("project N auto-adds this repo's issues"): open that project's
+     `/workflows` page, select **Auto-add to project**, **Edit**, remove this repository
+     from it (or, if this repository is the only one it adds from, turn the workflow off),
+     **Save**. Touch no other project setting, and never delete the project. For "Item added to project": select
      it, **Edit**, under **Set value** choose the Status named, **Save and turn on
      workflow**. For "Auto-add to project": select it, **Edit**, pick this repository,
      replace the filter with `is:issue`, **Save and turn on workflow**. Touch nothing else
-     on the page, close the tab, then run `winston doctor` and show that both checks pass.
+     on the page, close the tab, then run `winston doctor` and show that these checks pass (the other-project line clears once its Auto-add no longer takes new issues, and can read as present until one more issue is filed).
      With chattr, claim `resource:chrome` first and release it after.
    - **The page shows GitHub's 404 or a Sign in link:** that Chrome is not signed in to
      GitHub, or is signed in as an account without access to the board. Ask the user to
