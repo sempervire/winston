@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { harnessOfRoot } from '../lib/update.mjs';
 import { loadConfig, loadLayers } from '../lib/config.mjs';
-import { coveredBy, DOCTOR_POINTER, firesOnNewIssue, permissionRules, policyBlanks, policyState, tokenUrl } from '../bin/winston';
+import { coveredBy, DOCTOR_POINTER, firesOnNewIssue, permissionRules, policyBlanks, policyState, repinTriage, tokenUrl, triageMechanism } from '../bin/winston';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const CLI = join(ROOT, 'bin/winston');
@@ -728,7 +728,7 @@ test('doctor checks the board\'s two intake workflows and the triage workflow\'s
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
   const on = s.cli(['doctor']);
   assert.match(on.stdout, /^done\s+board auto-adds new issues$/m);
-  assert.match(on.stdout, /^done\s+triage workflow secrets\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN set$/m);
+  assert.match(on.stdout, /^done\s+triage workflow secrets\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN set \(names only: doctor cannot see GH_PAT's scopes; a run failing with "cannot read the board" means it lacks project access\)$/m);
   assert.doesNotMatch(on.stdout, /\d\. (board auto-adds|board sets|triage workflow)/);
 });
 
@@ -908,9 +908,72 @@ test('the triage workflow template skips, rather than fails, without its secrets
   const yml = readFileSync(join(ROOT, 'templates/triage-on-new-issue.yml'), 'utf8');
   const steps = yml.slice(yml.indexOf('    steps:'));
   assert.match(steps, /id: secrets/);
-  const gated = steps.split(/\n      - /).filter((step) => /^uses: /.test(step));
-  assert.equal(gated.length, 2);
+  // Every step after the secrets check: the two checkouts, Node, the CLI install and the triage run.
+  const all = steps.split(/\n      - /).slice(1);
+  const gated = all.slice(all.findIndex((step) => /id: secrets/.test(step)) + 1);
+  assert.equal(gated.length, 5);
+  // The install runs package scripts, so it holds no secret.
+  assert.doesNotMatch(gated.find((step) => /npm install/.test(step)), /\$\{\{\s*secrets\./);
+  assert.doesNotMatch(yml.slice(0, yml.indexOf('    steps:')), /\$\{\{\s*secrets\./, 'no secret at job level');
   for (const step of gated) assert.match(step, /if: steps\.secrets\.outputs\.ready == 'true'/);
+});
+
+test('doctor reports the triage mechanism; init offers to replace an agent workflow and rewrites only a stale pin', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  mkdirSync(join(s.repo, '.winston'));
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ owner: 'Dana', branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, phase: false }));
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
+  writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
+  mkdirSync(join(s.repo, '.github/workflows'), { recursive: true });
+  const wf = join(s.repo, '.github/workflows/triage-on-new-issue.yml');
+  const template = readFileSync(join(ROOT, 'templates/triage-on-new-issue.yml'), 'utf8');
+  const pin = triageMechanism(template).pin;
+  assert.match(pin, /^[0-9a-f]{40}$/);
+  const short = pin.slice(0, 7);
+
+  // The older template: an agent with a tool list.
+  writeFileSync(wf, 'name: Triage a new issue\non:\n  issues:\n    types: [opened]\njobs:\n  t:\n    steps:\n      - uses: anthropics/claude-code-action@abc # v1\n');
+  assert.match(s.cli(['doctor']).stdout, /^needs you\s+triage workflow mechanism\s+— agent-based \(claude-code-action with a tool list/m);
+  const offer = s.cli(['init', '--mode', 'adopt']);
+  assert.match(offer.stdout, /would:\n(  - [^\n]+\n)*  - replace .*triage-on-new-issue\.yml with Winston's script-based workflow/);
+  assert.match(readFileSync(wf, 'utf8'), /claude-code-action/, 'nothing changes without --yes');
+  const applied = s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.match(applied.stdout, /^done\s+replace .*with Winston's script-based workflow/m);
+  assert.equal(readFileSync(wf, 'utf8'), template);
+  assert.ok(s.cli(['doctor']).stdout.includes(`triage workflow mechanism  — script-based, pinned to Winston ${short}\n`));
+
+  // A copy pinned to an older Winston commit: only its ref: line is rewritten.
+  const edited = repinTriage(template, 'a'.repeat(40)).replace('timeout-minutes: 30', 'timeout-minutes: 45');
+  assert.notEqual(edited, template);
+  writeFileSync(wf, edited);
+  // GitHub's compare of the installed pin with this Winston's: the fake answers from published.json.
+  writeFileSync(join(s.tmp, 'published.json'), 'behind\n');
+  assert.ok(s.cli(['doctor']).stdout.includes(`triage workflow mechanism  — script-based, pinned to Winston aaaaaaa, newer than this Winston's ${short}; update Winston rather than the pin\n`), 'a newer pin is never rolled back');
+  assert.doesNotMatch(s.cli(['init', '--mode', 'adopt']).stdout, /rewrite the pinned ref/);
+  rmSync(join(s.tmp, 'published.json'));
+  assert.match(s.cli(['doctor']).stdout, /^could not check\s+triage workflow mechanism\s+— .*GitHub could not say which is newer, so the pin is left as it is$/m);
+  writeFileSync(join(s.tmp, 'published.json'), 'ahead\n');
+  assert.match(s.calls(), /^api repos\/sempervire\/winston\/compare\/a{40}\.\.\.[0-9a-f]{40} --jq \.status$/m);
+  assert.ok(s.cli(['doctor']).stdout.includes(`triage workflow mechanism  — script-based, pinned to Winston aaaaaaa; this Winston pins the newer ${short}\n`));
+  assert.match(s.cli(['init', '--mode', 'adopt', '--yes']).stdout, /^done\s+rewrite the pinned ref: line in .*triage-on-new-issue\.yml to [0-9a-f]{40} \(nothing else in the file changes\)$/m);
+  assert.equal(readFileSync(wf, 'utf8'), repinTriage(edited, pin));
+  assert.match(readFileSync(wf, 'utf8'), /timeout-minutes: 45/);
+
+  // A workflow running a script of its own repository (Winston's own) has no pin to compare.
+  writeFileSync(wf, 'run: node scripts/triage-issue.mjs --sweep\n');
+  assert.match(s.cli(['doctor']).stdout, /^done\s+triage workflow mechanism\s+— script-based, running this repository's own script$/m);
+});
+
+test('the template pins the triage script to a commit that holds the script as it is now', (t) => {
+  const pin = triageMechanism(readFileSync(join(ROOT, 'templates/triage-on-new-issue.yml'), 'utf8')).pin;
+  assert.match(pin, /^[0-9a-f]{40}$/);
+  assert.notEqual(pin, '0'.repeat(40));
+  const has = spawnSync('git', ['-C', ROOT, 'cat-file', '-e', `${pin}^{commit}`]);
+  if (has.status !== 0) return t.skip('the pinned commit is not in this clone');
+  // Bump the pin (a commit of its own, after the script change) whenever this fails.
+  const diff = spawnSync('git', ['-C', ROOT, 'diff', '--stat', pin, '--', 'scripts/triage-issue.mjs', 'lib/triage', 'lib/config.mjs'], { encoding: 'utf8' });
+  assert.equal(diff.stdout, '', `the script changed since the pinned commit ${pin}`);
 });
 
 test('doctor says when a newer Winston is out, with the command, and stays quiet otherwise', (t) => {
