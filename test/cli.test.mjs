@@ -785,7 +785,7 @@ test('doctor names another project that auto-adds the repo\'s issues, ahead of t
   assert.equal(other.status, 1);
   assert.match(other.stdout, /^needs you\s+project 1 auto-adds this repo's issues\s+— new issues \(#48, #47\) were added to project 1 "Project 1" by its Auto-add workflow, not only to board 6$/m);
   assert.ok(other.stdout.indexOf('project 1 auto-adds this repo\'s issues\n   Why') > 0 && other.stdout.indexOf('project 1 auto-adds this repo\'s issues\n   Why') < other.stdout.indexOf('board auto-adds new issues\n   Why'), 'listed before the board\'s own workflows');
-  assert.match(other.stdout, /Fix:\n     \/winston:init does this for you in the browser\. By hand: before turning on board 6's workflows, open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
+  assert.match(other.stdout, /Fix:\n     Next: run \/winston:init and it does this for you in the browser\. To do it yourself: before turning on board 6's workflows, open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
   const plan = s.cli(['init', '--mode', 'adopt']);
   assert.match(plan.stdout, /In the browser[^\n]*\n  - project 1 auto-adds this repo's issues: before turning on board 6's workflows, open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows, choose "Auto-add to project", click Edit, remove this repository \(or turn the workflow off if this repository is its only one\), then Save\n  - board auto-adds new issues/);
 
