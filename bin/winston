@@ -295,6 +295,25 @@ function writeTriageWorkflow(wf) {
   copyFileSync(join(ROOT, 'templates', 'triage-on-new-issue.yml'), wf)
 }
 
+/** The template's pinned checkout of the triage script: the one line `winston init` may rewrite. */
+const TRIAGE_PIN = /^(\s*ref:\s*)([0-9a-f]{40})(\s*#\s*winston-triage-script\b.*)$/m
+
+/**
+ * Which mechanism a triage workflow uses: 'agent' (the older template: claude-code-action
+ * with a tool list), 'script' (scripts/triage-issue.mjs, with `pin`, the Winston commit it
+ * checks out, or null when it runs a script of its own repository), or 'other'.
+ */
+export function triageMechanism(text) {
+  if (/anthropics\/claude-code-action/.test(text)) return { kind: 'agent' }
+  if (/triage-issue\.mjs/.test(text)) return { kind: 'script', pin: TRIAGE_PIN.exec(text)?.[2] ?? null }
+  return { kind: 'other' }
+}
+
+/** The workflow text with only its pinned `ref:` changed. */
+export function repinTriage(text, sha) {
+  return text.replace(TRIAGE_PIN, (_, before, _old, after) => `${before}${sha}${after}`)
+}
+
 /**
  * True when a workflow runs on a newly opened issue: its `on:` names `issues`, with no
  * `types` (the default includes opened) or with `opened` among them. Read line by line,
@@ -1016,6 +1035,30 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
   } else {
     add({ name: 'triage-on-new-issue workflow', state: hasWf ? 'ok' : 'missing', detail: wf, fix: !hasWf && { plan: writePlan, run: () => writeTriageWorkflow(wf) } })
   }
+  if (existsSync(wf) && !declined) {
+    const mech = triageMechanism(readFileSync(wf, 'utf8'))
+    const want = TRIAGE_PIN.exec(readFileSync(join(ROOT, 'templates', 'triage-on-new-issue.yml'), 'utf8'))?.[2]
+    const commit = `Commit ${wf} to ${config.branches?.production ?? 'the default branch'}: GitHub runs the triage workflow from the default branch only.`
+    const name = 'triage workflow mechanism'
+    if (mech.kind === 'agent') {
+      // An offer: init shows the plan, and --yes applies it.
+      add({
+        name, required: false, state: 'missing', offer: true,
+        detail: 'agent-based (claude-code-action with a tool list, where a denied command fails silently); Winston now installs the script-based workflow',
+        fix: { plan: `replace ${wf} with Winston's script-based workflow: one model call per issue with no tools, code applies the verdict, the same two secrets (edits made to the old file are not kept)`, note: commit, run: () => writeTriageWorkflow(wf) },
+      })
+    } else if (mech.kind === 'script' && mech.pin && want && mech.pin !== want) {
+      add({
+        name, required: false, state: 'missing', offer: true,
+        detail: `script-based, pinned to Winston ${mech.pin.slice(0, 7)}; this Winston pins ${want.slice(0, 7)}`,
+        fix: { plan: `rewrite the pinned ref: line in ${wf} to ${want} (nothing else in the file changes)`, note: commit, run: () => writeFileSync(wf, repinTriage(readFileSync(wf, 'utf8'), want)) },
+      })
+    } else if (mech.kind === 'script') {
+      add({ name, state: 'ok', detail: mech.pin ? `script-based, pinned to Winston ${mech.pin.slice(0, 7)}` : 'script-based, running this repository\'s own script' })
+    } else {
+      add({ name, required: false, state: 'off', detail: 'neither Winston\'s script nor its agent workflow' })
+    }
+  }
   if (rivals.length) {
     const names = rivals.join(', ')
     const files = rivals.map((n) => join(root, '.github', 'workflows', n))
@@ -1124,6 +1167,7 @@ const WHY = [
   [/^triage policy/, 'Triage takes every rule from this file. Without rules a triage run finishes and changes nothing.'],
   [/^triage risk tiers/, 'The example tiers describe no real repository, so triage cannot judge risk here until they are rewritten.'],
   [/^triage-on-new-issue workflow/, 'This is what triages a new issue without anyone asking.'],
+  [/^triage workflow mechanism/, 'The script-based workflow makes one model call and applies the verdict in code, so nothing it needs can be silently denied; a stale pin runs an older script.'],
   [/^triage workflow conflicts/, 'Two workflows that triage the same issue give it two verdicts, and one may start work the other stopped on.'],
   [/^triage workflow secrets/, 'The workflow cannot sign in to GitHub or Claude without them, so new issues stay untriaged.'],
   [/^triage workflow runs/, 'Failed runs mean new issues are not being triaged, and nothing else reports it.'],
@@ -1472,8 +1516,9 @@ function setup(cwd, sit, opts) {
     return opts.yes ? 2 : 0
   }
   const list = checks(cwd, boot?.planned, true, opts.triage)
-  // What init does: every required gap it can close, and the owner's answered choices.
-  const fixable = (l) => l.filter((c) => c.fix && ((c.required && c.state === 'missing') || c.conflict))
+  // What init does: every required gap it can close, the owner's answered choices, and the
+  // offers (an agent-based or stale-pinned triage workflow) shown here before --yes applies them.
+  const fixable = (l) => l.filter((c) => c.fix && ((c.required && c.state === 'missing') || c.conflict || c.offer))
   const fixes = fixable(list)
   const hand = missing(list).filter((c) => !c.fix)
   const printHand = printSteps
