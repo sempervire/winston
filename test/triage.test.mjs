@@ -54,7 +54,7 @@ function github(issues, { failOn = null, appearAfter = 0 } = {}) {
         renames: { nodes: i.renamedAt ? [{ createdAt: i.renamedAt }] : [] },
         assignees: { nodes: i.assignees.map((login) => ({ login })) },
         labels: { totalCount: i.labels.length, nodes: i.labels.map((name) => ({ name })) },
-        comments: { totalCount: i.comments.length, pageInfo: { hasNextPage: false, endCursor: null }, nodes: i.comments.map((c) => ({ author: { login: c.author }, createdAt: c.createdAt, body: c.body })) },
+        comments: { totalCount: i.comments.length, pageInfo: { hasNextPage: false, endCursor: null }, nodes: i.comments.map((c) => ({ author: { login: c.author, __typename: c.bot ? 'Bot' : 'User' }, createdAt: c.createdAt, body: c.body })) },
         projectItems: { totalCount: onBoard ? 1 : 0, nodes: onBoard ? [{ id: i.item.id, isArchived: false, project: { number: 1, owner: { login: 'acme' } }, status: i.item.status ? { name: i.item.status } : null, priority: i.item.priority ? { name: i.item.priority } : null }] : [] },
       } } } };
     }
@@ -256,7 +256,9 @@ test('the sweep passes by an unanswered stop, so stops cannot starve it; an answ
   const stopNote = () => ({ author: 'triage-bot', body: '## Triage stopped\n\nTitle and body disagree.\n<!-- triage-decision {"stop":true} -->\n<!-- triage-plan -->' });
   const stop = (n, over = {}) => issue(n, { title: 'Dark mode', body: 'CSV export.', comments: [stopNote()], ...over });
   const g = github([
-    stop(1), stop(2), stop(3),
+    stop(1), stop(2),
+    // A bot's comment after the stop is not an answer.
+    stop(3, { comments: [stopNote(), { author: 'ci-reporter', bot: true, body: 'build passed' }] }),
     // Answered: a person commented after the stop, or edited the body, or renamed it.
     stop(4, { comments: [stopNote(), { author: 'dana', body: 'The title is right.' }] }),
     stop(5, { editedAt: '2026-06-01T00:00:00Z' }),
