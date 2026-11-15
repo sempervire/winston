@@ -1288,6 +1288,10 @@ test('skills with a closing report carry the no-bare-statement rule (#52)', () =
     assert.match(t, /question-box choice with the recommended option first/, skill);
   }
   assert.doesNotMatch(flat('init'), /Relay it as it stands/);
+  assert.match(flat('init'), /Never use `gh pr merge --admin`/);
+  assert.match(flat('init'), /gh pr merge <n> --merge/);
+  assert.match(flat('init'), /production deploy/);
+  assert.match(flat('doctor'), /read-only and performs no fix/);
 });
 
 test('the token link fills in what GitHub documents, by who owns the board', () => {

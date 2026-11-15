@@ -76,8 +76,9 @@ It runs in five steps and never skips the first two.
      deploy workflow; on yes, add `deployGate` to the config as the README shows.
    - **A note to commit the config and workflow:** it names the exact files and the reason
      (GitHub runs the triage workflow from the default branch only). Relay that reason, and
-     offer to commit those two files yourself now (`git add` and `git commit` them) rather
-     than leaving the user to work out why they're uncommitted.
+     ask in a question box (recommended: commit them now): on yes, commit those two files on
+     a new branch from the default branch, push it and open a pull request into it, using
+     the note's command; merging that PR follows the merge rule in the closing report below.
    - **`triage workflow secrets` under Needs you, or the Secrets list:** the workflow skips cleanly
      without them, so frame this as an optional next step, not a problem; until it is done,
      new issues are not triaged automatically. Explain both secrets in plain terms: `GH_PAT`
@@ -165,7 +166,7 @@ and writes `.github/workflows/set-issue-phase.yml`, which sets it on each new is
 once a day on any open issue with none; it needs no secret and never changes a milestone
 that is set. A second line sets the milestone on the open issues that have none now. Say
 in plain words that both only take effect once the workflow and the config are committed
-to the default branch, and offer to commit them. To move to the next phase the owner
+to the default branch, and ask in a question box (recommended: commit them now). To move to the next phase the owner
 edits that one `phase` line. If doctor says the board's views filter to several
 milestones, ask the user which is the current one in a question box, write it as `phase`
 in `.winston/config.json` after their answer, and rerun the plan. `"phase": false` means
@@ -182,14 +183,26 @@ already done; (b) a concrete command, which, when it is one for the user to past
 put on the clipboard with `pbcopy` (macOS) with the report saying so; or (c) a question-box
 choice with the recommended option first. Anything init is authorized to do itself is
 simply done, not offered. Never end a line with "tell me if you want", "say if", or a
-status the user must turn into a decision. In particular: a setup PR init opened is
-reviewed (the review posted on the PR) and merged by init when the session has merge
-authority in that repo and every check passes; where it lacks that authority, or a check
-fails, ask once in a question box with "Review and merge it" first, or give the exact
-`gh pr merge` command. A `processDocs` entry in `.winston/config.json` that names a file
-that does not exist is removed by init (it says which entry it removed), or, when the
-file looks like it should exist, asked once in a question box with "Remove the entry"
-recommended.
+status the user must turn into a decision. In particular:
+
+- **Setup PR.** init reviews a setup PR it opened (the review posted on the PR) and merges
+  it only when all of these hold: the owner has given merge authority explicitly (a
+  standing policy in the user's own instructions that names this repo, or this session's
+  approval; write access alone is not authority), every existing check passes, and the
+  merge needs no bypass. Never use `gh pr merge --admin` or any other bypass of branch
+  protection or required reviews.
+- **A merge into the production branch is a production deploy** wherever merges there
+  deploy (`deployGate` configured, or the deploy-gate question above answered yes). Then
+  init does not merge on its own authority: it uses the deploy gate's approval phrase when
+  the owner has given it, and otherwise asks once in a question box. Never merge silently.
+- **When init may not merge,** ask once in a question box with "Review and merge it" first,
+  or give the plain command `gh pr merge <n> --merge`, which is also put on the clipboard.
+- **A `processDocs` entry** in `.winston/config.json` that names a file that does not exist:
+  if the file is absent from the repo and from the default branch's history (`git log
+  --all -- <path>` is empty), init removes that one entry and says which. If the file
+  existed once or the name looks intended, ask once in a question box with "Remove the
+  entry" recommended. The config edit goes into the same setup commit or PR as the rest,
+  never straight onto the default branch.
 
 `winston init` is safe to run again: it shows what is left, skips what is done, and never
 overwrites a finished step. Whenever it stops on something missing, point the user at

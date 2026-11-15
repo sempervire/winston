@@ -860,7 +860,7 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
             detail: done ? `new issues get the milestone "${set}"${committed ? '' : ` once ${PHASE_WORKFLOW} and the config are committed to the default branch`}` : `new issues get no milestone, so a board view filtered to "${target}" never shows them`,
             fix: !done && {
               plan: `give every new issue the milestone "${target}": ${set ? '' : `set "phase" to it in ${configPath}, and `}write ${phaseWf} (it takes effect once it and the config are committed to the default branch; to change phase later, edit that one config line)`,
-              note: `Commit ${configPath} and ${phaseWf} to ${config.branches?.production ?? 'the default branch'}: GitHub runs the phase workflow from the default branch only, and it reads the phase from the config there. Next: /winston:init commits them after you say yes in its question box, or run: git add '${configPath}' '${phaseWf}' && git commit -m 'Set up Winston'`,
+              note: `Commit ${configPath} and ${phaseWf} to ${config.branches?.production ?? 'the default branch'}: GitHub runs the phase workflow from the default branch only, and it reads the phase from the config there. Next: /winston:init asks in a question box (recommended: yes) and does this for you, or from any branch run: ${landOnDefault([configPath, phaseWf], 'Set up Winston issue phase', config.branches?.production)}`,
               run: () => {
                 if (!set) {
                   const data = JSON.parse(readFileSync(configPath, 'utf8'))
@@ -1037,7 +1037,7 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
       conflict: { rivals, plans },
       fix: plans[choice] && {
         plan: plans[choice], run: runs[choice],
-        note: choice === 'replace' && `Commit the deletion of ${files.join(', ')} to ${config.branches?.production ?? 'the default branch'}: until then it still runs on every new issue. Next: /winston:init commits the deletion after you say yes in its question box, or run: git add -A ${files.map((f) => `'${f}'`).join(' ')} && git commit -m 'Remove auto-triage workflow'`,
+        note: choice === 'replace' && `Commit the deletion of ${files.join(', ')} to ${config.branches?.production ?? 'the default branch'}: until then it still runs on every new issue. Next: /winston:init asks in a question box (recommended: yes) and does this for you, or from any branch run: ${landOnDefault(files, 'Remove auto-triage workflow', config.branches?.production, true)}`,
       },
     })
   }
@@ -1140,6 +1140,19 @@ export function statusOf(c) {
 }
 
 /** How to close an open item: { command } for one paste-ready command, and the lines to show. */
+/** Single-quote a path for a shell, escaping any quote inside it. */
+const shq = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`
+
+/**
+ * The commands that put files on the default branch from whatever branch is checked out:
+ * a new branch from the remote default, commit, push, and a pull request. Plain git and gh.
+ */
+function landOnDefault(paths, message, production, all = false) {
+  const prod = production ?? 'main'
+  const branch = 'winston-setup'
+  return `git switch -c ${branch} origin/${prod} && git add ${all ? '-A ' : ''}${paths.map(shq).join(' ')} && git commit -m ${shq(message)} && git push -u origin ${branch} && gh pr create --base ${prod} --fill`
+}
+
 function fixOf(c) {
   if (c.steps) {
     const lines = c.steps()
@@ -1463,7 +1476,7 @@ function bootstrap(cwd, sit, opts) {
   }
 
   const notes = []
-  if (sit.hasCommits) notes.push({ withWorkflow: `Commit ${configPath} and ${wf} to ${production}: GitHub runs the triage workflow from the default branch only. Next: /winston:init commits them after you say yes in its question box, or run: git add '${configPath}' '${wf}' && git commit -m 'Set up Winston'`, without: `Commit ${configPath} to ${production}, so the setup is there for everyone who works in the repository. Next: /winston:init commits it after you say yes in its question box, or run: git add '${configPath}' && git commit -m 'Set up Winston'` })
+  if (sit.hasCommits) notes.push({ withWorkflow: `Commit ${configPath} and ${wf} to ${production}: GitHub runs the triage workflow from the default branch only. Next: /winston:init asks in a question box (recommended: yes) and does this for you, or from any branch run: ${landOnDefault([configPath, wf], 'Set up Winston', production)}`, without: `Commit ${configPath} to ${production}, so the setup is there for everyone who works in the repository. Next: /winston:init asks in a question box (recommended: yes) and does this for you, or from any branch run: ${landOnDefault([configPath], 'Set up Winston', production)}` })
   notes.push(`No deploy gate is set. Next: /winston:init asks in a question box whether merges into ${production} deploy and, if yes, adds deployGate to the config (the README shows its form); if they do not deploy, nothing to do.`)
   return { steps, notes, planned: { config, newBoard, noRepo, firstCommit: !sit.hasCommits, slug } }
 }
