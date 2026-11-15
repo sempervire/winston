@@ -59,7 +59,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 export const REQUIRED_LABELS = [
   { name: 'risk: low', color: '0e8a16', description: 'Triage: docs, copy, or an isolated fix' },
   { name: 'risk: medium', color: 'fbca04', description: 'Triage: a logic change, or several files' },
-  { name: 'risk: high', color: 'b60205', description: 'Triage: high blast radius, or needs an owner decision' },
+  { name: 'risk: high', color: 'b60205', description: 'Triage: could break a lot if wrong, or needs an owner decision' },
   { name: 'auto-merge', color: '1d76db', description: 'Triage: may be built and merged without a further ask' },
   { name: 'auto-verify', color: '5319e7', description: 'Triage: an agent can run the verification' },
   { name: 'human-verify', color: 'd93f0b', description: 'Triage: verification needs a person' },
@@ -332,12 +332,23 @@ const FILL_IN = 'fill this in: '
  * config's value for it (`{{board.statuses[0]}}`, `{{owner}}`). Where the config has no
  * such value the text says "fill this in: <what>" in plain words, never a placeholder.
  * The template's opening comment, which tells a person to do that substitution by hand,
- * is replaced. The (per-repo) sections stay generic.
+ * is replaced. The (per-repo) Names section is filled in too (the board's Priority options,
+ * the process docs); the risk tiers are Winston's standard ones, a working default.
  */
 function writeStarterPolicy(file, config) {
-  const filled = { ...config, board: { statuses: DEFAULT_STATUSES, priorityField: 'Priority', ...config.board } }
+  const board = { statuses: DEFAULT_STATUSES, priorityField: 'Priority', ...config.board }
+  // The Priority options as the board spells them, so the owner never copies them in by
+  // hand; Winston's own four when the board cannot be read (a board init makes has those).
+  const field = board.owner && Number.isInteger(board.number) ? fetchBoard(board.owner, board.number).project?.fields?.nodes?.find((f) => f?.name === board.priorityField) : null
+  const options = field?.options?.map((o) => o.name).filter(Boolean)
+  const docs = Array.isArray(config.processDocs) ? config.processDocs.filter((d) => typeof d === 'string') : []
+  const filled = {
+    ...config, board,
+    priorityOptions: (options?.length ? options : PRIORITIES).map((o) => `\`${o}\``).join(', '),
+    otherRules: docs.length ? `${docs.map((d) => `\`${d}\``).join(', ')} ${docs.length === 1 ? 'holds' : 'hold'} this repo's working rules, which win over this file where they conflict` : 'none beyond this file',
+  }
   const text = readFileSync(join(ROOT, 'templates', 'TRIAGE.md'), 'utf8')
-    .replace(/^<!--[^]*?-->\n/, '<!-- Winston starter triage policy, written by winston init. Rewrite the three sections\nmarked (per-repo) at the end for this repository, then delete this comment. -->\n')
+    .replace(/^<!--[^]*?-->\n/, '<!-- Winston wrote this file from .winston/config.json, and it works as it is. Edit the\nsections marked (per-repo) at the end if you like; Claude can tailor them for you. -->\n')
     .replace(/\{\{([\w.[\]]+)\}\}/g, (whole, key) => {
       const value = key.split(/[.[\]]+/).filter(Boolean).reduce((v, k) => (v && Object.hasOwn(v, k) ? v[k] : undefined), filled)
       return typeof value === 'string' || typeof value === 'number' ? String(value) : `${FILL_IN}${POLICY_VALUES[key] ?? `the value of ${key}`}`
@@ -365,6 +376,27 @@ function issuesWithoutMilestone(root) {
 function writeTriageWorkflow(wf) {
   mkdirSync(dirname(wf), { recursive: true })
   copyFileSync(join(ROOT, 'templates', 'triage-on-new-issue.yml'), wf)
+}
+
+/** The repository the template checks the triage script out of. */
+const TRIAGE_SCRIPT_REPO = 'sempervire/winston'
+/** The template's pinned checkout of the triage script: the one line `winston init` may rewrite. */
+const TRIAGE_PIN = /^(\s*ref:\s*)([0-9a-f]{40})(\s*#\s*winston-triage-script\b.*)$/m
+
+/**
+ * Which mechanism a triage workflow uses: 'agent' (the older template: claude-code-action
+ * with a tool list), 'script' (scripts/triage-issue.mjs, with `pin`, the Winston commit it
+ * checks out, or null when it runs a script of its own repository), or 'other'.
+ */
+export function triageMechanism(text) {
+  if (/anthropics\/claude-code-action/.test(text)) return { kind: 'agent' }
+  if (/triage-issue\.mjs/.test(text)) return { kind: 'script', pin: TRIAGE_PIN.exec(text)?.[2] ?? null }
+  return { kind: 'other' }
+}
+
+/** The workflow text with only its pinned `ref:` changed. */
+export function repinTriage(text, sha) {
+  return text.replace(TRIAGE_PIN, (_, before, _old, after) => `${before}${sha}${after}`)
 }
 
 /**
@@ -1125,23 +1157,62 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
   const keep = choice === 'keep' && rivals.length > 0
   // init's first commit, when it makes one, writes the workflow itself.
   const hasWf = existsSync(wf) || !!planned?.firstCommit
-  const writePlan = `write ${wf} from the template (it skips until the repo has the secrets ${TRIAGE_SECRETS.join(' and ')}; the steps for those are below)`
+  const shownWf = shownPath(root, wf)
+  const writePlan = `Add automatic triage of new issues (${shownWf}); it waits, doing nothing, until the two keys below are set`
   if (declined) {
-    add({ name: 'triage-on-new-issue workflow', required: false, state: 'off', detail: `not installed, by choice: triage.workflow is false in ${configPath}` })
+    add({ name: 'Automatic triage of new issues', required: false, state: 'off', detail: `off by choice: another workflow triages this project (triage.workflow is false in ${shownConfig})` })
   } else if (rivals.length && !hasWf) {
     // Not written until the owner has chosen; the conflict below carries the choice.
-    add({ name: 'triage-on-new-issue workflow', required: false, state: 'off', detail: `not written: ${rivals.join(', ')} already ${rivals.length === 1 ? 'triages' : 'triage'} new issues` })
+    add({ name: 'Automatic triage of new issues', required: false, state: 'off', detail: `not added yet: ${rivals.join(', ')} already ${rivals.length === 1 ? 'triages' : 'triage'} new issues, so Winston asks which to keep` })
   } else {
-    add({ name: 'triage-on-new-issue workflow', state: hasWf ? 'ok' : 'missing', detail: wf, fix: !hasWf && { plan: writePlan, run: () => writeTriageWorkflow(wf) } })
+    add({
+      name: 'Automatic triage of new issues', state: hasWf ? 'ok' : 'missing', detail: hasWf ? shownWf : 'not added yet: new issues won\'t be triaged automatically',
+      fix: !hasWf && { plan: writePlan, commit: [wf], run: () => writeTriageWorkflow(wf) },
+    })
+  }
+  if (existsSync(wf) && !declined) {
+    const mech = triageMechanism(readFileSync(wf, 'utf8'))
+    const want = TRIAGE_PIN.exec(readFileSync(join(ROOT, 'templates', 'triage-on-new-issue.yml'), 'utf8'))?.[2]
+    const name = 'Automatic triage is up to date'
+    if (mech.kind === 'agent') {
+      // An offer: init shows the plan, and --yes applies it.
+      add({
+        name, required: false, state: 'missing', offer: true,
+        detail: 'an older version (an agent with a tool list, which can fail without saying so); Winston\'s newer one makes one model call per issue and its own code applies the result',
+        fix: { plan: `Replace ${shownWf} with Winston's newer automatic triage: one model call per issue, and Winston's code applies the result. It uses the same two keys; edits made to the old file are not kept`, commit: [wf], run: () => writeTriageWorkflow(wf) },
+      })
+    } else if (mech.kind === 'script' && mech.pin && want && mech.pin !== want) {
+      // Only forward: an older Winston must not roll a newer pin back. GitHub says which
+      // commit descends from which; "ahead" means this Winston's pin is the newer one.
+      const order = run('gh', ['api', `repos/${TRIAGE_SCRIPT_REPO}/compare/${mech.pin}...${want}`, '--jq', '.status']).out
+      const pinned = `pinned to Winston ${mech.pin.slice(0, 7)}`
+      if (order === 'ahead') {
+        add({
+          name, required: false, state: 'missing', offer: true,
+          detail: `${pinned}; this Winston has the newer ${want.slice(0, 7)}`,
+          fix: { plan: `Update ${shownWf} to this Winston's version, ${want.slice(0, 7)} (only its pinned version line changes)`, commit: [wf], run: () => writeFileSync(wf, repinTriage(readFileSync(wf, 'utf8'), want)) },
+        })
+      } else if (order === 'behind') {
+        add({ name, state: 'ok', detail: `${pinned}, newer than this Winston's ${want.slice(0, 7)}: update Winston rather than the file (the Winston version line says how)` })
+      } else {
+        add({ name, required: false, state: 'unknown', detail: `${pinned}; this Winston has ${want.slice(0, 7)}, and GitHub could not say which is newer, so the file is left as it is. Updating Winston settles it` })
+      }
+    } else if (mech.kind === 'script') {
+      add({ name, state: 'ok', detail: mech.pin ? `pinned to Winston ${mech.pin.slice(0, 7)}` : 'runs this repository\'s own copy of the script' })
+    } else {
+      add({ name, required: false, state: 'off', detail: `${shownWf} is neither of Winston's versions, so Winston leaves it alone` })
+    }
   }
   if (rivals.length) {
     const names = rivals.join(', ')
     const files = rivals.map((n) => join(root, '.github', 'workflows', n))
+    const shownFiles = files.map((f) => shownPath(root, f)).join(', ')
     const onDisk = existsSync(wf)
+    // In the order a person is offered them: the recommended one first.
     const plans = {
-      keep: `keep ${names} as this repository's triage: ${onDisk ? `delete ${wf}, and ` : ''}set triage.workflow to false in ${configPath}`,
-      replace: `make Winston's workflow the only triage: ${onDisk ? '' : `write ${wf} from the template, and `}delete ${files.join(', ')} (it stops running once the deletion is committed to the default branch)`,
-      both: `keep both, knowingly: ${onDisk ? '' : `write ${wf} from the template, and `}record ${names} under triage.alongside in ${configPath}; every new issue is then triaged twice`,
+      replace: `Make Winston's automatic triage the only one, so each issue is triaged once: ${onDisk ? '' : `add ${shownWf}, and `}delete ${shownFiles} (it stops running once the deletion is saved to the default branch)`,
+      keep: `Keep ${names} as this project's triage: ${onDisk ? `delete ${shownWf}, and ` : ''}set triage.workflow to false in ${shownConfig}`,
+      both: `Keep both: ${onDisk ? '' : `add ${shownWf}, and `}record ${names} under triage.alongside in ${shownConfig}; every new issue is then triaged twice`,
     }
     const runs = {
       keep: () => { if (existsSync(wf)) rmSync(wf); patchTriage(configPath, { workflow: false }) },
@@ -1149,13 +1220,14 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
       both: () => { if (!existsSync(wf)) writeTriageWorkflow(wf); patchTriage(configPath, { alongside: [...alongside, ...rivals] }) },
     }
     add({
-      name: 'triage workflow conflicts', required: false, state: 'off',
+      name: 'Two workflows triage new issues', required: false, state: 'off',
       detail: `${names} also ${rivals.length === 1 ? 'triages' : 'triage'} every new issue`,
-      problem: `${names} and ${wfName} would both triage every new issue: two comments, two risk: decisions, and one may start work the other stopped on. Choose which stays: winston init --mode adopt --triage keep   (keep ${names}), --triage replace   (keep Winston's, delete ${names}), or --triage both   (keep both, knowingly)`,
+      problem: `${names} and Winston's ${wfName} would both triage every new issue: two comments, two risk ratings, and one may start work the other stopped on. Recommended: let Winston's replace it, so each issue is triaged once: ${inChat('winston init --mode adopt --triage replace')} (it deletes ${names}). Or --triage keep (keep yours; Winston adds none) or --triage both (every issue is triaged twice)`,
       conflict: { rivals, plans },
       fix: plans[choice] && {
         plan: plans[choice], run: runs[choice],
-        note: choice === 'replace' && `Commit the deletion of ${files.join(', ')} to ${config.branches?.production ?? 'the default branch'}: until then it still runs on every new issue. Next: /winston:init asks in a question box (recommended: yes) and does this for you, or from any branch run: ${landOnDefault(files, 'Remove auto-triage workflow', config.branches?.production, true)}`,
+        ...(choice === 'keep' ? { commit: [configPath] } : choice === 'both' ? { commit: [configPath, wf] } : {}),
+        note: choice === 'replace' && `${shownFiles} keeps running on every new issue until its deletion is saved to ${config.branches?.production ?? 'the default branch'}. Next: /winston:init asks in a question box (recommended: yes) and does this for you, or from any branch run: ${landOnDefault(files, 'Remove auto-triage workflow', config.branches?.production, true)}`,
       },
     })
   }
@@ -1166,11 +1238,11 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
     const listed = planned?.noRepo ? { ok: true, out: '' } : run('gh', ['secret', 'list', ...(slug ? ['--repo', slug] : []), '--json', 'name', '--jq', '.[].name'], { cwd: root })
     const have = new Set(listed.out.split('\n'))
     const lacking = TRIAGE_SECRETS.filter((n) => !have.has(n))
-    const init = 'winston init --mode adopt prints the steps'
     add({
-      name: 'triage workflow secrets', required: false, state: !listed.ok ? 'unknown' : lacking.length ? 'off' : 'ok',
-      detail: !listed.ok ? 'this account cannot list the repo\'s secrets' : `${TRIAGE_SECRETS.map((n) => `${n} ${have.has(n) ? 'set' : 'missing'}`).join(', ')}${lacking.length ? ' — new issues are not triaged automatically until both are set' : ''}`,
-      problem: listed.ok && lacking.length && `secrets missing: ${lacking.join(', ')}. New issues are not triaged automatically until both are set (${init})`,
+      name: 'Automatic triage keys', required: false, state: !listed.ok ? 'unknown' : lacking.length ? 'off' : 'ok',
+      detail: !listed.ok ? 'this GitHub account cannot see the repository\'s secrets (only its admins can); the steps below say how to check'
+        : `${TRIAGE_SECRETS.map((n) => `${n} ${have.has(n) ? 'set' : 'missing'}`).join(', ')}${lacking.length ? ': new issues are not triaged automatically until both are set' : ' (doctor sees names only: if a run fails with "cannot read the board", make GH_PAT again with the project box ticked)'}`,
+      problem: listed.ok && lacking.length && `missing: ${lacking.join(', ')}. Recommended: set them now (about 5 minutes); /winston:init walks you through it`,
       steps: (!listed.ok || lacking.length) && (() => secretSteps({ slug, known: listed.ok, want: listed.ok ? lacking : TRIAGE_SECRETS, boardOwner: config.board?.owner, wfName })),
     })
   }
@@ -1181,9 +1253,9 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
     const failed = done.findIndex((c) => !FAILED_RUNS.includes(c))
     const n = failed === -1 ? done.length : failed
     add({
-      name: 'triage workflow runs', required: false, state: !runs.ok ? 'unknown' : n ? 'failed' : done[0] === 'success' ? 'ok' : 'off',
-      detail: !runs.ok ? 'cannot list its runs (GitHub knows a workflow only once it is on the default branch)' : n ? `its last ${n} ${n === 1 ? 'run' : 'runs'} failed` : done.length ? `last run: ${done[0]}` : 'no finished runs yet',
-      problem: runs.ok && n > 0 && `installed, but its last ${n} ${n === 1 ? 'run' : 'runs'} failed. See why: gh run list --workflow ${wfName} --limit 1, then gh run view <id> --log-failed. A missing, expired or under-scoped secret is the usual cause (winston init --mode adopt prints the steps for a missing one)`,
+      name: 'Automatic triage is working', required: false, state: !runs.ok ? 'unknown' : n ? 'failed' : done[0] === 'success' ? 'ok' : 'off',
+      detail: !runs.ok ? `GitHub shows no runs yet: ${wfName} runs once it is saved to the default branch` : n ? `its last ${n} ${n === 1 ? 'run' : 'runs'} failed` : done.length ? `last run: ${done[0]}` : 'no finished runs yet: it runs when the next issue is opened',
+      problem: runs.ok && n > 0 && `its last ${n} ${n === 1 ? 'run' : 'runs'} failed. A key that was mistyped, has expired or lacks access is the usual cause. Ask Claude to look: it reads the failed run's log (gh run list --workflow ${wfName} --limit 1, then gh run view <id> --log-failed), says what went wrong, and walks you through making the key again if that is it`,
     })
   }
 
@@ -1255,10 +1327,12 @@ const WHY = [
   [/^Triage labels/, 'Triage means Winston reads each new issue and rates how risky it is; it records that with these labels.'],
   [/^Triage rules: blanks/, 'Triage reads these lines as they stand, so a blank becomes part of the rule.'],
   [/^Triage rules/, 'Triage takes every rule from this file. Without rules a triage run finishes and changes nothing.'],
-  [/^triage-on-new-issue workflow/, 'This is what triages a new issue without anyone asking.'],
-  [/^triage workflow conflicts/, 'Two workflows that triage the same issue give it two verdicts, and one may start work the other stopped on.'],
-  [/^triage workflow secrets/, 'The workflow cannot sign in to GitHub or Claude without them, so new issues stay untriaged.'],
-  [/^triage workflow runs/, 'Failed runs mean new issues are not being triaged, and nothing else reports it.'],
+  [/^Automatic triage of new issues/, 'Triage means Winston reads each new issue, rates its risk and plans it; this workflow does that the moment an issue is opened.'],
+  [/^Automatic triage is up to date/, 'The older version can fail without saying so; the newer one reports every failure.'],
+  [/^triage workflow mechanism/, 'The script-based workflow makes one model call and applies the verdict in code, so nothing it needs can be silently denied; a stale pin runs an older script.'],
+  [/^Two workflows triage/, 'Two workflows that triage the same issue give it two verdicts, and one may start work the other stopped on.'],
+  [/^Automatic triage keys/, 'The workflow signs in to GitHub and Claude with these two keys; without them new issues wait untriaged.'],
+  [/^Automatic triage is working/, 'Failed runs mean new issues are not being triaged, and nothing else reports it.'],
   [/^Fewer permission prompts/, 'Without these rules a long run stops to ask your permission before everyday commands.'],
   [/^Winston version/, 'Newer versions fix setup problems like the ones this checklist looks for.'],
 ]
@@ -1695,8 +1769,9 @@ function setup(cwd, sit, opts) {
     return opts.yes ? 2 : 0
   }
   const list = checks(cwd, boot?.planned, true, opts.triage)
-  // What init does: every required gap it can close, and the owner's answered choices.
-  const fixable = (l) => l.filter((c) => c.fix && ((c.required && c.state === 'missing') || c.conflict))
+  // What init does: every required gap it can close, the owner's answered choices, and the
+  // offers (an agent-based or stale-pinned triage workflow) shown here before --yes applies them.
+  const fixable = (l) => l.filter((c) => c.fix && ((c.required && c.state === 'missing') || c.conflict || c.offer))
   const fixes = fixable(list)
   const hand = missing(list).filter((c) => !c.fix)
   const printHand = printSteps
@@ -1721,9 +1796,9 @@ function setup(cwd, sit, opts) {
   const printChoice = (l) => {
     const c = l.find((x) => x.conflict && !x.fix)
     if (!c) return
-    console.log(`\nTriage workflow, your choice: ${c.detail}, and Winston's would too. Rerun with one of:`)
-    for (const [flag, plan] of Object.entries(c.conflict.plans)) console.log(`  --triage ${flag.padEnd(8)} ${plan}`)
-    console.log('Until you choose, init leaves the triage workflows as they are.')
+    console.log(`\nTriage workflow, your choice (one answer deletes a file): ${c.detail}, and Winston's would too. Run init again with one of:`)
+    for (const [flag, plan] of Object.entries(c.conflict.plans)) console.log(`  --triage ${flag.padEnd(8)} ${flag === 'replace' ? '(Recommended) ' : ''}${plan}`)
+    console.log(`Until you choose, init leaves the triage workflows as they are. Recommended: ${applyCommand({ ...opts, triage: 'replace', yes: false })}`)
   }
   if (!boot && !fixes.length && !hand.length) {
     console.log(`${ownerSteps(list) ? 'Winston\'s part of the setup is done' : 'Nothing to do: the setup is complete'}. Nothing was changed. Safe to run again.`)

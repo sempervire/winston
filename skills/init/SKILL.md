@@ -106,7 +106,7 @@ It runs in five steps.
 
 5. **Carry the plan's notes through as help, not status.** `winston init`'s output can end
    with `Note:` lines and a **Turn on automatic triage** list, and `winston doctor`
-   can report `triage workflow secrets` as `needs you` — all are non-blocking, so don't present
+   can report `Automatic triage keys` as `needs you` — all are non-blocking, so don't present
    them as bare facts or errors; say what to do about them, and always offer the next step.
    - **A note to commit the config and workflows:** the files only start working once they
      are saved to the default branch on GitHub. Say that in one plain sentence and make it
@@ -114,7 +114,7 @@ It runs in five steps.
      with yes (Recommended) first. On yes, commit exactly the files the note names on a new
      branch from the default branch, push it and open a pull request into it, using the
      note's command; merging that PR follows the merge rule in the closing report below.
-   - **`triage workflow secrets` under Needs you, or the Turn on automatic triage list:**
+   - **`Automatic triage keys` under Needs you, or the Turn on automatic triage list:**
      this is part of Winston's standard setup, so recommend doing it now (about 5
      minutes): without it, Winston won't triage new issues until asked. "Later" is the
      second option, never a problem. Explain both secrets in plain terms: `GH_PAT`
@@ -165,7 +165,7 @@ It runs in five steps.
      `gh secret set` yourself; the owner runs it in their own terminal. The owner doing it
      by hand needs no secret-grant phrase (config `secretGrant.phrase`); that phrase
      governs an agent handling secrets, and here no agent does.
-   - **When they say it is done,** run `winston doctor`: `triage workflow secrets` should
+   - **When they say it is done,** run `winston doctor`: `Automatic triage keys` should
      read `done`. Then prove it yourself; this handles no secret. Once the workflow file is
      on the default branch: pick an open issue (`gh issue list --limit 1`), or, with none,
      file one titled "Winston triage test" and say so; run

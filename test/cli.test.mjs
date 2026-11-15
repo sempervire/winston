@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { harnessOfRoot } from '../lib/update.mjs';
 import { loadConfig, loadLayers } from '../lib/config.mjs';
-import { coveredBy, DOCTOR_POINTER, firesOnNewIssue, permissionRules, policyBlanks, policyState, tokenUrl } from '../bin/winston';
+import { coveredBy, DOCTOR_POINTER, firesOnNewIssue, permissionRules, policyBlanks, policyState, repinTriage, tokenUrl, triageMechanism } from '../bin/winston';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const CLI = join(ROOT, 'bin/winston');
@@ -89,7 +89,7 @@ test('doctor on a repo with no config says it is not set up and points at init',
   assert.match(doc.stdout, /^needs you\s+Winston settings for this repo\s+— not set up yet$/m);
   // What follows from the config is init's to set up, not the person's: "after setup", no detail.
   assert.match(doc.stdout, /^after setup\s+Triage labels$/m);
-  assert.match(doc.stdout, /^after setup\s+triage-on-new-issue workflow$/m);
+  assert.match(doc.stdout, /^after setup\s+Automatic triage of new issues$/m);
   assert.match(doc.stdout, /^after setup\s+Fewer permission prompts$/m);
   assert.equal(doc.stdout.match(/^needs you/gm).length, 1, 'the rows agree with "Needs you (1)"');
   assert.match(doc.stdout, /^(on|off)\s+Codex \(second opinions\)/m);
@@ -524,37 +524,37 @@ test('a second workflow that triages new issues is the owner\'s choice: doctor r
   // Both on disk: doctor reports it, and init asks rather than guess.
   rival();
   const doc = s.cli(['doctor']);
-  assert.match(doc.stdout, /^needs you\s+triage workflow conflicts\s+— auto-triage\.yml also triages every new issue$/m);
-  assert.match(doc.stdout, /\d\. triage workflow conflicts\n   Why: Two workflows[^\n]+\n   Fix:\n     auto-triage\.yml and triage-on-new-issue\.yml would both triage every new issue[^\n]*--triage keep[^\n]*--triage replace[^\n]*--triage both/);
+  assert.match(doc.stdout, /^needs you\s+Two workflows triage new issues\s+— auto-triage\.yml also triages every new issue$/m);
+  assert.match(doc.stdout, /\d\. Two workflows triage new issues\n   Why: Two workflows[^\n]+\n   Fix:\n     auto-triage\.yml and Winston's triage-on-new-issue\.yml would both triage every new issue[^\n]*Recommended: let Winston's replace it[^\n]*!winston init --mode adopt --triage replace[^\n]*--triage keep[^\n]*--triage both/);
   assert.doesNotMatch(doc.stdout, /greet\.yml|weekly\.yml|label\.yml/);
   const asked = s.cli(['init', '--mode', 'adopt', '--yes']);
   assert.equal(asked.status, 0, asked.stdout);
-  assert.match(asked.stdout, /Triage workflow, your choice: auto-triage\.yml also triages every new issue, and Winston's would too\. Rerun with one of:\n  --triage keep  [^\n]+\n  --triage replace [^\n]+\n  --triage both  [^\n]+\nUntil you choose, init leaves the triage workflows as they are\./);
+  assert.match(asked.stdout, /Triage workflow, your choice \(one answer deletes a file\): auto-triage\.yml also triages every new issue, and Winston's would too\. Run init again with one of:\n  --triage replace  \(Recommended\) [^\n]+\n  --triage keep     [^\n]+\n  --triage both     [^\n]+\nUntil you choose, init leaves the triage workflows as they are\./);
   assert.ok(existsSync(ours) && existsSync(theirs), 'nothing is deleted without the choice');
   assert.equal(s.cli(['init', '--mode', 'adopt', '--triage', 'sometimes']).status, 2);
 
   // replace: Winston's stays, the other goes.
-  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace']).stdout, /Winston will:\n\s+- make Winston's workflow the only triage: delete .*auto-triage\.yml/);
+  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace']).stdout, /Winston will:\n\s+- Make Winston's automatic triage the only one, so each issue is triaged once: delete \.github\/workflows\/auto-triage\.yml/);
   assert.ok(existsSync(theirs), 'a plan changes nothing');
-  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace', '--yes']).stdout, /done\s+make Winston's workflow the only triage[^]*Note: Commit the deletion of .*auto-triage\.yml to main: until then it still runs on every new issue/);
+  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace', '--yes']).stdout, /done\s+Make Winston's automatic triage the only one[^]*Note: \.github\/workflows\/auto-triage\.yml keeps running on every new issue until its deletion is saved to main\. Next: /);
   assert.ok(existsSync(ours) && !existsSync(theirs) && existsSync(join(dir, 'greet.yml')));
   assert.doesNotMatch(s.cli(['doctor']).stdout, /triage workflow conflicts/);
 
   // both: recorded, so it is asked once.
   rival();
-  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'both', '--yes']).stdout, /done\s+keep both, knowingly: record auto-triage\.yml under triage\.alongside/);
+  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'both', '--yes']).stdout, /done\s+Keep both: record auto-triage\.yml under triage\.alongside/);
   assert.deepEqual(config().triage, { alongside: ['auto-triage.yml'] });
   assert.ok(existsSync(ours) && existsSync(theirs));
   assert.doesNotMatch(s.cli(['doctor']).stdout, /triage workflow conflicts/);
 
   // keep: the other stays, Winston's goes, and doctor stops asking for it.
   reset();
-  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'keep', '--yes']).stdout, /done\s+keep auto-triage\.yml as this repository's triage: delete .*triage-on-new-issue\.yml, and set triage\.workflow to false/);
+  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'keep', '--yes']).stdout, /done\s+Keep auto-triage\.yml as this project's triage: delete \.github\/workflows\/triage-on-new-issue\.yml, and set triage\.workflow to false/);
   assert.ok(!existsSync(ours) && existsSync(theirs));
   assert.equal(config().triage.workflow, false);
   const kept = s.cli(['doctor']);
-  assert.match(kept.stdout, /^off\s+triage-on-new-issue workflow\s+— not installed, by choice/m);
-  assert.doesNotMatch(kept.stdout, /triage workflow (conflicts|secrets|runs)/);
+  assert.match(kept.stdout, /^off\s+Automatic triage of new issues\s+— off by choice: another workflow triages this project/m);
+  assert.doesNotMatch(kept.stdout, /Two workflows triage|Automatic triage (keys|is working)/);
   assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /(the setup is complete|Winston's part of the setup is done)\. Nothing was changed/);
 
   // The other one first, Winston's not yet written: it is not written until the owner chooses.
@@ -563,8 +563,8 @@ test('a second workflow that triages new issues is the owner\'s choice: doctor r
   assert.match(held.stdout, /Triage workflow, your choice/);
   assert.doesNotMatch(held.stdout, /Turn on automatic triage|claude setup-token/, 'no secrets steps for a workflow that is not being written');
   assert.ok(!existsSync(ours));
-  assert.match(s.cli(['doctor']).stdout, /^off\s+triage-on-new-issue workflow\s+— not written: auto-triage\.yml already triages new issues$/m);
-  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace', '--yes']).stdout, /done\s+make Winston's workflow the only triage: write .*triage-on-new-issue\.yml from the template, and delete/);
+  assert.match(s.cli(['doctor']).stdout, /^off\s+Automatic triage of new issues\s+— not added yet: auto-triage\.yml already triages new issues, so Winston asks which to keep$/m);
+  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace', '--yes']).stdout, /done\s+Make Winston's automatic triage the only one, so each issue is triaged once: add \.github\/workflows\/triage-on-new-issue\.yml, and delete/);
   assert.ok(existsSync(ours) && !existsSync(theirs));
 });
 
@@ -615,7 +615,7 @@ test('a new issue gets the current phase\'s milestone: doctor reports hidden iss
   s.git('add', '.winston', '.github');
   s.git('commit', '-q', '-m', 'setup');
   assert.match(s.cli(['doctor']).stdout, /^done\s+New issues join the current phase\s+— new issues get the milestone "Pilot"$/m);
-  assert.doesNotMatch(after.stdout, /Older issues in the current phase|triage workflow conflicts/, 'nothing reported when none is hidden; the phase workflow is not a second triage');
+  assert.doesNotMatch(after.stdout, /Older issues in the current phase|Two workflows triage/, 'nothing reported when none is hidden; the phase workflow is not a second triage');
   assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /(the setup is complete|Winston's part of the setup is done)\. Nothing was changed/);
 
   // The phase is one line: a milestone that is not open is the owner's to correct.
@@ -773,8 +773,8 @@ test('doctor checks the board\'s two intake workflows and the triage workflow\'s
   assert.equal(off.status, 1);
   assert.match(off.stdout, /^needs you\s+Board adds new issues\s+— not on yet: the board's "Auto-add to project" workflow is off/m);
   assert.match(off.stdout, /^done\s+Board puts new issues in Inbox$/m);
-  assert.match(off.stdout, /^needs you\s+triage workflow secrets\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN missing/m);
-  assert.match(off.stdout, /\d\. triage workflow secrets\n   Why: [^\n]+\n   Fix:\n     Recommended: do this now \(about 5 minutes\)\. Without these two keys, Winston won't triage new issues on acme\/thing until you ask it to\.[^\n]*Missing: CLAUDE_CODE_OAUTH_TOKEN\.[^]*\n       1\. In the Terminal app, run: claude setup-token/);
+  assert.match(off.stdout, /^needs you\s+Automatic triage keys\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN missing/m);
+  assert.match(off.stdout, /\d\. Automatic triage keys\n   Why: [^\n]+\n   Fix:\n     Recommended: do this now \(about 5 minutes\)\. Without these two keys, Winston won't triage new issues on acme\/thing until you ask it to\.[^\n]*Missing: CLAUDE_CODE_OAUTH_TOKEN\.[^]*\n       1\. In the Terminal app, run: claude setup-token/);
   assert.match(off.stdout, /\d\. Board adds new issues\n   Why: Without this a new issue never shows up on the board\.\n   Fix:\n     Next: type \/winston:init and it does this for you in the browser\. To do it yourself: open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
   assert.equal(off.stdout.match(/Board adds new issues/g).length, 2, 'once in the checklist, once under Needs you');
 
@@ -782,7 +782,7 @@ test('doctor checks the board\'s two intake workflows and the triage workflow\'s
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
   const on = s.cli(['doctor']);
   assert.match(on.stdout, /^done\s+Board adds new issues$/m);
-  assert.match(on.stdout, /^done\s+triage workflow secrets\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN set$/m);
+  assert.match(on.stdout, /^done\s+Automatic triage keys\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN set \(doctor sees names only: if a run fails with "cannot read the board", make GH_PAT again with the project box ticked\)$/m);
   assert.doesNotMatch(on.stdout, /\d\. (Board adds|Board puts|triage workflow)/);
 });
 
@@ -876,33 +876,33 @@ test('doctor says unknown, not missing, when it cannot list secrets, and flags a
   writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
   // No workflow in the repo: nothing about its secrets or runs.
-  assert.doesNotMatch(s.cli(['doctor']).stdout, /triage workflow (secrets|runs)/);
+  assert.doesNotMatch(s.cli(['doctor']).stdout, /Automatic triage (keys|is working)/);
 
   mkdirSync(join(s.repo, '.github/workflows'), { recursive: true });
   writeFileSync(join(s.repo, '.github/workflows/triage-on-new-issue.yml'), '');
   // Newest first: one still running, three failures, then a success.
   writeFileSync(join(s.tmp, 'runs'), '\nfailure\nstartup_failure\nfailure\nsuccess\n');
   const failing = s.cli(['doctor']);
-  assert.match(failing.stdout, /^needs you\s+triage workflow runs\s+— its last 3 runs failed$/m);
-  assert.match(failing.stdout, /\d\. triage workflow runs\n   Why: Failed runs mean new issues are not being triaged, and nothing else reports it\.\n   Fix:\n     installed, but its last 3 runs failed\. See why: gh run list --workflow triage-on-new-issue\.yml --limit 1/);
+  assert.match(failing.stdout, /^needs you\s+Automatic triage is working\s+— its last 3 runs failed$/m);
+  assert.match(failing.stdout, /\d\. Automatic triage is working\n   Why: Failed runs mean new issues are not being triaged, and nothing else reports it\.\n   Fix:\n     its last 3 runs failed\. A key that was mistyped, has expired or lacks access is the usual cause\. Ask Claude to look: it reads the failed run's log \(gh run list --workflow triage-on-new-issue\.yml --limit 1/);
   assert.match(s.calls(), /^run list --workflow triage-on-new-issue\.yml --limit 5 --json conclusion/m);
 
   writeFileSync(join(s.tmp, 'runs'), 'success\nfailure\nfailure\n');
   const fine = s.cli(['doctor']);
-  assert.match(fine.stdout, /^done\s+triage workflow runs\s+— last run: success$/m);
+  assert.match(fine.stdout, /^done\s+Automatic triage is working\s+— last run: success$/m);
   writeFileSync(join(s.tmp, 'runs'), 'cancelled\nsuccess\n');
-  assert.match(s.cli(['doctor']).stdout, /^off\s+triage workflow runs\s+— last run: cancelled$/m);
-  assert.doesNotMatch(fine.stdout, /\d\. triage workflow runs/);
+  assert.match(s.cli(['doctor']).stdout, /^off\s+Automatic triage is working\s+— last run: cancelled$/m);
+  assert.doesNotMatch(fine.stdout, /\d\. Automatic triage is working/);
   writeFileSync(join(s.tmp, 'runs'), '');
-  assert.match(s.cli(['doctor']).stdout, /^off\s+triage workflow runs\s+— no finished runs yet$/m);
+  assert.match(s.cli(['doctor']).stdout, /^off\s+Automatic triage is working\s+— no finished runs yet: it runs when the next issue is opened$/m);
 
   // gh cannot list secrets (403) or runs: unknown, and not called a problem.
   writeFileSync(join(s.tmp, 'secrets-denied'), '');
   rmSync(join(s.tmp, 'runs'));
   const blind = s.cli(['doctor']);
-  assert.match(blind.stdout, /^could not check\s+triage workflow secrets\s+— this account cannot list the repo's secrets$/m);
-  assert.match(blind.stdout, /^could not check\s+triage workflow runs/m);
-  assert.doesNotMatch(blind.stdout, /\d\. triage workflow|needs you\s+triage workflow|403/);
+  assert.match(blind.stdout, /^could not check\s+Automatic triage keys\s+— this GitHub account cannot see the repository's secrets \(only its admins can\); the steps below say how to check$/m);
+  assert.match(blind.stdout, /^could not check\s+Automatic triage is working/m);
+  assert.doesNotMatch(blind.stdout, /\d\. Automatic triage (keys|is working)|needs you\s+Automatic triage (keys|is working)|403/);
 });
 
 test('init walks the owner through the triage workflow\'s missing secrets, by who owns the board', (t) => {
@@ -967,9 +967,72 @@ test('the triage workflow template skips, rather than fails, without its secrets
   const yml = readFileSync(join(ROOT, 'templates/triage-on-new-issue.yml'), 'utf8');
   const steps = yml.slice(yml.indexOf('    steps:'));
   assert.match(steps, /id: secrets/);
-  const gated = steps.split(/\n      - /).filter((step) => /^uses: /.test(step));
-  assert.equal(gated.length, 2);
+  // Every step after the secrets check: the two checkouts, Node, the CLI install and the triage run.
+  const all = steps.split(/\n      - /).slice(1);
+  const gated = all.slice(all.findIndex((step) => /id: secrets/.test(step)) + 1);
+  assert.equal(gated.length, 5);
+  // The install runs package scripts, so it holds no secret.
+  assert.doesNotMatch(gated.find((step) => /npm install/.test(step)), /\$\{\{\s*secrets\./);
+  assert.doesNotMatch(yml.slice(0, yml.indexOf('    steps:')), /\$\{\{\s*secrets\./, 'no secret at job level');
   for (const step of gated) assert.match(step, /if: steps\.secrets\.outputs\.ready == 'true'/);
+});
+
+test('doctor reports the triage mechanism; init offers to replace an agent workflow and rewrites only a stale pin', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  mkdirSync(join(s.repo, '.winston'));
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ owner: 'Dana', branches: { integration: 'staging', production: 'main' }, board: { owner: 'acme', number: 1 }, phase: false }));
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
+  writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
+  mkdirSync(join(s.repo, '.github/workflows'), { recursive: true });
+  const wf = join(s.repo, '.github/workflows/triage-on-new-issue.yml');
+  const template = readFileSync(join(ROOT, 'templates/triage-on-new-issue.yml'), 'utf8');
+  const pin = triageMechanism(template).pin;
+  assert.match(pin, /^[0-9a-f]{40}$/);
+  const short = pin.slice(0, 7);
+
+  // The older template: an agent with a tool list.
+  writeFileSync(wf, 'name: Triage a new issue\non:\n  issues:\n    types: [opened]\njobs:\n  t:\n    steps:\n      - uses: anthropics/claude-code-action@abc # v1\n');
+  assert.match(s.cli(['doctor']).stdout, /^needs you\s+Automatic triage is up to date\s+— an older version \(an agent with a tool list/m);
+  const offer = s.cli(['init', '--mode', 'adopt']);
+  assert.match(offer.stdout, /Winston will:\n(  - [^\n]+\n)*  - Replace \.github\/workflows\/triage-on-new-issue\.yml with Winston's newer automatic triage/);
+  assert.match(readFileSync(wf, 'utf8'), /claude-code-action/, 'nothing changes without --yes');
+  const applied = s.cli(['init', '--mode', 'adopt', '--yes']);
+  assert.match(applied.stdout, /^done\s+Replace .*with Winston's newer automatic triage/m);
+  assert.equal(readFileSync(wf, 'utf8'), template);
+  assert.ok(s.cli(['doctor']).stdout.includes(`Automatic triage is up to date  — pinned to Winston ${short}\n`));
+
+  // A copy pinned to an older Winston commit: only its ref: line is rewritten.
+  const edited = repinTriage(template, 'a'.repeat(40)).replace('timeout-minutes: 30', 'timeout-minutes: 45');
+  assert.notEqual(edited, template);
+  writeFileSync(wf, edited);
+  // GitHub's compare of the installed pin with this Winston's: the fake answers from published.json.
+  writeFileSync(join(s.tmp, 'published.json'), 'behind\n');
+  assert.ok(s.cli(['doctor']).stdout.includes(`Automatic triage is up to date  — pinned to Winston aaaaaaa, newer than this Winston's ${short}: update Winston rather than the file (the Winston version line says how)\n`), 'a newer pin is never rolled back');
+  assert.doesNotMatch(s.cli(['init', '--mode', 'adopt']).stdout, /Update .*to this Winston's version/);
+  rmSync(join(s.tmp, 'published.json'));
+  assert.match(s.cli(['doctor']).stdout, /^could not check\s+Automatic triage is up to date\s+— .*GitHub could not say which is newer, so the file is left as it is\. Updating Winston settles it$/m);
+  writeFileSync(join(s.tmp, 'published.json'), 'ahead\n');
+  assert.match(s.calls(), /^api repos\/sempervire\/winston\/compare\/a{40}\.\.\.[0-9a-f]{40} --jq \.status$/m);
+  assert.ok(s.cli(['doctor']).stdout.includes(`Automatic triage is up to date  — pinned to Winston aaaaaaa; this Winston has the newer ${short}\n`));
+  assert.match(s.cli(['init', '--mode', 'adopt', '--yes']).stdout, /^done\s+Update \.github\/workflows\/triage-on-new-issue\.yml to this Winston's version, [0-9a-f]{7} \(only its pinned version line changes\)$/m);
+  assert.equal(readFileSync(wf, 'utf8'), repinTriage(edited, pin));
+  assert.match(readFileSync(wf, 'utf8'), /timeout-minutes: 45/);
+
+  // A workflow running a script of its own repository (Winston's own) has no pin to compare.
+  writeFileSync(wf, 'run: node scripts/triage-issue.mjs --sweep\n');
+  assert.match(s.cli(['doctor']).stdout, /^done\s+Automatic triage is up to date\s+— runs this repository's own copy of the script$/m);
+});
+
+test('the template pins the triage script to a commit that holds the script as it is now', (t) => {
+  const pin = triageMechanism(readFileSync(join(ROOT, 'templates/triage-on-new-issue.yml'), 'utf8')).pin;
+  assert.match(pin, /^[0-9a-f]{40}$/);
+  assert.notEqual(pin, '0'.repeat(40));
+  const has = spawnSync('git', ['-C', ROOT, 'cat-file', '-e', `${pin}^{commit}`]);
+  if (has.status !== 0) return t.skip('the pinned commit is not in this clone');
+  // Bump the pin (a commit of its own, after the script change) whenever this fails.
+  const diff = spawnSync('git', ['-C', ROOT, 'diff', '--stat', pin, '--', 'scripts/triage-issue.mjs', 'lib/triage', 'lib/config.mjs'], { encoding: 'utf8' });
+  assert.equal(diff.stdout, '', `the script changed since the pinned commit ${pin}`);
 });
 
 test('doctor says when a newer Winston is out, with the command, and stays quiet otherwise', (t) => {
@@ -1075,6 +1138,11 @@ test('doctor flags a policy with no triage rules; init writes a starter, repoint
   assert.deepEqual(policyBlanks(join(s.repo, 'TRIAGE.md')), []);
   assert.doesNotMatch(made.stdout, /Values to fill in/);
   assert.match(starter, /## Risk tiers \(per-repo\)/);
+  // Nothing in the Names section is left for the owner to copy in by hand.
+  assert.match(starter, /\*\*Priority options\*\*: the options of the `Priority` field, most urgent\n  first: `P0`, `P1`, `P2`, `P3`\./);
+  assert.match(starter, /\*\*Other rules\*\*: none beyond this file\./);
+  assert.match(starter, /^<!-- Winston wrote this file from \.winston\/config\.json, and it works as it is\./);
+  assert.match(starter, /You don't need to read the rest: it is instructions for Winston\./);
   assert.equal(readFileSync(join(s.repo, 'AGENTS.md'), 'utf8'), '# Rules\n');
   const after = JSON.parse(readFileSync(configPath, 'utf8'));
   assert.deepEqual(after.triage, { policy: 'TRIAGE.md', workflow: 'triage-on-new-issue.yml' });
@@ -1311,7 +1379,7 @@ test('doctor lists what needs the owner with why and how, names the first as the
   const s = sandbox(t);
   gappedRepo(s);
   const first = s.cli(['doctor']);
-  for (const name of ['Triage rules', 'triage workflow secrets', 'Fewer permission prompts']) {
+  for (const name of ['Triage rules', 'Automatic triage keys', 'Fewer permission prompts']) {
     assert.match(first.stdout, new RegExp(`^needs you\\s+${name}`, 'm'), name);
     assert.match(first.stdout, new RegExp(`\\d\\. ${name}\\n   Why: [^\\n]+\\n   Fix:\\n     \\S`), name);
   }
@@ -1333,13 +1401,13 @@ test('doctor lists what needs the owner with why and how, names the first as the
 
   // Then the secrets, then the permission rules.
   // A missing secret: the next step is the link that fills in the token form.
-  assert.equal(lastLine(s.cli(['doctor']).stdout), 'Next step: triage workflow secrets – open https://github.com/settings/tokens/new?scopes=repo,project and follow the steps under 1 above. Then run /winston:doctor again.');
+  assert.equal(lastLine(s.cli(['doctor']).stdout), 'Next step: Automatic triage keys – open https://github.com/settings/tokens/new?scopes=repo,project and follow the steps under 1 above. Then run /winston:doctor again.');
   // With GH_PAT in place, it is the one command that makes the other token.
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\n');
-  assert.equal(lastLine(s.cli(['doctor']).stdout), 'Next step: triage workflow secrets – in the Terminal app, run: claude setup-token. Then run /winston:doctor again.');
+  assert.equal(lastLine(s.cli(['doctor']).stdout), 'Next step: Automatic triage keys – in the Terminal app, run: claude setup-token. Then run /winston:doctor again.');
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
   const third = s.cli(['doctor']);
-  assert.match(third.stdout, /^done\s+triage workflow secrets/m);
+  assert.match(third.stdout, /^done\s+Automatic triage keys/m);
   assert.equal(lastLine(third.stdout), 'Next step: Fewer permission prompts – type in this Claude Code chat: !winston permissions --apply. Then run /winston:doctor again.');
   assert.equal(s.cli(['permissions', '--apply']).status, 0);
   const complete = s.cli(['doctor']);

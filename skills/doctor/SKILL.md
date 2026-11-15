@@ -43,7 +43,7 @@ Who does what:
   asks for its own confirmation.
 - The board's two intake workflows (GitHub has no API for them) are work `/winston:init`
   does through browser control: offer that rather than leaving it with the user.
-- **triage workflow secrets** and **triage workflow runs** mean the installed triage
+- **Automatic triage keys** and **Automatic triage is working** mean the installed triage
   workflow is not triaging. Say so plainly, since nothing else reports it, recommend
   fixing it now (about 5 minutes), and relay the numbered steps; the first is a link that
   opens GitHub's token form filled in. By
