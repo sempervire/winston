@@ -30,8 +30,8 @@ parallel worktree lanes, merge one PR at a time, verify, and report.
 
    Codex plugins cannot ship agents, so then, in a Codex session, ask Codex to run
    `winston install-codex-agents`, which copies them. Codex asks you to trust the plugin's
-   hooks once (`/hooks`). So that chattr works inside
-   Codex's sandbox, add its message store to `~/.codex/config.toml` (doctor checks this):
+   hooks once (`/hooks`). So that chattr works inside Codex's sandbox, add its message
+   store to `~/.codex/config.toml` (doctor checks this):
 
    ```toml
    [sandbox_workspace_write]
@@ -154,28 +154,52 @@ not deploy it costs nothing; where they do, nothing reaches production without y
 `deployGate` in the config changes the phrase or adds guarded workflows (see
 `templates/config.sample.json`).
 
-The triage workflow needs two Actions secrets that only the owner can create: `GH_PAT`
-(Issues on the repo, Projects on the board's owner) and `CLAUDE_CODE_OAUTH_TOKEN` (from
-`claude setup-token`). `winston init` checks which exist, by name only, and prints numbered
-steps for the missing ones, with the token type GitHub requires for the board's owner and
-a link that opens GitHub's token form already filled in. With Claude in Chrome the session
-offers to check the form with you and stops before Generate; the token's value is typed
-only by you, in your own terminal. Once you say both are set, Claude runs the workflow on
-a test issue and tells you whether automatic triage works.
-Until both are set new issues are not triaged automatically; `winston doctor` reports the
-secrets and whether the workflow's latest runs failed.
+The triage workflow needs two Actions secrets that only the owner can create:
 
-The triage workflow runs Winston's triage script, checked out from this repository at a
-pinned commit: one model call per issue through the `claude` CLI, with no tools, the
-policy as the system prompt and a JSON verdict, after which code writes the `risk:` tier,
-Priority, the plan comment, the reporter as assignee, and whichever labels the policy's
-"Labels triage applies" line names. It never closes an issue. It runs on a new issue, on a
-manual dispatch (one issue, or with none the sweep; `dry_run` prints the verdict and
-writes nothing), and once a day as a sweep of up to five unstamped issues. The model is
-`opus` unless the repository variable `TRIAGE_MODEL` names another. Doctor reports which
-mechanism a repo's workflow uses: init offers to replace the older agent-based workflow
-(`claude-code-action` with a tool list), and when Winston's pin is newer it rewrites only
-the workflow's pinned `ref:` line.
+- `GH_PAT`, a GitHub token that can write the repo's issues and the board. When a person's
+  account owns the board (as on most personal projects), it must be a **classic** token
+  with the `repo` and `project` scopes: GitHub's fine-grained tokens cannot reach a
+  project a person owns. When an organization owns both the board and the repo, a
+  fine-grained token works.
+- `CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token`, so triage runs on your Claude
+  plan. No API key is used.
+
+`winston init` checks which exist, by name only, and prints numbered steps for the missing
+ones, with the token type GitHub requires for the board's owner and a link that opens
+GitHub's token form already filled in. With Claude in Chrome the session offers to check
+the form with you and stops before Generate; the token's value is typed only by you, in
+your own terminal. Once you say both are set, Claude runs the workflow on a test issue and
+tells you whether automatic triage works. Until both are set new issues are not triaged
+automatically; `winston doctor` reports the secrets and whether the workflow's latest runs
+failed.
+
+Triage in GitHub Actions is a script, not an agent. For each issue it asks Claude, with
+no tools, for one verdict, giving it the repo's triage policy and the issue (it asks once
+more only if the first answer is unusable). The script then writes the verdict itself:
+the `risk:` tier, Priority, the plan comment, the reporter as assignee (a person, not a
+bot), and any other labels the policy allows. When triage cannot decide (say the title and
+body contradict), it posts a "Triage stopped" comment with the reason and writes no label,
+so the issue stays untriaged until someone answers. Because Claude has no tools in this
+step, nothing it needs can be silently refused.
+
+- **When it runs.** On each new issue filed by the owner, a collaborator or an
+  organization member. Once a day, as a sweep of up to five open issues with no `risk:`
+  tier yet (in the board's first two columns, filed by those same people over an hour ago,
+  lowest number first, skipping any where triage stopped and is waiting for an answer).
+  And when you start it by hand from the Actions tab (one issue by number, or leave the
+  number empty for the sweep). Tick `dry_run` to see the verdict without anything being
+  written. An issue that already has a `risk:` tier is left alone; re-triaging is the
+  `/winston:triage` pass's job.
+- **Which labels.** Every plan gets a `risk:` tier. Any other label must be named on the
+  policy's "Labels triage applies" line. The starter `TRIAGE.md` allows `auto-verify` or
+  `human-verify` (`auto-verify` only at `risk: low` when an agent can show the change
+  works; otherwise `human-verify`), and at most one of `duplicate`, `invalid` or `wontfix`
+  when an issue should not be worked. Triage never closes an issue; closing is yours.
+- **Model.** `opus`, unless the repository variable `TRIAGE_MODEL` names another.
+- **Older repos.** The script comes from Winston at a pinned commit. Doctor says which kind
+  of triage workflow a repo has; init offers to replace the older agent-based one
+  (`claude-code-action` with a tool list), and when Winston's pin is newer it updates only
+  the pinned `ref:` line.
 
 The board view is filtered to one milestone, and a new issue has none, so it would reach
 the board and never show in that view. init sets `phase` in the config to that milestone
@@ -202,11 +226,10 @@ shows a tip, not a problem, until they are tailored.
 So that a run does not stop on permission prompts, `winston permissions` lists the Claude
 Code allow rules Winston runs use in the repo and which the project's
 `.claude/settings.json` lacks. The owner types `!winston permissions --apply` once in the
-Claude Code chat (in Codex: asks Codex to run `winston permissions --apply`): it adds the
-missing rules to `permissions.allow`, and to
-`permissions.deny` a short list for what an allow pattern cannot leave out (force pushes,
-pushes to the production branch, PR approvals, forced deletions; deny wins over allow). It
-prints what it added and never removes or loosens an existing rule. Allow rules never
+Claude Code chat (in Codex, asks Codex to run `winston permissions --apply`): it adds the
+missing rules to `permissions.allow`, and to `permissions.deny` a short list for what an
+allow pattern cannot leave out (force pushes, pushes to the production branch, PR
+approvals, forced deletions; deny wins over allow). It prints what it added and never removes or loosens an existing rule. Allow rules never
 clear deny or ask rules, hooks, production approval or secret grants. Because every config
 init writes has a deploy gate, the list includes `gh pr merge`: Winston merges pull
 requests into the work branch without asking, and a merge into the production branch still
@@ -215,14 +238,16 @@ waits for you to type `approve production deploy`.
 ## Contributing
 
 This repository is itself managed by Winston: its `.winston/config.json` and board are
-shared, so a contributor types `/winston:init` in Claude Code in a clone (it sees the config and joins)
-to check their access and machine before working on it.
+shared, so a contributor types `/winston:init` in Claude Code in a clone (it sees the
+config and joins) to check their access and machine before working on it.
 
 ## Updating
 
 Winston says when a newer version is out: a notice at the start of a session (it asks
-GitHub at most once a day) and a line in `/winston:doctor`, both with the command to run.
-It never updates itself, because an update replaces hooks and skills and needs a restart.
+GitHub at most once a day) and a line in `/winston:doctor`, both with the command to run
+for the app Winston was installed in, Claude Code or Codex (doctor shows both when it
+cannot tell). It never updates itself, because an update replaces hooks and skills and
+needs a restart. In Claude Code:
 
 ```
 claude plugin marketplace update winston && claude plugin update winston@winston
@@ -254,15 +279,16 @@ trust them once.
 | `/winston:closeout` | Can this session end without stranding work? |
 | `/winston:handoff` | Hand the work to a fresh session. |
 | `/winston:codex`, `/winston:gemini` | Read-only second opinions from other model families. |
-| `/winston:doctor` | The setup checklist: each item `done`, `needs you` or `could not check`, with why and how to fix each open one, a line when a newer Winston is out, and one closing **Next step:** line. Changes nothing in the repo or on GitHub. `winston doctor --copy` also puts that step's command on the clipboard when it is a single command (macOS). |
+| `/winston:doctor` | The setup checklist: each item `done`, `needs you`, `could not check`, `after setup` or `tip`, with why and how to fix each open one, a line when a newer Winston is out, and one closing **Next step:** line. Changes nothing in the repo or on GitHub. `winston doctor --copy` also puts that step's command on the clipboard when it is a single command (macOS). |
 | `/winston:init` | Join, create or adopt the setup. Picks the setup from the folder and says which, shows the plan, applies it only on your yes. `winston init --mode join` (or `new`, or `adopt`) plans a different one; `--yes` applies it. |
 | `winston permissions [--apply]` | List, or add to the project's settings, the allow rules Winston runs use. |
 
 Hooks: a production-deploy gate (blocks configured deploy actions until the owner types the
-approval phrase in that session), a secret-handling grant, session titles, a starting-branch check (a session opened in the
-main checkout on the production branch is moved to the integration branch and
-fast-forwarded, when the checkout is clean), worktree setup, a one-line setup reminder at session start, a
-browser-tab guard, a once-per-turn Parallelism check nudge in Winston sessions (those
+approval phrase in that session), a secret-handling grant, session titles, a
+starting-branch check (a session opened in the main checkout on the production branch is
+moved to the integration branch and fast-forwarded, when the checkout is clean), worktree
+setup, a one-line setup reminder at session start, the newer-version notice, a browser-tab
+guard, a once-per-turn Parallelism check nudge in Winston sessions (those
 holding chattr's `resource:orchestrator` claim), and chattr's hooks (below).
 
 ## chattr: sessions that see each other
