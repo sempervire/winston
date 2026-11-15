@@ -184,14 +184,14 @@ const openMilestones = (root) => run('gh', ['api', '--method', 'GET', 'repos/{ow
 
 // The projects automation's login as GraphQL gives it (REST adds "[bot]").
 const INTAKE_BOT = 'github-project-automation'
-const INTAKE_QUERY = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ issues(last:5){ nodes{ number
+const INTAKE_QUERY = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ issues(last:10){ nodes{ number
   timelineItems(first:100,itemTypes:[ADDED_TO_PROJECT_V2_EVENT,PROJECT_V2_ITEM_STATUS_CHANGED_EVENT]){ nodes{ __typename
-    ... on AddedToProjectV2Event{ actor{ login } project{ number owner{ ... on User{ login } ... on Organization{ login } } } }
-    ... on ProjectV2ItemStatusChangedEvent{ actor{ login } project{ number owner{ ... on User{ login } ... on Organization{ login } } } } } } } } } }`
+    ... on AddedToProjectV2Event{ actor{ login } project{ number title owner{ ... on User{ login } ... on Organization{ login } } } }
+    ... on ProjectV2ItemStatusChangedEvent{ actor{ login } project{ number title owner{ ... on User{ login } ... on Organization{ login } } } } } } } } } }`
 
 /**
  * Whether this board's two intake workflows have actually run recently, read from the
- * repo's five most recent issues: an "added to project" or "status changed" event made by
+ * repo's ten most recent issues: an "added to project" or "status changed" event made by
  * the projects automation ON THIS BOARD. The board is what makes it evidence. An issue
  * timeline also carries the events of every other project that took the issue, and of a
  * person or agent adding it by hand, and neither says anything about this board (#45: an
@@ -205,7 +205,7 @@ function intakeFromTimeline(root, owner, number) {
   try {
     issues = JSON.parse(r.out).data.repository.issues.nodes.filter(Boolean)
   } catch {}
-  const result = { checked: issues.length > 0, addedToProject: null, statusChanged: null }
+  const result = { checked: issues.length > 0, addedToProject: null, statusChanged: null, others: [] }
   const here = (e) => e?.actor?.login?.startsWith(INTAKE_BOT) && e.project?.number === number && e.project?.owner?.login?.toLowerCase() === String(owner).toLowerCase()
   // Newest first, so the detail names the most recent proof.
   for (const issue of [...issues].sort((a, b) => b.number - a.number)) {
@@ -214,6 +214,29 @@ function intakeFromTimeline(root, owner, number) {
       if (e.__typename === 'ProjectV2ItemStatusChangedEvent') result.statusChanged ??= issue.number
     }
   }
+  // Another project's intake automation taking this repo's issues (#45). Only an issue
+  // NEWER than the latest one this board took ALONE counts: once the board's own intake
+  // runs cleanly, anything older on another project is history from before the fix. An
+  // issue both boards took is not clean, so a repo still captured twice keeps being
+  // flagged; the cost is that right after a fix, the last double-captured issue still
+  // shows until the next issue is filed. The window is the ten most recent issues, so a
+  // repo that no longer files into the other project stops being flagged as they arrive.
+  const bot = (e) => e?.__typename === 'AddedToProjectV2Event' && e.actor?.login?.startsWith(INTAKE_BOT)
+  const clean = (i) => { const ev = (i.timelineItems?.nodes ?? []).filter(bot); return ev.some(here) && !ev.some((e) => !here(e)) }
+  const floor = Math.max(0, ...issues.filter(clean).map((i) => i.number))
+  const seen = new Map()
+  for (const issue of [...issues].sort((a, b) => b.number - a.number)) {
+    if (issue.number <= floor) continue
+    for (const e of issue.timelineItems?.nodes ?? []) {
+      if (!bot(e) || here(e)) continue
+      const owner2 = e.project?.owner?.login
+      if (!owner2 || !Number.isInteger(e.project?.number)) continue
+      const key = `${owner2.toLowerCase()}/${e.project.number}`
+      if (!seen.has(key)) seen.set(key, { owner: owner2, number: e.project.number, title: e.project.title || '', issues: [] })
+      seen.get(key).issues.push(issue.number)
+    }
+  }
+  result.others = [...seen.values()]
   return result
 }
 
@@ -909,7 +932,21 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
       const intake = (config.board.statuses ?? DEFAULT_STATUSES)[0]
       const enabled = (name) => (project.workflows?.nodes ?? []).some((w) => w?.enabled && (w.name === name || (name === 'Auto-add to project' && /^Auto-add(?! sub-issues)/.test(w.name))))
       const apiOn = { add: enabled('Auto-add to project'), status: enabled('Item added to project') }
-      const timeline = !planned?.newBoard && (!apiOn.add || !apiOn.status) ? intakeFromTimeline(root, owner, number) : null
+      // The timeline is read every time: besides settling a workflow the API calls off, it
+      // shows whether another project is taking this repo's new issues first (#45).
+      const timeline = !planned?.newBoard ? intakeFromTimeline(root, owner, number) : null
+      for (const o of timeline?.others ?? []) {
+        const there = `${boardUrl(o.owner, o.number)}/workflows`
+        const label = o.owner.toLowerCase() === String(owner).toLowerCase() ? `project ${o.number}` : `${o.owner} project ${o.number}`
+        const nums = o.issues.map((n) => `#${n}`).join(', ')
+        add({
+          name: `${label} auto-adds this repo's issues`, state: 'missing',
+          detail: `new issues (${nums}) were added to ${label}${o.title ? ` "${o.title}"` : ''} by its Auto-add workflow, not only to board ${number}`,
+          board: true,
+          browser: true,
+          hand: `before turning on board ${number}'s workflows, open ${there}, choose "Auto-add to project", click Edit, remove this repository (or turn the workflow off if this repository is its only one), then Save`,
+        })
+      }
       const stateOf = (apiSays, botSays) => (apiSays || botSays ? 'ok' : timeline && !timeline.checked ? 'unknown' : 'missing')
       add({
         name: 'board auto-adds new issues', state: stateOf(apiOn.add, timeline?.addedToProject),
@@ -1118,6 +1155,7 @@ const WHY = [
   [/^starting milestone/, 'The board view is filtered to a milestone, so there must be one.'],
   [/^issue phase/, 'A board view filtered to a milestone hides an issue that has none, and a new issue has none.'],
   [/^issues without a milestone/, 'They are on the board and missing from the view filtered to the current milestone.'],
+  [/^(\S+ )?project \d+ auto-adds/, 'Another project capturing new issues means each one lands on two boards, or on the wrong one, and the board here never gets it cleanly.'],
   [/^board (auto-adds|sets)/, 'Without this a new issue never shows up on the board.'],
   [/^triage labels/, 'Triage records its judgment with these labels.'],
   [/^triage policy blanks/, 'Triage reads these lines as they stand, so a blank becomes part of the rule.'],
