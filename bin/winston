@@ -42,7 +42,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { fileURLToPath } from 'node:url'
 import { doctorResultPath, loadLayers, repoRoot, winstonHome } from '../lib/config.mjs'
 import { recordTitle } from '../hooks/session-title.mjs'
-import { installedVersion, installScope, newer, updateSteps } from '../lib/update.mjs'
+import { harnessOfRoot, installedVersion, installScope, newer, updateSteps } from '../lib/update.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -1146,7 +1146,7 @@ function fixOf(c) {
     return { lines, ...lines.next }
   }
   if (c.ownerStep) return { command: 'winston permissions --apply', lines: ['Run it yourself, once: winston permissions --apply   (winston permissions lists the rules first)'] }
-  if (c.command) return { command: c.command, lines: c.fixLines }
+  if (c.command || c.fixLines) return { command: c.command, lines: c.fixLines }
   if (c.unconfigured) return { command: 'winston init', lines: ['winston init   (or /winston:init; it asks which setup fits: join, new or adopt, and shows its plan before changing anything)'] }
   if (c.fix) return { command: 'winston init --mode adopt', lines: [`winston init --mode adopt   (or /winston:init; it shows this plan first, then asks: ${c.fix.plan})`] }
   if (c.browser) return { lines: [`/winston:init does this for you in the browser. By hand: ${c.hand}`] }
@@ -1194,11 +1194,20 @@ function versionCheck(cwd) {
   const base = { name: 'Winston version', required: false, scope: 'you' }
   if (!latest) return { ...base, state: 'unknown', detail: `${have} installed; could not reach GitHub to check for a newer one` }
   if (!newer(latest, have)) return { ...base, state: 'ok', detail: `${have}, the latest` }
-  const steps = updateSteps('claude', installScope(cwd))
+  const harness = harnessOfRoot(ROOT)
+  const claude = updateSteps('claude', installScope(cwd))
+  const codex = updateSteps('codex')
+  const restart = 'Winston never updates itself: an update replaces hooks and skills and needs a restart.'
+  const out = { ...base, state: 'off', detail: `${have} installed, ${latest} available`, problem: `update to ${latest}` }
+  if (harness) {
+    const steps = harness === 'codex' ? codex : claude
+    return { ...out, command: steps.match(/`([^`]+)`/)?.[1], fixLines: [`To update, ${steps}.`, restart] }
+  }
+  // Cannot tell which app installed this copy: show both, and leave `command` unset so the
+  // "Next step" line points at these lines rather than naming one app's command.
   return {
-    ...base, state: 'off', detail: `${have} installed, ${latest} available`, problem: `update to ${latest}`,
-    command: steps.match(/`([^`]+)`/)?.[1],
-    fixLines: [`To update, ${steps}.`, 'Winston never updates itself: an update replaces hooks and skills and needs a restart.'],
+    ...out,
+    fixLines: ['To update, follow the line for the app you use Winston in:', `  Claude Code: ${claude}.`, `  Codex: ${codex}.`, restart],
   }
 }
 

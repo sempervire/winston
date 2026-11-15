@@ -4,6 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { harnessOfRoot } from '../lib/update.mjs';
 import { loadConfig, loadLayers } from '../lib/config.mjs';
 import { coveredBy, DOCTOR_POINTER, firesOnNewIssue, permissionRules, policyBlanks, policyState, tokenUrl } from '../bin/winston';
 
@@ -891,7 +892,7 @@ test('doctor says when a newer Winston is out, with the command, and stays quiet
   latest('99.0.0');
   const old = s.cli(['doctor']);
   assert.match(old.stdout, new RegExp(`^needs you\\s+Winston version\\s+— ${have} installed, 99\\.0\\.0 available$`, 'm'));
-  assert.match(old.stdout, /\d\. Winston version\n   Why: [^\n]+\n   Fix:\n     To update, run `claude plugin marketplace update winston && claude plugin update winston@winston`, then restart Claude Code[^\n]*\n     Winston never updates itself/);
+  assert.match(old.stdout, /\d\. Winston version\n   Why: [^\n]+\n   Fix:\n     To update, follow the line for the app you use Winston in:\n       Claude Code: run `claude plugin marketplace update winston && claude plugin update winston@winston`, then restart Claude Code[^\n]*\n       Codex: run `codex plugin marketplace upgrade winston`, then `codex plugin add winston@winston`, and start a new Codex session\.\n     Winston never updates itself/);
   assert.doesNotMatch(s.calls(), /plugin update/, 'doctor never updates');
   assert.equal(s.cli(['doctor', '--fix']).status, 1, 'an unknown flag is refused');
   // GitHub is asked at most once a day: a new answer there is not seen until the cache ages out.
@@ -905,6 +906,17 @@ test('doctor says when a newer Winston is out, with the command, and stays quiet
   assert.match(s.cli(['doctor']).stdout, /^done\s+Winston version/m, 'an older "latest" is not an update');
   latest('not-a-version; rm -rf');
   assert.match(s.cli(['doctor']).stdout, /^could not check\s+Winston version/m, 'a manifest that is not a version is ignored');
+});
+
+test('harnessOfRoot tells a Codex install, a Claude install and a dev checkout apart', (t) => {
+  assert.equal(harnessOfRoot('/Users/x/.codex/plugins/cache/winston/winston/1.2.3'), 'codex');
+  assert.equal(harnessOfRoot('/Users/x/.claude/plugins/cache/winston/winston/1.2.3'), 'claude');
+  assert.equal(harnessOfRoot('/Users/x/Developer/winston'), null, 'a dev checkout is neither');
+  const dir = mkdtempSync(join(tmpdir(), 'winston-harness-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  assert.equal(harnessOfRoot(dir), null);
+  writeFileSync(join(dir, '.codex-marketplace-install.json'), '{}');
+  assert.equal(harnessOfRoot(dir), 'codex', 'the marker file Codex writes is enough');
 });
 
 test('a policy has triage rules when a heading names triage or it carries a risk tier', (t) => {
