@@ -10,6 +10,7 @@ import { armMatcher, CREDENTIAL_URL, urlsIn } from '../hooks/secret-grant.mjs';
 import { normalize } from '../hooks/session-title.mjs';
 import { doctorResultPath } from '../lib/config.mjs';
 import { lastOpenAndClose } from '../hooks/browser-tab-guard.mjs';
+import { claim as chattrClaim, join as chattrJoin, open as chattrOpen } from '../chattr/chattr.mjs';
 
 const HOOKS = resolve(import.meta.dirname, '../hooks');
 
@@ -20,7 +21,7 @@ function sandbox(t) {
   const env = { ...process.env, WINSTON_HOME: home, CLAUDE_CONFIG_DIR: join(tmp, 'claude'), WINSTON_UPDATE_URL: `file://${join(tmp, 'latest.json')}` };
   delete env.CLAUDE_SKIP_TAB_GUARD;
   const run = (hook, input, extra = {}, args = []) => {
-    const r = spawnSync(process.execPath, [join(HOOKS, hook), ...args], { input: input === undefined ? '' : JSON.stringify(input), env: { ...env, ...extra }, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, [join(HOOKS, hook), ...args], { input: input === undefined ? '' : JSON.stringify(input), env: { ...env, ...extra }, encoding: 'utf8', cwd: tmp });
     assert.equal(r.status, 0, r.stderr);
     return r.stdout.trim().startsWith('{') ? JSON.parse(r.stdout) : r.stdout;
   };
@@ -152,7 +153,7 @@ function repoWithWorktree(t, config) {
 
 test('worktree-setup: copies and links what config lists, never overwrites, no-op on main', (t) => {
   const r = repoWithWorktree(t, { worktree: { copy: ['.env.local', 'absent.txt'], link: ['node_modules'] } });
-  assert.equal(r.run('worktree-setup.mjs', { hook_event_name: 'PostToolUse', tool_name: 'EnterWorktree', cwd: r.main, tool_response: { worktreePath: r.wt } }), 'worktree-setup: wt: .env.local node_modules -> main (symlink)\n');
+  assert.equal(r.run('worktree-setup.mjs', { hook_event_name: 'PostToolUse', tool_name: 'EnterWorktree', cwd: r.main, tool_response: { worktreePath: r.wt } }), 'Winston set up worktree wt: .env.local node_modules -> main (symlink)\n');
   assert.equal(readFileSync(join(r.wt, '.env.local'), 'utf8'), 'X=1\n');
   assert.ok(lstatSync(join(r.wt, 'node_modules')).isSymbolicLink());
   assert.equal(readlinkSync(join(r.wt, 'node_modules')), join(r.main, 'node_modules'));
@@ -199,15 +200,23 @@ test('doctor-nudge: one line per session when the last doctor run left open item
   const start = (id, cwd = repo) => s.run('doctor-nudge.mjs', { hook_event_name: 'SessionStart', cwd, session_id: id });
 
   result({ root: repo, open: 3 });
-  assert.equal(start('aaaaaaaa-1'), '', 'no Winston config in the repo: silent');
+  // No Winston config: the first step, once per repo ever, and never the open-items line.
+  const setup = start('aaaaaaaa-0');
+  assert.equal(setup.systemMessage, 'Winston is installed but not set up in this project. Type /winston:init to set it up (nothing changes until you say yes). This reminder shows once per project.');
+  assert.equal(start('aaaaaaaa-9'), '', 'shown once per repo, not once per session');
+  // In Codex (its payload carries turn_id) the line names the skill, not a slash command.
+  const codexRepo = join(s.tmp, 'codex-repo');
+  mkdirSync(codexRepo);
+  execFileSync('git', ['init', '-q', codexRepo]);
+  assert.equal(s.run('doctor-nudge.mjs', { hook_event_name: 'SessionStart', cwd: codexRepo, session_id: 'cccc-0', turn_id: 't1' }).systemMessage, 'Winston is installed but not set up in this project. Ask Codex to use the winston:init skill to set it up (nothing changes until you say yes). This reminder shows once per project.');
   mkdirSync(join(repo, '.winston'));
   writeFileSync(join(repo, '.winston/config.json'), '{}');
   const out = start('aaaaaaaa-1');
-  assert.equal(out.systemMessage, 'Winston setup has 3 open items – run /winston:doctor.');
+  assert.equal(out.systemMessage, 'Winston setup has 3 things left. Type /winston:doctor to see them.');
   assert.deepEqual(out.hookSpecificOutput, { hookEventName: 'SessionStart', additionalContext: out.systemMessage });
   assert.equal(start('aaaaaaaa-1'), '', 'a resume or compaction in the same session does not repeat it');
-  result({ root: repo, open: 1 });
-  assert.equal(start('bbbbbbbb-2', join(repo, 'src/deep')).systemMessage, 'Winston setup has 1 open item – run /winston:doctor.', 'from a subdirectory too');
+  result({ root: repo, open: 1, first: 'Fewer permission prompts' });
+  assert.equal(start('bbbbbbbb-2', join(repo, 'src/deep')).systemMessage, 'Winston setup has 1 thing left, starting with "Fewer permission prompts". Type /winston:doctor to see it.', 'from a subdirectory too, naming the first item');
 
   // Nothing open, doctor never run, or a result that does not parse: no output, exit 0.
   result({ root: repo, open: 0 });
@@ -221,16 +230,22 @@ test('doctor-nudge: one line per session when the last doctor run left open item
   // No session id: nothing to remember it by, so it still speaks, and still never fails.
   result({ root: repo, open: 2 });
   const anonymous = () => s.run('doctor-nudge.mjs', { hook_event_name: 'SessionStart', cwd: repo });
-  assert.equal(anonymous().systemMessage, 'Winston setup has 2 open items – run /winston:doctor.');
-  assert.equal(anonymous().systemMessage, 'Winston setup has 2 open items – run /winston:doctor.');
+  assert.equal(anonymous().systemMessage, 'Winston setup has 2 things left. Type /winston:doctor to see them.');
+  assert.equal(anonymous().systemMessage, 'Winston setup has 2 things left. Type /winston:doctor to see them.');
   // A session opened through a symlink to the checkout finds the same result.
   symlinkSync(repo, join(s.tmp, 'link'));
-  assert.equal(start('ffffffff-6', join(s.tmp, 'link')).systemMessage, 'Winston setup has 2 open items – run /winston:doctor.');
+  assert.equal(start('ffffffff-6', join(s.tmp, 'link')).systemMessage, 'Winston setup has 2 things left. Type /winston:doctor to see them.');
   // Outside any git repository, and in a directory that does not exist: silent.
   mkdirSync(join(s.tmp, 'plain/.winston'), { recursive: true });
   writeFileSync(join(s.tmp, 'plain/.winston/config.json'), '{}');
   assert.equal(start('gggggggg-7', join(s.tmp, 'plain')), '');
   assert.equal(start('hhhhhhhh-8', join(s.tmp, 'gone')), '');
+  // setupNudge: false in the user layer turns the not-set-up line off.
+  const other = join(s.tmp, 'other');
+  mkdirSync(other);
+  execFileSync('git', ['init', '-q', other]);
+  writeFileSync(join(s.home, 'config.json'), JSON.stringify({ setupNudge: false }));
+  assert.equal(start('iiiiiiii-9', other), '');
 
   // It is registered at session start, and reads nothing but local files.
   const hooks = JSON.parse(readFileSync(join(HOOKS, 'hooks.json'), 'utf8')).hooks;
@@ -242,18 +257,23 @@ test('doctor-nudge: one line per session when the last doctor run left open item
 
 test('parallelism-check: asks once per turn, only in a session holding resource:orchestrator', (t) => {
   const s = sandbox(t);
-  const bin = join(s.tmp, 'bin');
-  mkdirSync(bin);
-  // Fake chattr: the orchestrator claim belongs to session "win"; "other" is not enrolled.
-  writeFileSync(join(bin, 'chattr'), `#!/bin/sh
-[ "$CHATTR_SESSION" = win ] || { echo '{"ok":false}'; exit 3; }
-echo '{"ok":true,"claims":[{"resource":"resource:orchestrator","session_id":"win","released_at":null}]}'
-`, { mode: 0o755 });
+  // The bundled chattr, by path, against a temp store: "win" holds the orchestrator claim; "other" is not enrolled.
+  const repo = join(s.tmp, 'repo');
+  mkdirSync(repo);
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  const db = chattrOpen(join(s.tmp, 'bridge.db'));
+  try {
+    chattrJoin(db, { id: 'win', kind: 'claude', pid: process.pid, cwd: repo });
+    chattrClaim(db, db.prepare('SELECT * FROM sessions WHERE id = ?').get('win'), 'resource:orchestrator', 'test');
+  } finally {
+    db.close();
+  }
   const transcript = join(s.tmp, 't.jsonl');
   const prompt = JSON.stringify({ type: 'user', message: { content: 'go' } });
   const toolResult = JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', content: 'ok' }] } });
-  const env = { PATH: `${bin}:${process.env.PATH}` };
-  const stop = (extra = {}, e = env) => s.run('parallelism-check.mjs', { hook_event_name: 'Stop', session_id: 'win', transcript_path: transcript, ...extra }, e);
+  // PATH without any chattr: the hook must find the bundled one by path (Codex puts no plugin bin on PATH).
+  const env = { CHATTR_DB: join(s.tmp, 'bridge.db'), PATH: '/usr/bin:/bin' };
+  const stop = (extra = {}, e = env) => s.run('parallelism-check.mjs', { hook_event_name: 'Stop', session_id: 'win', cwd: repo, transcript_path: transcript, ...extra }, e);
 
   writeFileSync(transcript, [prompt, toolResult].join('\n'));
   const out = stop();
@@ -270,10 +290,37 @@ echo '{"ok":true,"claims":[{"resource":"resource:orchestrator","session_id":"win
   writeFileSync(transcript, JSON.stringify({ type: 'user', message: { content: 'resume brief: Parallelism check (Winston), ...' } }));
   assert.ok(stop().hookSpecificOutput, 'a prompt quoting the ask is still a new turn');
   assert.equal(stop({ session_id: 'other' }), '', 'not a Winston session');
-  assert.equal(stop({}, { PATH: '/nonexistent' }), '', 'no chattr fails open');
+  assert.equal(stop({}, { ...env, CHATTR_DB: '/nonexistent/dir/bridge.db' }), '', 'a chattr that cannot answer fails open');
   assert.equal(stop({ transcript_path: join(s.tmp, 'missing') }), '', 'unreadable transcript fails open');
   assert.equal(stop({ turn_id: 'x' }).decision, 'block', 'Codex gets a block');
   assert.equal(stop({}, { ...env, WINSTON_SKIP_PARALLELISM_CHECK: '1' }), '');
+});
+
+// ---- bundled chattr registrations
+
+test('hooks.json: chattr groups come after every Winston group, pass --bundled, and name files that exist', () => {
+  // Codex keys hook trust by position, so chattr's groups are appended: Winston's keep their trusted slots.
+  const hooks = JSON.parse(readFileSync(join(HOOKS, 'hooks.json'), 'utf8')).hooks;
+  const isChattr = (g) => g.hooks.some((h) => h.command.includes('/chattr/'));
+  let count = 0;
+  for (const [event, groups] of Object.entries(hooks)) {
+    const first = groups.findIndex(isChattr);
+    if (first < 0) continue;
+    assert.ok(groups.slice(first).every(isChattr), `${event}: a Winston group after a chattr group`);
+    for (const g of groups.slice(first)) {
+      assert.equal(g.hooks.length, 1);
+      const { command } = g.hooks[0];
+      assert.match(command, /--bundled( |$)/, command);
+      for (const [, rel] of command.matchAll(/\$\{CLAUDE_PLUGIN_ROOT\}\/([^"]+)"/g)) assert.ok(existsSync(join(HOOKS, '..', rel)), rel);
+      count += 1;
+    }
+  }
+  assert.equal(count, 11, 'every chattr registration: 2 SessionStart, 2 PreToolUse, and one each for seven more events');
+  for (const event of ['PermissionRequest', 'StopFailure', 'Notification', 'Interrupt']) assert.ok(hooks[event], event);
+  // The guard's fallback runs when node itself cannot: it must still print a parseable deny.
+  const guard = hooks.PreToolUse.find((g) => g.hooks[0].command.includes('worktree-guard.mjs')).hooks[0].command;
+  const fallback = execFileSync('sh', ['-c', `echo ${guard.split('|| echo ')[1]}`], { encoding: 'utf8' });
+  assert.equal(JSON.parse(fallback).hookSpecificOutput.permissionDecision, 'deny');
 });
 
 // ---- start-branch
@@ -302,19 +349,19 @@ function repoWithOrigin(t, config = { branches: { integration: 'staging', produc
 test('start-branch: a clean main checkout on production moves to integration and fast-forwards', (t) => {
   const r = repoWithOrigin(t);
   const tip = r.advance();
-  assert.match(r.start(), /switched this checkout from main to staging \(fast-forwarded to [0-9a-f]{7}\)/);
+  assert.match(r.start(), /^Winston: switched this project folder from main to staging, where work starts \(fast-forwarded to [0-9a-f]{7}\)/);
   assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'staging');
   assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), tip);
   assert.equal(r.start(), '', 'already on integration and current: silent');
   const next = r.advance();
-  assert.match(r.start(), /^start-branch: staging fast-forwarded to/);
+  assert.match(r.start(), /^Winston: staging fast-forwarded to/);
   assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), next);
 });
 
 test('start-branch: leaves uncommitted changes, other branches, worktrees and opted-out repos alone', (t) => {
   const r = repoWithOrigin(t);
   writeFileSync(join(r.main, '.gitignore'), 'edited\n');
-  assert.match(r.start(), /on main with uncommitted changes, so it was left there/);
+  assert.match(r.start(), /^Winston: this project folder is on main, the release branch, with uncommitted changes, so it was left there\. Work starts from staging: ask Claude to save or set aside those changes and switch to staging\.$/);
   assert.equal(r.git(r.main, 'symbolic-ref', '--short', 'HEAD'), 'main');
   r.git(r.main, 'checkout', '-q', '--', '.gitignore');
 
@@ -362,7 +409,7 @@ test('start-branch: a branch name from config never reaches git as an option', (
 test('start-branch: says what it could not do, and why', (t) => {
   const r = repoWithOrigin(t);
   r.git(r.main, 'remote', 'set-url', 'origin', join(r.tmp, 'gone.git'));
-  assert.match(r.start(), /switched this checkout from main to staging \(origin could not be reached, so it may be behind\)/);
+  assert.match(r.start(), /switched this project folder from main to staging, where work starts \(GitHub \(origin\) could not be reached, so it may be behind: check your internet connection and GitHub sign-in\)/);
   r.git(r.main, 'remote', 'set-url', 'origin', join(r.tmp, 'origin.git'));
 
   // An untracked file where an incoming commit adds one: not "diverged", and the file survives.
@@ -373,7 +420,7 @@ test('start-branch: says what it could not do, and why', (t) => {
   r.git(r.wt, 'push', '-q', 'origin', 'HEAD:staging');
   writeFileSync(join(r.main, 'incoming.txt'), 'mine\n');
   const blocked = r.start();
-  assert.match(blocked, /behind origin and could not be fast-forwarded: /);
+  assert.match(blocked, /behind origin and could not be fast-forwarded \([^]*\): ask Claude to bring it up to date/);
   assert.doesNotMatch(blocked, /diverged/);
   assert.equal(readFileSync(join(r.main, 'incoming.txt'), 'utf8'), 'mine\n');
 });
@@ -383,10 +430,10 @@ test('start-branch: local commits on integration are never rewritten', (t) => {
   r.git(r.main, 'switch', '-q', 'staging');
   r.git(r.main, 'commit', '-q', '--allow-empty', '-m', 'local only');
   const local = r.git(r.main, 'rev-parse', 'HEAD');
-  assert.match(r.start(), /^start-branch: staging ahead of origin, with commits not pushed\.$/);
+  assert.match(r.start(), /^Winston: staging ahead of origin, with commits not pushed yet: Claude pushes them when the work is ready\.$/);
   assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), local);
   r.advance();
-  assert.match(r.start(), /staging diverged from origin\/staging, left as is/);
+  assert.match(r.start(), /staging diverged from origin\/staging, left as is: ask Claude to bring staging up to date/);
   assert.equal(r.git(r.main, 'rev-parse', 'HEAD'), local);
 });
 

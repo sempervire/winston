@@ -1,9 +1,23 @@
-# Triage each new issue with Winston's triage engine (/winston:triage), under the policy
-# named by `triage.policy` in .winston/config.json.
+# Triage each new issue under the policy named by `triage.policy` in .winston/config.json,
+# with Winston's triage script: one model call per issue, with no tools, and code that
+# applies the verdict (the `risk:` tier, Priority, the plan comment, the reporter as
+# assignee, and the labels the policy's "Labels triage applies" line names). There is no
+# tool list, so there is nothing to deny.
 #
 # Installed by `winston init` as .github/workflows/triage-on-new-issue.yml. Takes effect
-# only from the DEFAULT branch: `issues` is a repository-level event, and GitHub runs it
-# from the default branch alone. A copy merged anywhere else never fires and never errors.
+# only from the DEFAULT branch: `issues` and `schedule` are repository-level events, and
+# GitHub runs them from the default branch alone. A copy merged anywhere else never fires
+# and never errors.
+#
+# Runs on:
+#   issues: opened      the new issue, once it is on the board with a status
+#   workflow_dispatch   one issue by number, or with no number the sweep; dry_run decides
+#                       and prints the verdict and writes nothing
+#   schedule            a daily sweep: up to 5 open issues at the first two board statuses
+#                       with no `risk:` tier, filed by the owner or a collaborator, oldest
+#                       first. Delete the `schedule:` block to go without it.
+# A run never re-triages an issue that already has a `risk:` tier; that is the whole-board
+# /winston:triage pass's job.
 #
 # Secrets (Settings -> Secrets and variables -> Actions):
 #   GH_PAT                   a token over this repo: Issues read/write, and Projects
@@ -12,59 +26,75 @@
 #                            an organization owns the board; classic (`repo`, `project`)
 #                            when a user does, since fine-grained tokens cannot reach a
 #                            user's projects.
-#   CLAUDE_CODE_OAUTH_TOKEN  from `claude setup-token`.
+#   CLAUDE_CODE_OAUTH_TOKEN  from `claude setup-token`: the model call runs on the Claude
+#                            subscription. No API key is used.
 # Until both exist the run skips with a notice and stays green. `winston doctor` reports
 # which are set and whether the latest runs failed; `winston init` prints the steps to
-# create the missing ones.
+# create the missing ones. The repository variable TRIAGE_MODEL, if set, picks the model
+# (default: opus).
+#
+# The script comes from the Winston repository at the commit pinned below, never from a
+# moving branch. `winston doctor` reports when Winston has a newer pin, and
+# `winston init` (or /winston:init) rewrites only that `ref:` line.
 #
 # This workflow triages. Putting a new issue on the board at its intake status is the
 # board's own job: its "Auto-add to project" and "Item added to project" workflows, which
 # `winston doctor` checks and only a person can turn on.
 #
 # When Actions is unavailable (budget, outage, a failed run) nothing is stamped and nothing
-# reports itself broken: the issue stays untriaged, with no `risk:` label, which is exactly
-# what the next whole-board /winston:triage pass picks up.
+# reports itself broken: the issue stays untriaged, with no `risk:` label, which is what the
+# next sweep and the next whole-board /winston:triage pass pick up.
 name: Triage a new issue
 
 on:
   issues:
     types: [opened]
+  schedule:
+    - cron: "23 7 * * *"
   workflow_dispatch:
     inputs:
       issue:
-        description: "Issue number to triage"
-        required: true
+        description: "Issue number to triage; empty runs the sweep"
+        required: false
+      dry_run:
+        description: "Decide and print the verdict, write nothing"
+        type: boolean
+        default: false
 
 concurrency:
-  group: triage-${{ github.event.issue.number || inputs.issue }}
+  group: triage-${{ github.event.issue.number || inputs.issue || 'sweep' }}
   cancel-in-progress: false
 
 jobs:
   triage:
-    # The agent holds a token that can write labels and the board, and it reads the issue
-    # body. Only issues from people with a stake in the repo get it; others wait for a
-    # manual /winston:triage pass.
+    # The run holds a token that can write labels and the board, and the model reads the
+    # issue body. Only new issues from people with a stake in the repo get it; others wait
+    # for a manual /winston:triage pass. The sweep applies the same rule to what it takes.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      github.event_name != 'issues' ||
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
+    # No secret at job level: each step gets only what it uses, so the CLI install below
+    # runs with none in its environment.
     env:
-      GH_TOKEN: ${{ secrets.GH_PAT }}
       # Through the environment, never interpolated into a script: a dispatch input is free
       # text, and `${{ }}` is substituted before the shell parses the line.
-      INPUT_ISSUE: ${{ github.event.issue.number || inputs.issue }}
+      EVENT_ISSUE: ${{ github.event.issue.number }}
+      INPUT_ISSUE: ${{ inputs.issue }}
+      INPUT_DRY_RUN: ${{ inputs.dry_run }}
     steps:
       - name: Check the issue number
         run: |
-          case "$INPUT_ISSUE" in
-            ""|*[!0-9]*) echo "not an issue number: $INPUT_ISSUE" >&2; exit 1 ;;
+          case "${EVENT_ISSUE:-$INPUT_ISSUE}" in
+            *[!0-9]*) echo "not an issue number: ${EVENT_ISSUE:-$INPUT_ISSUE}" >&2; exit 1 ;;
           esac
       - name: Check the secrets
         id: secrets
         env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
           CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           if [ -n "$GH_TOKEN" ] && [ -n "$CLAUDE_TOKEN" ]; then
@@ -74,21 +104,41 @@ jobs:
           fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: steps.secrets.outputs.ready == 'true'
-      - uses: anthropics/claude-code-action@bd23c076f8423364b3cd8f4240d315cef475a119 # v1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: steps.secrets.outputs.ready == 'true'
         with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.GH_PAT }}
-          plugin_marketplaces: https://github.com/sempervire/winston.git
-          plugins: winston@winston
-          # Triage reads and labels; it never edits code, merges or deploys.
-          claude_args: --allowedTools "Bash(gh issue:*),Bash(gh label:*),Bash(gh api:*),Bash(gh project:*),Bash(winston config:*),Read,Glob,Grep"
-          # Only the number is interpolated: the title and body are untrusted text and are
-          # read with `gh`, never pasted into the prompt.
-          prompt: |
-            /winston:triage ${{ github.event.issue.number || inputs.issue }}
-
-            This is the unattended run on a newly filed issue. Triage only that issue, under
-            the policy the repo's .winston/config.json names. Read the issue and every comment
-            with `gh issue view <n> --comments`; where a comment contradicts the body, the
-            comment wins. Do not implement, merge or deploy anything.
+          repository: sempervire/winston
+          ref: d63e7958ef8ad2b026ca0171abfcff492ae35c6f # winston-triage-script
+          path: .winston-triage
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          node-version: "24"
+      # A step of its own with no secret in its environment: npm runs package install
+      # scripts, and those never see either token.
+      - name: Install the claude CLI
+        if: steps.secrets.outputs.ready == 'true'
+        run: npm install --global --no-fund --no-audit @anthropic-ai/claude-code@2.1.325
+      - name: Triage
+        if: steps.secrets.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          TRIAGE_MODEL: ${{ vars.TRIAGE_MODEL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          ISSUE="${EVENT_ISSUE:-$INPUT_ISSUE}"
+          DRY=""
+          if [ "${INPUT_DRY_RUN:-}" = "true" ]; then DRY="--dry-run"; fi
+          # --opened waits for the board item: the board adds a new issue a moment after it is filed.
+          OPENED=""
+          if [ -n "$EVENT_ISSUE" ]; then OPENED="--opened"; fi
+          if [ -n "$ISSUE" ]; then
+            node .winston-triage/scripts/triage-issue.mjs --issue "$ISSUE" $OPENED $DRY
+          else
+            node .winston-triage/scripts/triage-issue.mjs --sweep --max 5 $DRY
+          fi

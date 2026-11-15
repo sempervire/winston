@@ -1,7 +1,8 @@
-<!-- Winston starter triage policy. `{{key}}` is a key in `.winston/config.json`:
-replace each with its value (`board.statuses[0]` and `[1]` are the intake and the
-ready-to-work status). Then rewrite the three sections marked (per-repo) at the end.
-Nothing else needs editing. Delete this comment. -->
+<!-- Winston starter triage policy. winston init replaces each `{{placeholder}}`: most
+are keys in `.winston/config.json` (`board.statuses[0]` and `[1]` are the intake and the
+ready-to-work status); `priorityOptions` comes from the board's Priority field and
+`otherRules` from `processDocs`. The three sections marked
+(per-repo) at the end work as written and are the ones to tailor. Delete this comment. -->
 
 # Triage
 
@@ -28,8 +29,9 @@ that has been triaged before.
 
 If circumstances change, it's OK to alter an issue during triage to reflect new information.
 
-Everything in this file applies as written except the three sections marked
-**(per-repo)** at the end, which hold what is specific to this repository.
+Everything in this file applies as written. The three sections marked **(per-repo)** at
+the end hold what is specific to this repository; Winston fills them in, and you can edit
+them any time. You don't need to read the rest: it is instructions for Winston.
 
 ---
 
@@ -39,8 +41,9 @@ Triage is callable as a step inside other work. What a caller can rely on:
 
 - **Inputs** — none. Triage reads the board.
 - **Scope** — open issues in status `{{board.statuses[0]}}` or `{{board.statuses[1]}}`. Nothing else is touched.
-- **Effects** — sets Priority and the `risk:` tier, writes a plan comment, and assigns the
-  issue to the person who filed it.
+- **Effects** — sets Priority and the `risk:` tier, writes a plan comment, assigns the
+  issue to the person who filed it, and applies the labels named under "Labels triage
+  applies" below.
   **The reporter becomes the sole assignee, replacing any existing assignee**; an issue
   whose author is a bot or CI is left with its assignees untouched.
   **A plan comment is written only when there is no plan yet, or when re-reading changes
@@ -52,8 +55,11 @@ Triage is callable as a step inside other work. What a caller can rely on:
   could not resolve by reading. A stop is not a plan, so the issue must leave triage by
   name rather than by absence.
 
-Triage applies no label other than the `risk:` tier. Where `auto-merge`, `auto-verify`
-and `human-verify` exist, triage neither applies nor removes them.
+**Labels triage applies**: the `risk:` tier, `auto-verify`, `human-verify`, `duplicate`, `invalid`, `wontfix`.
+
+The unattended workflow reads that line: it writes a label only when the line names it,
+and the `risk:` tier always. Remove a name from the line to stop triage applying that
+label. Triage never applies or removes `auto-merge`.
 
 ---
 
@@ -63,17 +69,23 @@ Everything above describes a pass over the board. Triage also runs one issue at 
 unattended, from the workflow named by `triage.workflow` in `.winston/config.json` — so
 that a card carries its stamp before a `{{board.statuses[0]}}` -> `{{board.statuses[1]}}` move is possible, rather than
 whenever the next whole-board pass happens to run. It runs when an issue is opened by the
-owner or a collaborator, and on a manual dispatch naming one issue number. The run
-triages that one issue and no other.
+owner or a collaborator, on a manual dispatch naming one issue number, and once a day as a
+sweep. A run on an opened or dispatched issue triages that one issue and no other.
 
 **The unattended pass applies the Effects above and nothing more.** The `risk:` tier,
-Priority, the plan comment, and the reporter assignment. **It never moves status**, and it
+Priority, the plan comment, the reporter assignment, and the labels the "Labels triage
+applies" line names. **It never moves status**, and it
 never edits a file, closes an issue, merges or deploys. A stamp at `{{board.statuses[0]}}` is triage's
 record that the issue was read, never a promotion.
 
-On the `opened` event the status is `{{board.statuses[0]}}`. On a dispatch, read the status from the board;
-an issue that is closed, or at any status other than `{{board.statuses[0]}}` or `{{board.statuses[1]}}`, gets nothing
-written.
+On the `opened` event the run waits for the board to add the issue and reads its status
+there; an issue that never reaches the board gets nothing written, and the sweep takes it
+once it is there. On a dispatch, read the status from the board; an issue that is closed,
+not on the board, or at any status other than `{{board.statuses[0]}}` or `{{board.statuses[1]}}`, gets nothing written.
+
+**The unattended pass skips an issue that already has a `risk:` tier.** Re-reading
+triaged issues is the whole-board pass's job, and "no skip" applies there. A dispatch
+with `dry_run` still decides such an issue and prints the verdict, writing nothing.
 
 **A stop writes no label at all.** Where the title and the body disagree, the run posts the
 stop and its reason and leaves the card in the untriaged queue, because the tier is the
@@ -86,8 +98,11 @@ is already a stop, do not post another.
 **When Actions is unavailable the card stays unstamped, and that is the designed
 failure.** A budget that has run out, an outage, or a failed run all produce the same
 visible state — a card with no `risk:` tier, which is the untriaged queue both
-`/winston:radar` and `/winston:triage` already read. There is no scheduled backstop: an
-issue the `opened` run missed waits for the next whole-board pass.
+`/winston:radar` and `/winston:triage` already read. The daily sweep is the backstop: it takes
+up to five open issues at `{{board.statuses[0]}}` or `{{board.statuses[1]}}` with no `risk:` tier, filed by the owner, a member
+or a collaborator, oldest first, so an issue the `opened` run missed is stamped within a
+day. It passes by an issue whose last triage comment is a stop nobody has answered (no
+comment, body edit or rename since), so unresolved stops do not use up its five.
 
 **The invariant is a normal-path guarantee, not an absolute one.** A card can still reach
 `{{board.statuses[1]}}` unstamped, because nothing gates the `{{board.statuses[1]}}` move.
@@ -110,6 +125,11 @@ already carries a plan comment.
 criteria in "Risk tiers" below. An issue carries exactly one tier; changing it removes
 the old one. **Blast radius, not diff size, sets the pace.**
 
+**Verification label.** Every plan also says how the change will be shown to work, as one
+label: `auto-verify` when the tier is `risk: low` and a test or command an agent runs can
+show it; otherwise `human-verify`. `risk: high` never gets `auto-verify`. A stop gets
+neither.
+
 **Priority** goes in the board's `{{board.priorityField}}` field, never in the issue title — titles are
 for the short description. Its options are fixed and listed in "Names" below. It is a
 field on the project item: read it from the board and write it with
@@ -130,7 +150,10 @@ untriaged queue. There is no separate marker.
 touches, how it will be shown to work, and the tier and Priority with the reasoning where
 the choice is not obvious, plus whatever "What a plan names" below adds. A stop starts
 with `## Triage stopped` and gives the reason instead. Either ends with the line
-`<!-- triage-plan -->`, which is how a later run finds the plan to compare against.
+`<!-- triage-plan -->`, which is how a later run finds the plan to compare against. The
+unattended workflow writes, just above it, a `<!-- triage-decision {...} -->` line holding
+the tier, Priority, verification and resolution it decided, so a re-run that decides the
+same writes no new comment however it words the plan.
 
 **A previous conclusion is not a reason to skip.** An issue that already carries a plan is
 read in full like every other, and a new plan comment is written if the history now says
@@ -140,6 +163,22 @@ something the old plan did not account for.
 triaged like any other: `risk: low`, the lowest Priority, and a plan that says there is no
 actionable request and recommends closing it. Triage does not close it; that is the
 owner's.
+
+---
+
+## Resolution
+
+Some issues should not be worked: a duplicate, one that is not this repository's or
+cannot be reproduced, or one the owner has already declined. Triage still writes a plan
+for it, with a tier and a Priority, that says so, and applies exactly one of these labels:
+
+- `duplicate` — the plan names the original issue.
+- `invalid` — not reproducible, or not this repository's.
+- `wontfix` — the owner has declined it; the plan says where.
+
+**Triage never closes the issue.** The label and the plan are a recommendation; closing is
+the owner's. When unsure, apply none. To turn this off, remove the three names from the
+"Labels triage applies" line.
 
 ---
 
@@ -156,26 +195,26 @@ Once each qualifying issue has been processed, the triage process ends.
 <!-- per-repo:names -->
 ## Names (per-repo)
 
-<!-- Fill in from `.winston/config.json`; keep one line per item. -->
+<!-- Winston filled this in from `.winston/config.json`; edit it if you like, one line per item. -->
 
 - **Owner**: `{{owner}}`.
 - **Board**: project `{{board.number}}` of `{{board.owner}}`. Triage reads statuses
   `{{board.statuses[0]}}` and `{{board.statuses[1]}}`.
 - **Priority options**: the options of the `{{board.priorityField}}` field, most urgent
-  first. Write them out here exactly as the board spells them.
+  first: {{priorityOptions}}.
 - **Branches**: work lands on `{{branches.integration}}`; `{{branches.production}}` is
   what is released. The unattended workflow runs from the repository's default branch,
   so a change to this file or to the workflow takes effect only once it is there.
-- **Other rules**: name the file that owns the repo's working rules, if there is one.
+- **Other rules**: {{otherRules}}.
 <!-- /per-repo -->
 
 <!-- per-repo:risk-tiers -->
 ## Risk tiers (per-repo)
 
-<!-- Write three rows for THIS repo's kinds of change. Sort by what breaks for a user if
-the change is wrong, not by how large the diff is. Name real paths. Say which tier a
-change that needs an owner decision gets. The rows below are a generic example; replace
-them. -->
+<!-- These are Winston's standard risk ratings, and they work as they are. To tailor
+them, ask Claude (or run /winston:init): it reads the repo and drafts three rows for this
+repo's kinds of change, sorted by what breaks for a user if the change is wrong, not by how
+large the diff is, naming real paths. -->
 
 | Tier | Applies when the fix… |
 |---|---|

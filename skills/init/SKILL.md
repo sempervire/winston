@@ -1,18 +1,33 @@
 ---
 name: init
-description: Set Winston up in this repo, after asking which of three situations it is - joining a repo someone already set up for Winston, starting a new project from scratch, or adopting an existing repo Winston did not set up - then showing the plan and applying it only after the user confirms. Use when the user runs /winston:init, installs Winston and asks how to connect it to a repo, or after /winston:doctor reports missing setup the user wants created.
+description: Set Winston up in this repo - it reads the folder to tell whether this is joining a repo someone already set up for Winston, starting a new project, or adopting an existing repo Winston did not set up, shows a plain-language plan, and applies it only after the user confirms. Use when the user runs /winston:init, installs Winston and asks how to connect it to a repo, or after /winston:doctor reports missing setup the user wants created.
 ---
 
 # /winston:init
 
-`winston init` sets up one of three things, and which one is the user's call, never a guess.
-It runs in five steps and never skips the first two.
+The person running this may not be technical. Winston's default setup is the chosen model:
+settle every policy question with its default and say what you chose, and ask only what
+the person must decide. Ask only these: the plan confirmation, anything that deletes or
+overwrites a file of theirs, production deploys and other gated actions, and secrets
+(the person types every token value themselves). Every question goes in a question box
+(`AskUserQuestion` in Claude Code, `request_user_input` in Codex, or a plain question in
+chat) with a one-line plain explanation and the recommended answer first, marked
+(Recommended).
 
-1. **Ask which setup.** Run `winston init` from the repository root (or the empty directory
-   for a new project), with no flags. It changes nothing and prints the three setups and
-   which one the directory looks like. Ask the user in a question box (`AskUserQuestion` in
-   Claude Code, `request_user_input` in Codex, or a plain question in chat), the detected
-   one first:
+Whenever you give the person a command to type, say where. In Claude Code a `winston`
+command goes in the chat with `!` in front (`!winston permissions --apply`), because the
+plugin's commands are not on a normal Terminal's PATH, and a skill is its slash command
+(`/winston:init`). In Codex there is neither: tell the person to ask Codex to run
+`winston ...`, and to use the `winston:<name>` skill by name. The CLI's own output already
+uses the form for the app it runs in (both forms when it cannot tell); relay it as printed.
+`gh`, `claude setup-token` and `brew` go in the Terminal app. On macOS also put the exact
+text on the clipboard with `pbcopy` and say so.
+
+It runs in five steps.
+
+1. **Plan.** Run `winston init` from the project's folder (or the empty folder for a new
+   project), with no flags. It reads the folder, picks the setup, says which and why in
+   plain words, and prints the plan. It changes nothing.
    - **join** – the repo is already set up for Winston (its `.winston/config.json` is
      committed). Checks this person's access and machine. Changes nothing in the repo or on
      GitHub; gaps in the repo's own setup are reported as the owner's.
@@ -21,41 +36,67 @@ It runs in five steps and never skips the first two.
    - **adopt** – an existing repo Winston did not set up. Fits a config to its default
      branch, an integration branch, a board already linked to it and its process docs, and
      adds only what is missing. Nothing existing is renamed or removed.
-2. **Plan.** Run `winston init --mode <join|new|adopt>`, without `--yes`. It changes nothing
-   and prints what it would do. Show that plan unaltered. If it lists several boards
-   instead, ask which one in a question box and rerun with `--board <owner>/<number>` (or
-   `--board new`). Other choices the user may state: `--integration <branch>`,
-   `--owner <name>`, and for a new project `--repo <owner>/<name>` and `--public` (the
-   repository is private unless they ask otherwise).
+
+   Do not ask which setup it is: the plan confirmation in step 3 covers it. Two exceptions:
+   - The output starts **This folder doesn't look like a project** (the home folder, a
+     standard folder such as Documents, or a folder that holds other projects): relay it
+     and stop. Never offer `--mode new` there.
+   - The output has a **Check first** block (the project has saved history but no GitHub
+     address, so it may be a copy of a project already on GitHub): ask one question box,
+     "Is this project already on GitHub?", with **No, make a new GitHub repository
+     (Recommended)** and **Yes, connect it to the existing one**. On yes, ask for the
+     address and give the `git remote add origin <address>` line to run in the Terminal
+     app, then rerun `winston init`.
+
+   If the person names a different setup, run `winston init --mode <join|new|adopt>`.
+2. **Show the plan.** First a 3-5 line plain summary in your own words: "Here's what I'll
+   set up, and what I'll need from you: ...". Then the plan as printed. If it lists
+   several boards instead, ask which one in a question box, with the line marked
+   **Recommended** as the first option and its reason, then run the command it gives
+   (`--board <owner>/<number>`, or `--board new`). Other choices the person may state:
+   `--integration <branch>`, `--owner <name>`, and for a new project `--repo <owner>/<name>`
+   and `--public` (the repository is private unless they ask otherwise). The plan's
+   settings line says that merging into the release branch will need them to type
+   `approve production deploy`: that is the default deploy gate, written into every
+   config; mention it in the summary in one plain sentence.
    If the plan has a **Triage workflow, your choice** block, the repo already has a
    workflow that triages every new issue, and Winston's would be a second one. Ask the
-   user in a question box, in plain words, with the block's three lines as the options:
-   **keep** theirs (Winston installs none), **replace** it with Winston's (theirs is
-   deleted), or **both** (every new issue is triaged twice). Never pick for them. Rerun
-   the plan with `--triage <keep|replace|both>` and show it again before confirming. A
-   deleted workflow keeps running until the deletion is committed to the default branch:
-   offer to commit it with the config.
+   user in a question box, because one answer deletes a file: **replace** it with
+   Winston's (Recommended: "Winston's replaces yours, so each issue is triaged once";
+   theirs is deleted), **keep** theirs (Winston installs none), or **both** (every new
+   issue is triaged twice). Rerun the plan with `--triage <keep|replace|both>` and show it
+   again before confirming. A deleted workflow keeps running until the deletion is
+   committed to the default branch: offer to commit it with the config.
 3. **Confirm, then apply.** Ask the user to confirm in a question box, with the plan's
    actions as the question text. Silence or a general go-ahead given earlier is not
-   confirmation. Only after an explicit yes, rerun the same command with `--yes`, show its
-   output unaltered, then run `winston doctor` to confirm the result. A plan with nothing
-   under "would" needs no confirmation and no `--yes`.
+   confirmation. Only after an explicit yes, run the command the plan ends with
+   (`To go ahead, in this Claude Code chat, type: !winston init --mode <mode> ... --yes`, or
+   in Codex `To go ahead, ask Codex to run: winston init ...`; you run it without the `!`,
+   which is only for a person typing it), show its output, then run
+   `winston doctor` to confirm the result. A plan with nothing under "Winston will" needs
+   no confirmation and no `--yes`.
 
 4. **Do the browser steps.** The output's **In the browser** list is the board's two intake
-   workflows, "Auto-add to project" and "Item added to project". Without them a new issue
-   never reaches the board at its intake status. GitHub's API cannot create, edit or enable
+   workflows, "Auto-add to project" and "Item added to project", and, ahead of them when
+   another project is capturing this repo's issues, a line naming that project. Without the
+   two workflows a new issue never reaches the board at its intake status, and while the
+   other project keeps its Auto-add on, each new issue also lands on it. GitHub's API cannot create, edit or enable
    a project workflow, so they are done on the board's Workflows page. They are part of
    the setup, not an afterthought: say so in the plan you confirm in step 3, and do not
    call the setup finished while `winston doctor` still lists them. In **join** they are
    the owner's; relay them and stop.
    - **With browser control** (Claude Code with Claude in Chrome: the
      `mcp__claude-in-chrome__*` tools): do them yourself, in a new tab, exactly as each
-     line says. Open the `/workflows` address given. For "Item added to project": select
+     line says, in the order listed. Open the `/workflows` address given. For the other
+     project's line ("Another board also takes new issues (project N)"): open that project's
+     `/workflows` page, select **Auto-add to project**, **Edit**, remove this repository
+     from it (or, if this repository is the only one it adds from, turn the workflow off),
+     **Save**. Touch no other project setting, and never delete the project. For "Item added to project": select
      it, **Edit**, under **Set value** choose the Status named, **Save and turn on
      workflow**. For "Auto-add to project": select it, **Edit**, pick this repository,
      replace the filter with `is:issue`, **Save and turn on workflow**. Touch nothing else
-     on the page, close the tab, then run `winston doctor` and show that both checks pass.
-     With chattr, claim `resource:chrome` first and release it after.
+     on the page, close the tab, then run `winston doctor` and show that these checks pass (the other-project line clears once its Auto-add no longer takes new issues, and can read as present until one more issue is filed).
+     Claim `resource:chrome` first (`chattr claim resource:chrome`) and release it after.
    - **The page shows GitHub's 404 or a Sign in link:** that Chrome is not signed in to
      GitHub, or is signed in as an account without access to the board. Ask the user to
      sign in to GitHub in that Chrome window as the board's owner and tell you when done.
@@ -68,24 +109,28 @@ It runs in five steps and never skips the first two.
      from the output to do by hand, and run `winston doctor` once they say they have.
 
 5. **Carry the plan's notes through as help, not status.** `winston init`'s output can end
-   with `Note:` lines and a **Secrets the triage workflow needs** list, and `winston doctor`
-   can report `triage workflow secrets` as `needs you` — all are non-blocking, so don't present
+   with `Note:` lines and a **Turn on automatic triage** list, and `winston doctor`
+   can report `Automatic triage keys` as `needs you` — all are non-blocking, so don't present
    them as bare facts or errors; say what to do about them, and always offer the next step.
-   - **A note to commit the config and workflow:** it names the exact files and the reason
-     (GitHub runs the triage workflow from the default branch only). Relay that reason, and
-     offer to commit those two files yourself now (`git add` and `git commit` them) rather
-     than leaving the user to work out why they're uncommitted.
-   - **`triage workflow secrets` under Needs you, or the Secrets list:** the workflow skips cleanly
-     without them, so frame this as an optional next step, not a problem; until it is done,
-     new issues are not triaged automatically. Explain both secrets in plain terms: `GH_PAT`
+   - **A note to commit the config and workflows:** the files only start working once they
+     are saved to the default branch on GitHub. Say that in one plain sentence and make it
+     the recommended default: "I'll save these to GitHub now – OK?" in a question box,
+     with yes (Recommended) first. On yes, commit exactly the files the note names on a new
+     branch from the default branch, push it and open a pull request into it, using the
+     note's command; merging that PR follows the merge rule in the closing report below.
+   - **`Automatic triage keys` under Needs you, or the Turn on automatic triage list:**
+     this is part of Winston's standard setup, so recommend doing it now (about 5
+     minutes): without it, Winston won't triage new issues until asked. "Later" is the
+     second option, never a problem. Explain both secrets in plain terms: `GH_PAT`
      is a token over this repo with Issues read/write and Projects read/write on the board
      owner (`GITHUB_TOKEN` cannot reach an org/user project); `CLAUDE_CODE_OAUTH_TOKEN`
-     comes from running `claude setup-token`. The numbered steps under **Secrets the triage
-     workflow needs** are the walkthrough: the CLI checked which of the two names exist
+     comes from running `claude setup-token`. The numbered steps under **Turn on automatic
+     triage** are the walkthrough: the CLI checked which of the two names exist
      (names only), and prints the exact steps for the missing ones. Present those steps
      unaltered. They name the token type, not a guess: a fine-grained token for a board
      an organization owns, a classic token (`repo`, `project`) for a board a user owns,
-     because GitHub's fine-grained tokens cannot reach a user's projects.
+     because GitHub's fine-grained tokens cannot reach a user's projects. The expiry is
+     90 days; doctor reports it when it runs out.
    - **Help create the token, as far as possible.** The first step is a link that opens
      GitHub's token form with the fields filled in (scopes for a classic token; name,
      resource owner, expiration and the two permissions for a fine-grained one). In order
@@ -107,8 +152,8 @@ It runs in five steps and never skips the first two.
         the tab is closed (or tells you to close it after they have navigated away). The
         owner clicks Generate and answers any password or two-factor prompt; GitHub then
         shows the token in that same tab, which is why you do not look. A token is a
-        credential: it stays with the owner. With chattr, claim `resource:chrome` first
-        and release it after.
+        credential: it stays with the owner. Claim `resource:chrome` first and release
+        it after.
      - **If the harness or a hook stops you from opening that page, that is the stop.**
        Do not ask the owner to type a grant phrase for this. Go back to 1: the owner
        opens the link, and you give the numbered directions.
@@ -124,15 +169,25 @@ It runs in five steps and never skips the first two.
      `gh secret set` yourself; the owner runs it in their own terminal. The owner doing it
      by hand needs no secret-grant phrase (config `secretGrant.phrase`); that phrase
      governs an agent handling secrets, and here no agent does.
-   - **When they say it is done,** run `winston doctor`: `triage workflow secrets` should
-     read `done`, and after the proving run in the steps `triage workflow runs` should show
-     `last run: success`. In **join** the secrets are the repo owner's; say so and stop.
+   - **When they say it is done,** run `winston doctor`: `Automatic triage keys` should
+     read `done`. Then prove it yourself; this handles no secret. Once the workflow file is
+     on the default branch: pick an open issue (`gh issue list --limit 1`), or, with none,
+     file one titled "Winston triage test" and say so; run
+     `gh workflow run <workflow> -f issue=<number>`; watch `gh run list --workflow
+     <workflow> --limit 1` until it completes; report "Automatic triage works" or the
+     failure with what to do about it (a failed run: `gh run view <id> --log-failed`,
+     usually a mistyped or under-scoped token, so walk them through making it again).
+     Close a test issue you filed once the run has triaged it. In **join** the secrets are
+     the repo owner's; say so and stop.
 
-**Permission rules** in the output is one more step for the owner: the project lacks some
-of the Claude Code allow rules a Winston run uses, so those actions would prompt mid-run.
-Relay its one command, `winston permissions --apply`, for the owner to run themselves (in
-their terminal, or with the `!` prefix). Never run `--apply` yourself or edit a settings
-file to grant yourself a permission. It writes only the project's `.claude/settings.json`:
+**Fewer permission prompts** in the output is one more step for the owner: the project lacks
+some of the Claude Code allow rules a Winston run uses, so those actions would prompt
+mid-run. Explain it in one line ("lets Winston run everyday git and GitHub commands without
+asking you each time, while still blocking risky ones"), then give the one command for
+them to type in this chat, `!winston permissions --apply` (in Codex: ask Codex to run `winston permissions --apply`), and put it on the clipboard.
+The rules always go in the project's own settings; never ask which scope. Never run
+`--apply` yourself or edit a settings file to grant yourself a permission: Claude is not
+allowed to grant itself permissions. It writes only the project's `.claude/settings.json`:
 the allow rules, and a short deny list for what an allow pattern cannot leave out (force
 pushes including `--force-with-lease`, pushes to the production branch, PR approvals,
 forced deletions; so a pushed branch is updated by merging its base, not by rebasing). Deny wins over
@@ -146,34 +201,72 @@ write; relay the lines.
 A plan line that writes `TRIAGE.md` means the repo's triage policy (config `triage.policy`)
 is missing or holds no triage rules: no heading that names triage and no `risk:` tier. The
 triage skill takes every rule from that file, so without them a triage run finishes clean
-and changes nothing. The starter holds the triage behavior, with the config's values filled in, and
-three sections marked **(per-repo)** that are generic. Say plainly that the **Risk tiers**
-section must be written for this repo before triage can judge anything: its rows are an
-example. After applying, offer to propose tiers: read the repo (what it ships, which paths
-hold data, auth, money or release machinery), draft the three rows naming real paths, and
-show them to the user; write them into `TRIAGE.md` only after an explicit yes. Then tell
-the user to review the file and commit it to the default branch, where the workflow reads
-it. init never overwrites an existing `TRIAGE.md` or edits the doc the config pointed at.
+and changes nothing. The starter holds the triage behavior, with the config's values filled
+in, and Winston's standard risk ratings, which work as they are. After applying, tailor the
+ratings yourself: read the repo (what it ships, which paths hold data, sign-in, money or
+release machinery), draft the three **Risk tiers** rows naming real paths, and show them as
+"Here's how I'll rate risk in this project (you can change this any time in TRIAGE.md)".
+Write them into the `TRIAGE.md` init just wrote unless the person objects, and include the
+file in the commit offered for the notes. init never overwrites an existing `TRIAGE.md` or
+edits the doc the config pointed at; a `TRIAGE.md` that was already there is changed only
+on an explicit yes.
 
-A plan line that gives every new issue a milestone is the **issue phase**. The board view
+A plan line that puts every new issue in the current phase is the **issue phase**. The board view
 is filtered to one milestone, and a new issue has none, so without this it reaches the
 board and never appears in that view. init sets `phase` in the config to that milestone
 and writes `.github/workflows/set-issue-phase.yml`, which sets it on each new issue and
 once a day on any open issue with none; it needs no secret and never changes a milestone
 that is set. A second line sets the milestone on the open issues that have none now. Say
 in plain words that both only take effect once the workflow and the config are committed
-to the default branch, and offer to commit them. To move to the next phase the owner
-edits that one `phase` line. If doctor says the board's views filter to several
-milestones, ask the user which is the current one in a question box, write it as `phase`
-in `.winston/config.json` after their answer, and rerun the plan. `"phase": false` means
-the owner chose to go without.
+to the default branch, and ask in a question box (recommended: commit them now). To move
+to the next phase the owner edits that one `phase` line. When the board's views show
+several milestones, the plan line names the one Winston picked (due soonest) and says so:
+relay that, and change `phase` only if the person says another is current. `"phase": false`
+means the owner chose to go without.
 
 Anything under **By hand** needs a person: access someone else grants, or a missing policy
-file. Relay it as it stands.
+file. Do not relay it as a bare statement: say who must do it, then give the exact next
+action (the link to open and the fields to fill, or the command), and for a missing policy
+file offer to write the starter in a question box.
+
+**Closing report: no item without an action.** These actions are yours to take as the agent running this skill (the `winston` command only prints the plan). This covers step 5 and every "Left for
+you", "Note:" and "By hand" item. Each pending item at the end of the run is one of: (a)
+already done; (b) a concrete command, which, when it is one for the user to paste, is also
+put on the clipboard with `pbcopy` (macOS) with the report saying so; or (c) a question-box
+choice with the recommended option first. Anything init is authorized to do itself is
+simply done, not offered. Never end a line with "tell me if you want", "say if", or a
+status the user must turn into a decision. In particular:
+
+- **Setup PR.** init reviews a setup PR it opened (the review posted on the PR) and merges
+  it only when all of these hold: the owner has given merge authority explicitly (a
+  standing policy in the user's own instructions that names this repo, or this session's
+  approval; write access alone is not authority), every existing check passes, and the
+  merge needs no bypass. Never use `gh pr merge --admin` or any other bypass of branch
+  protection or required reviews.
+- **A merge into the production branch is gated.** Every config init writes has a deploy
+  gate (`deployGate`, phrase `approve production deploy` unless the config names another),
+  so the setup PR into the production branch counts as a production deploy whether or not
+  merges there deploy anything. The deploy-gate hook blocks `gh pr merge` until the owner
+  **types** the phrase as their own prompt in this session; a question-box answer does not
+  open it, and you never write its marker. So, once the review and checks allow a merge,
+  offer the owner two ways, in one plain message: type `approve production deploy` (show the
+  exact phrase) and you merge, or merge it themselves: in the browser on the PR page, or in
+  the Terminal app with `gh pr merge <n> --merge` (give the line with the real number, and
+  put it on the clipboard). Never merge silently, and never try to get past the gate.
+- **When init may not merge** for another reason (no merge authority, a failing check),
+  give the plain command `gh pr merge <n> --merge`, also put on the clipboard, or the PR
+  link to merge in the browser, and say what was missing.
+- **A `processDocs` entry** in `.winston/config.json` that names a file that does not exist:
+  if the file is absent from the repo and from the default branch's history (`git log
+  --all -- <path>` is empty), init removes that one entry and says which. If the file
+  existed once or the name looks intended, ask once in a question box with "Remove the
+  entry" recommended. The config edit goes into the same setup commit or PR as the rest,
+  never straight onto the default branch.
 
 `winston init` is safe to run again: it shows what is left, skips what is done, and never
-overwrites a finished step. Whenever it stops on something missing, point the user at
-`/winston:doctor`, the one checklist of what is open and how to fix it.
+overwrites a finished step. When it stops, its message names the cause and the next
+action; relay both. `/winston:doctor` is the one checklist of what is open and how to fix
+it.
 
 If the `winston` command is not on PATH, run it by its path inside the plugin
 (`<plugin root>/bin/winston`, the plugin root being two directories above this skill's

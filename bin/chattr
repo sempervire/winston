@@ -1,0 +1,4 @@
+#!/bin/sh
+# The chattr CLI, part of Winston. Claude Code puts this plugin's bin/ on PATH; Codex does not,
+# so each session is told this path at start.
+exec node --disable-warning=ExperimentalWarning "$(dirname "$0")/../chattr/chattr.mjs" "$@"

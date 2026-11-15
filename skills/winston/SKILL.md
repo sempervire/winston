@@ -64,10 +64,11 @@ standards, or the repo's process rules.
 - `/winston plan <draft>`: **Plan mode** (below). It never implements.
 - `/winston <instruction>`: follow the instruction, under everything in this file.
 
-Optional tools degrade, never silently. Without chattr there are no claims or peer
-visibility: say so at setup and run a single-worker session rather than pretending
-concurrency is protected. Without Codex, `/winston:codex` and Rex are off; without a board,
-the work set comes from the owner in chat.
+Optional tools degrade, never silently. Without Codex, `/winston:codex` and Rex are off;
+without a board, the work set comes from the owner in chat. chattr (claims, peer messages,
+the shared-checkout guard) is part of Winston and always present; if `chattr state` fails,
+that is a setup fault to report with "Run /winston:doctor to see what is missing and how to
+fix it.", not a mode to run in.
 
 ## The owner's prompt
 
@@ -167,7 +168,7 @@ These override the prompt where they differ. Status names below are the roles in
 ## Collision avoidance
 
 The existing systems stay in force: `chattr claim`/`state`, worktree lanes, and the repo's
-parallel-work rules (chattr's own peer rules live in the chattr plugin). Four more:
+parallel-work rules (chattr's peer rules: `chattr/docs/AGENT-RULES.md` in this plugin). Four more:
 
 1. **Winston claims on the lanes' behalf.** Lane subagents are not peers. When the owner
    approves the session, claim every approved issue (`chattr claim issue:<N>`) and release
@@ -179,9 +180,6 @@ parallel-work rules (chattr's own peer rules live in the chattr plugin). Four mo
    verifications run one after another; programmatic verifications may run in parallel.
 4. **One Winston per repo.** Claim `resource:orchestrator` at setup. If it is held, name the
    owner of the claim and stop.
-
-Without chattr, skip the claims, say so once at setup, and keep to one Winston and one lane
-at a time unless the owner accepts the reduced protection.
 
 ## Parallelism check
 
@@ -271,8 +269,9 @@ In order:
    decision, gated action, permission, and known possible stop. Summarize the decisions
    before asking them, so the owner can correct the shape of the run before answering. Where
    step 7 found rules to add, show them here too, as one step for the owner: the single
-   command `winston permissions --apply` (with the `--add` rules from step 7), which the
-   owner runs themselves, in their terminal or with the `!` prefix. It adds the missing
+   command `!winston permissions --apply` (in Codex: ask Codex to run `winston permissions --apply`) (with the `--add` rules from step 7), which the
+   owner types themselves in this chat (the plugin's `winston` is not on a normal
+   Terminal's PATH); put it on the clipboard too and say so. It adds the missing
    rules to `permissions.allow` in the project's `.claude/settings.json`, and a short
    `permissions.deny` list beside them: an allow pattern cannot leave out a flag, so
    `git push origin *` alone would also cover a force push, a push to the production
@@ -286,17 +285,16 @@ In order:
    hand the owner a multi-line block to paste into `/permissions`: that dialog takes a
    pasted block as one rule, which matches nothing.
 
-   Explain the scope; never choose it for the owner: the command writes **Project** scope,
-   so matching actions won't prompt again in this project, in this and future sessions, for
-   everyone who uses the committed file. An owner who wants **Session** or **User** scope
-   instead adds the listed rules one at a time in `/permissions` → **Add** and picks that
-   scope there; **User** carries a rule into every project. This covers only the prompts the
-   new allow rules remove.
+   The rules go in **Project** scope, which is what the command writes: matching actions
+   won't prompt again in this project, in this and future sessions, for everyone who uses
+   the committed file. That is Winston's default; do not ask about scope. Only if the owner
+   asks for another scope: **Session** or **User** rules are added one at a time in
+   `/permissions` → **Add**, picking that scope there.
    Claude Code evaluates deny, then ask, then allow, and a hook can block an action before any
    rule is reached, so an allow rule never clears a `permissions.ask`/`permissions.deny` rule,
    a hook, production approval, a secret grant, or any other gate below — those stay explicit.
 9. Ask every independent setup decision in a question box, including the permission-rules
-   step and its scope from step 8 where rules are to be added. Give each its own question, explain the tradeoff,
+   step from step 8 where rules are to be added. Give each its own question, explain the tradeoff,
    recommend an answer and say why. Batch the questions in one setup round where the interface
    permits; ask dependent questions after their prerequisites are answered. This skill requires
    question boxes as its standing setup behavior, even where the repository's general chat

@@ -148,7 +148,7 @@ function main() {
       revoke(sessionId)
       process.stdout.write(
         JSON.stringify({
-          systemMessage: 'Secret-console authorization revoked for this session.',
+          systemMessage: 'OK: Claude may no longer open pages that show keys and secrets in this session.',
           hookSpecificOutput: {
             hookEventName: 'UserPromptSubmit',
             additionalContext:
@@ -159,7 +159,7 @@ function main() {
     } else if (armMatcher(phrase).test(prompt) && arm(sessionId)) {
       process.stdout.write(
         JSON.stringify({
-          systemMessage: 'Secret-console authorization armed for this session only.',
+          systemMessage: 'OK: Claude may open pages that show keys and secrets, for this session only. Type "revoke secrets authorization" to undo.',
           hookSpecificOutput: {
             hookEventName: 'UserPromptSubmit',
             additionalContext:
