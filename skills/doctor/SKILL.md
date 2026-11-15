@@ -33,7 +33,9 @@ Under **Needs you**, every open item says why it matters and how to fix it. The 
 step in plain words, one command at a time, and after they do it run `winston doctor`
 again. With nothing open it says setup is complete.
 
-Where a command is typed: `/winston:init` and `!winston ...` go in this Claude Code chat;
+Where a command is typed: in Claude Code, `/winston:init` and `!winston ...` go in the
+chat; in Codex, the person asks Codex to use the `winston:init` skill or to run
+`winston ...` (doctor's output says so at the top when it runs outside Claude Code);
 `gh`, `claude setup-token` and `brew` go in the Terminal app. Say which every time.
 
 Who does what:
@@ -65,7 +67,7 @@ Who does what:
   the starter's standard ratings work as they are; offer to tailor them from reading the
   repo, show the draft, and write it unless the person objects.
 - **Fewer permission prompts**: one command the owner types in this chat,
-  `!winston permissions --apply` (Claude is not allowed to grant itself permissions; deny
+  `!winston permissions --apply` (in Codex: ask Codex to run `winston permissions --apply`; Claude is not allowed to grant itself permissions; deny
   wins over allow). Relay it, never run it yourself.
 - **Winston version**: a newer version is out. Give the user the update line as it stands,
   command included: they run it and restart. Do not run the update yourself; it replaces

@@ -1,6 +1,7 @@
-<!-- Winston starter triage policy. `{{key}}` is a key in `.winston/config.json`:
-replace each with its value (`board.statuses[0]` and `[1]` are the intake and the
-ready-to-work status); winston init does this for you. The three sections marked
+<!-- Winston starter triage policy. winston init replaces each `{{placeholder}}`: most
+are keys in `.winston/config.json` (`board.statuses[0]` and `[1]` are the intake and the
+ready-to-work status); `priorityOptions` comes from the board's Priority field and
+`otherRules` from `processDocs`. The three sections marked
 (per-repo) at the end work as written and are the ones to tailor. Delete this comment. -->
 
 # Triage

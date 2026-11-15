@@ -22,7 +22,7 @@ function sandbox(t) {
   const bin = join(tmp, 'bin');
   mkdirSync(bin);
   // No test asks the network for the latest version: the lookup reads a file that is absent unless a test writes it.
-  const env = { ...process.env, WINSTON_HOME: home, CODEX_HOME: join(tmp, 'codex'), CLAUDE_CONFIG_DIR: join(tmp, 'claude'), WINSTON_UPDATE_URL: `file://${join(tmp, 'latest.json')}`, PATH: `${bin}:${process.env.PATH}` };
+  const env = { ...process.env, WINSTON_HARNESS: 'claude', WINSTON_HOME: home, CODEX_HOME: join(tmp, 'codex'), CLAUDE_CONFIG_DIR: join(tmp, 'claude'), WINSTON_UPDATE_URL: `file://${join(tmp, 'latest.json')}`, PATH: `${bin}:${process.env.PATH}` };
   const cli = (args, cwd = repo) => spawnSync(process.execPath, [CLI, ...args], { cwd, env, encoding: 'utf8' });
   const fake = (name, script) => { writeFileSync(join(bin, name), `#!/bin/sh\n${script}\n`); chmodSync(join(bin, name), 0o755); };
   return { tmp, home, repo, env, cli, fake };
@@ -95,8 +95,8 @@ test('doctor on a repo with no config says it is not set up and points at init',
   assert.match(doc.stdout, /^(on|off)\s+Codex \(second opinions\)/m);
   assert.match(doc.stdout, /^Winston setup checklist for repo\. Safe to run again: it only reads\.\n/, 'the repo by name, not its path');
   // A repo with no config has one thing to do, and the last line names it.
-  assert.match(doc.stdout, /Needs you \(1\):\n\n1\. Winston settings for this repo\n   Why: [^\n]+\n   Fix:\n     \/winston:init   \(type it in this Claude Code chat\. It shows its plan and changes nothing until you say yes\)/);
-  assert.match(doc.stdout, /\nNext step: Winston settings for this repo – type in this Claude Code chat: \/winston:init\. Then run \/winston:doctor again\.\n$/);
+  assert.match(doc.stdout, /Needs you \(1\):\n\n1\. Winston settings for this repo\n   Why: [^\n]+\n   Fix:\n     Type \/winston:init in this Claude Code chat\. It shows its plan and changes nothing until you say yes/);
+  assert.match(doc.stdout, /\nNext step: Winston settings for this repo – type \/winston:init in this Claude Code chat\. Then run \/winston:doctor again\.\n$/);
 });
 
 test('doctor finds a missing kanban view and starting milestone; init creates them', (t) => {
@@ -132,7 +132,7 @@ test('doctor finds a missing kanban view and starting milestone; init creates th
   assert.match(doc.stdout, /^needs you\s+Board column view\s+— no view that shows the work in columns/m);
   assert.match(doc.stdout, /^needs you\s+Current phase exists\s+— no open milestone/m);
   // Neither new check needs the owner's input, so init can create both on its own.
-  assert.match(doc.stdout, /\d\. Board column view\n   Why: [^\n]+\n   Fix:\n     \/winston:init   \([^\n]*\)\. It will: Add a board view that shows the work in columns/);
+  assert.match(doc.stdout, /\d\. Board column view\n   Why: [^\n]+\n   Fix:\n     Type \/winston:init in this Claude Code chat\. [^\n]*\. It will: Add a board view that shows the work in columns/);
 
   const made = s.cli(['init', '--mode', 'adopt', '--yes']);
   assert.equal(made.status, 0, made.stdout);
@@ -266,12 +266,12 @@ test('init without --mode plans the setup the folder shows, says which in plain 
   const asked = s.cli(['init']);
   assert.equal(asked.status, 0, asked.stdout + asked.stderr);
   assert.match(asked.stdout, /^Setup: new, because this project has no saved history yet\. This is a new project, so Winston sets everything up\.\n/);
-  assert.match(asked.stdout, /To choose a different setup, type in this chat: !winston init --mode join or --mode adopt/);
+  assert.match(asked.stdout, /To choose a different setup, in this Claude Code chat, type: !winston init --mode join \(or --mode adopt\)/);
   assert.match(asked.stdout, /Winston will:\n/);
-  assert.match(asked.stdout, /To go ahead, type in this chat: !winston init --mode new --yes/, 'the apply command names the mode the plan used');
+  assert.match(asked.stdout, /To go ahead, in this Claude Code chat, type: !winston init --mode new --yes/, 'the apply command names the mode the plan used');
   const forced = s.cli(['init', '--yes']);
   assert.equal(forced.status, 2, '--yes never picks the setup');
-  assert.match(forced.stderr, /needs the setup named: !winston init --mode new --yes/);
+  assert.match(forced.stderr, /needs the setup named: in this Claude Code chat, type: !winston init --mode new --yes/);
   assert.equal(s.cli(['init', '--mode', 'sideways']).status, 2);
   // A flag missing its value never swallows the next flag, and unknown flags are refused.
   for (const bad of [['--mode', 'new', '--integration', '--yes'], ['--mode'], ['--mode', 'new', '--yess']]) {
@@ -417,7 +417,7 @@ test('init --mode adopt fits the config to the repo and adds to its board withou
   const develop = s.cli(['init', '--mode', 'adopt', '--integration', 'develop']).stdout;
   assert.match(develop, /work lands on develop first/);
   assert.doesNotMatch(develop, /Make the work branch/);
-  assert.match(develop, /To go ahead, type in this chat: !winston init --mode adopt --integration develop --yes/, 'the apply command keeps the flags the plan was made with');
+  assert.match(develop, /To go ahead, in this Claude Code chat, type: !winston init --mode adopt --integration develop --yes/, 'the apply command keeps the flags the plan was made with');
 });
 
 test('with a config already here, init creates the integration branch it names when origin lacks it', (t) => {
@@ -434,7 +434,7 @@ test('with a config already here, init creates the integration branch it names w
   mkdirSync(join(s.repo, '.github/workflows'), { recursive: true });
   writeFileSync(join(s.repo, '.github/workflows/triage-on-new-issue.yml'), '');
 
-  assert.match(s.cli(['doctor']).stdout, /\d\. Work branch on GitHub\n   Why: [^\n]+\n   Fix:\n     \/winston:init   \([^\n]*It will: Make the work branch, staging, on GitHub/);
+  assert.match(s.cli(['doctor']).stdout, /\d\. Work branch on GitHub\n   Why: [^\n]+\n   Fix:\n     Type \/winston:init in this Claude Code chat\. [^\n]*It will: Make the work branch, staging, on GitHub/);
   const plan = s.cli(['init', '--mode', 'adopt']);
   assert.match(plan.stdout, /Winston will:\n\s+- Make the work branch, staging, on GitHub \(a copy of main where finished work waits to be checked\)\n/);
   assert.doesNotMatch(plan.stdout, /By hand/);
@@ -594,7 +594,7 @@ test('a new issue gets the current phase\'s milestone: doctor reports hidden iss
   assert.equal(doc.status, 1);
   assert.match(doc.stdout, /^needs you\s+New issues join the current phase\s+— new issues get no milestone, so the board view for "Pilot" never shows them$/m);
   assert.match(doc.stdout, /^needs you\s+Older issues in the current phase\s+— 2 open issues have no milestone and are hidden from the board view for "Pilot"$/m);
-  assert.match(doc.stdout, /\d\. New issues join the current phase\n   Why: The board shows only the current phase[^\n]+\n   Fix:\n     \/winston:init   \([^\n]*It will: Put every new issue in the current phase, "Pilot"/);
+  assert.match(doc.stdout, /\d\. New issues join the current phase\n   Why: The board shows only the current phase[^\n]+\n   Fix:\n     Type \/winston:init in this Claude Code chat\. [^\n]*It will: Put every new issue in the current phase, "Pilot"/);
 
   const plan = s.cli(['init', '--mode', 'adopt']);
   assert.match(plan.stdout, /- Put every new issue in the current phase, "Pilot", so it shows on the board: set "phase" in \.winston\/config\.json, and add \.github\/workflows\/set-issue-phase\.yml\. To move to the next phase later, change that one "phase" line/);
@@ -694,14 +694,14 @@ test('init --mode adopt asks which board when several are linked, and refuses a 
   fakeGh(s);
   const none = s.cli(['init', '--mode', 'adopt']);
   assert.equal(none.status, 1);
-  assert.match(none.stdout, /adopt is for a project that already has saved history and is on GitHub.*--mode new/);
+  assert.match(none.stdout, /adopt is for a project that already has saved history and is on GitHub.*For a new project, type \/winston:init in this Claude Code chat: it picks the right setup/);
 
   existingRepo(s);
   writeFileSync(join(s.tmp, 'linked.json'), linkedJson([['acme', 3, 'Roadmap'], ['acme', 4, 'Bugs']]));
   writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
   const asked = s.cli(['init', '--mode', 'adopt']);
   assert.match(asked.stdout, /Recommended: --board acme\/3\s+Roadmap\s+\(GitHub lists it first\)\n\s+--board acme\/4\s+Bugs\n\s+--board new/);
-  assert.match(asked.stdout, /To plan with the recommended board, type in this chat: !winston init --mode adopt --board acme\/3$/m);
+  assert.match(asked.stdout, /To plan with the recommended board, in this Claude Code chat, type: !winston init --mode adopt --board acme\/3$/m);
   assert.equal(s.cli(['init', '--mode', 'adopt', '--yes']).status, 2);
   assert.ok(!existsSync(join(s.repo, '.winston')));
   // A board named like the repository is the recommended one.
@@ -732,7 +732,7 @@ test('init --mode join reports access as the joiner\'s, repo gaps as the owner\'
   assert.match(plan.stdout, /Its setup is Dana's: nothing in the project or on GitHub is changed/);
   assert.match(plan.stdout, /Yours to fix:\n\s+- Board access: access to a board is given separately from access to the repo: ask Dana to add your GitHub account at https:\/\/github\.com\/users\/acme\/projects\/1\/settings\/access/);
   assert.match(plan.stdout, /They are Dana's to close, not yours: send them this list, and they can run \/winston:init to fix it:[^]*- Work branch on GitHub[^]*- Triage labels/);
-  assert.match(plan.stdout, /would:\n\s+- set launcher\.repo[^]*To go ahead, type in this chat: !winston init --mode join --yes/);
+  assert.match(plan.stdout, /would:\n\s+- set launcher\.repo[^]*To go ahead, in this Claude Code chat, type: !winston init --mode join --yes/);
   assert.ok(!existsSync(join(s.home, 'config.json')));
 
   const applied = s.cli(['init', '--mode', 'join', '--yes']);
@@ -775,7 +775,7 @@ test('doctor checks the board\'s two intake workflows and the triage workflow\'s
   assert.match(off.stdout, /^done\s+Board puts new issues in Inbox$/m);
   assert.match(off.stdout, /^needs you\s+Automatic triage keys\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN missing/m);
   assert.match(off.stdout, /\d\. Automatic triage keys\n   Why: [^\n]+\n   Fix:\n     Recommended: do this now \(about 5 minutes\)\. Without these two keys, Winston won't triage new issues on acme\/thing until you ask it to\.[^\n]*Missing: CLAUDE_CODE_OAUTH_TOKEN\.[^]*\n       1\. In the Terminal app, run: claude setup-token/);
-  assert.match(off.stdout, /\d\. Board adds new issues\n   Why: Without this a new issue never shows up on the board\.\n   Fix:\n     Next: type \/winston:init and it does this for you in the browser\. To do it yourself: open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
+  assert.match(off.stdout, /\d\. Board adds new issues\n   Why: Without this a new issue never shows up on the board\.\n   Fix:\n     Next: type \/winston:init in this Claude Code chat and it does this for you in the browser\. To do it yourself: open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
   assert.equal(off.stdout.match(/Board adds new issues/g).length, 2, 'once in the checklist, once under Needs you');
 
   writeFileSync(join(s.tmp, 'board.json'), boardJson({ options: ['Inbox', 'Ready', 'Verify', 'Verified'], workflows: INTAKE, views: KANBAN }));
@@ -839,7 +839,7 @@ test('doctor names another project that auto-adds the repo\'s issues, ahead of t
   assert.equal(other.status, 1);
   assert.match(other.stdout, /^needs you\s+Another board also takes new issues \(project 1\)\s+— new issues \(#48, #47\) also went to project 1 "Project 1" through its Auto-add workflow, not only to board 6$/m);
   assert.ok(other.stdout.indexOf('Another board also takes new issues (project 1)\n   Why') > 0 && other.stdout.indexOf('Another board also takes new issues (project 1)\n   Why') < other.stdout.indexOf('Board adds new issues\n   Why'), 'listed before the board\'s own workflows');
-  assert.match(other.stdout, /Fix:\n     Next: type \/winston:init and it does this for you in the browser\. To do it yourself: before turning on board 6's workflows, open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
+  assert.match(other.stdout, /Fix:\n     Next: type \/winston:init in this Claude Code chat and it does this for you in the browser\. To do it yourself: before turning on board 6's workflows, open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
   const plan = s.cli(['init', '--mode', 'adopt']);
   assert.match(plan.stdout, /In the browser[^\n]*\n  - Another board also takes new issues \(project 1\): before turning on board 6's workflows, open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows, choose "Auto-add to project", click Edit, remove this repository \(or turn the workflow off if this repository is its only one\), then Save\n  - Board adds new issues/);
 
@@ -1121,7 +1121,7 @@ test('doctor flags a policy with no triage rules; init writes a starter, repoint
   const doc = s.cli(['doctor']);
   assert.equal(doc.status, 1);
   assert.match(doc.stdout, /^needs you\s+Triage rules\s+— AGENTS\.md has no triage rules \(no heading that names triage, no risk: low\/medium\/high tier\), so triage would change nothing$/m);
-  assert.match(doc.stdout, /\nNext step: Triage rules – type in this Claude Code chat: \/winston:init\. Then run \/winston:doctor again\.\n$/);
+  assert.match(doc.stdout, /\nNext step: Triage rules – type \/winston:init in this Claude Code chat\. Then run \/winston:doctor again\.\n$/);
   const plan = s.cli(['init', '--mode', 'adopt']);
   assert.match(plan.stdout, /Add TRIAGE\.md, the rules triage follows, filled in from these settings, and point the settings at it \(AGENTS\.md is left as it is\)\. Winston's standard risk ratings come with it and work as they are/);
   assert.ok(!existsSync(join(s.repo, 'TRIAGE.md')), 'no --yes, no change');
@@ -1384,7 +1384,7 @@ test('doctor lists what needs the owner with why and how, names the first as the
     assert.match(first.stdout, new RegExp(`\\d\\. ${name}\\n   Why: [^\\n]+\\n   Fix:\\n     \\S`), name);
   }
   assert.match(first.stdout, /Needs you \(3\):/);
-  assert.equal(lastLine(first.stdout), 'Next step: Triage rules – type in this Claude Code chat: /winston:init. Then run /winston:doctor again.');
+  assert.equal(lastLine(first.stdout), 'Next step: Triage rules – type /winston:init in this Claude Code chat. Then run /winston:doctor again.');
 
   // Fix the policy: that item is done. The starter's standard risk ratings are a working
   // default: a tip, never "needs you", and never the next step.
@@ -1408,7 +1408,7 @@ test('doctor lists what needs the owner with why and how, names the first as the
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
   const third = s.cli(['doctor']);
   assert.match(third.stdout, /^done\s+Automatic triage keys/m);
-  assert.equal(lastLine(third.stdout), 'Next step: Fewer permission prompts – type in this Claude Code chat: !winston permissions --apply. Then run /winston:doctor again.');
+  assert.equal(lastLine(third.stdout), 'Next step: Fewer permission prompts – in this Claude Code chat, type: !winston permissions --apply. Then run /winston:doctor again.');
   assert.equal(s.cli(['permissions', '--apply']).status, 0);
   const complete = s.cli(['doctor']);
   assert.equal(complete.status, 0, complete.stdout);
@@ -1489,4 +1489,28 @@ test('the token link fills in what GitHub documents, by who owns the board', () 
   assert.doesNotMatch(url.search, / /);
   assert.match(url.search, /name=winston\+triage\+my\+app\+%26\+more/);
   assert.doesNotMatch(tokenUrl({ fineGrained: true, slug: 'acme/thing', boardOwner: 'acme' }), /scopes=|token=|ghp_/);
+});
+
+test('commands for a person take the form of the app Winston runs in, and the merge rule is stated', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  const as = (h, args, cwd) => spawnSync(process.execPath, [CLI, ...args], { cwd: cwd ?? s.repo, env: { ...s.env, WINSTON_HARNESS: h }, encoding: 'utf8' });
+  // Codex: no `!` and no slash command, and a legend says how to read the rest.
+  const codex = as('codex', ['doctor']).stdout;
+  assert.match(codex, /^In Codex: where this says \/winston:<name>, ask Codex to use the winston:<name> skill; where it says !winston \.\.\., ask Codex to run winston \.\.\.\.\n/m);
+  assert.match(codex, /Fix:\n     Ask Codex to use the winston:init skill\. It shows its plan/);
+  assert.match(codex, /\nNext step: Winston settings for this repo – ask Codex to use the winston:init skill\. Then/);
+  assert.doesNotMatch(codex, /this Claude Code chat/);
+  assert.match(as('codex', ['init']).stdout, /To go ahead, ask Codex to run: winston init --mode new --yes/);
+  // Not known: both forms.
+  assert.match(as('unknown', ['init']).stdout, /To go ahead, in Claude Code, type in the chat: !winston init --mode new --yes   \(in Codex, ask it to run: winston init --mode new --yes\)/);
+  // A value the shell would expand is single-quoted.
+  assert.match(s.cli(['init', '--mode', 'new', '--owner', 'Pat $HOME']).stdout, /To go ahead, in this Claude Code chat, type: !winston init --mode new --owner 'Pat \$HOME' --yes/);
+  // The default gate brings the merge allow rule, and the plan says what it allows.
+  assert.match(s.cli(['init']).stdout, /It also lets Winston merge pull requests without asking; a merge into main still waits until you type "approve production deploy" in the session \(the deploy gate\)\./);
+  // adopt is refused in a home folder that is a git repository, as new is.
+  existingRepo(s);
+  const adopt = spawnSync(process.execPath, [CLI, 'init', '--mode', 'adopt'], { cwd: s.repo, env: { ...s.env, HOME: s.repo }, encoding: 'utf8' });
+  assert.equal(adopt.status, 1);
+  assert.match(adopt.stdout, /it is your home folder/);
 });

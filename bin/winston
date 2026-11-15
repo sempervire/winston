@@ -100,11 +100,29 @@ const DEPLOY_PHRASE = 'approve production deploy'
 /** Where every stop on a missing prerequisite sends the reader. */
 export const DOCTOR_POINTER = 'Run /winston:doctor to see what is missing and how to fix it.'
 /**
- * How a person runs a winston command. The plugin's bin/ is on PATH inside Claude Code
- * (its shell, and the `!` prefix in the chat), not in a normal Terminal window, so every
- * instruction for a person says to type it in the chat with `!`.
+ * Which app this Winston runs in: 'claude', 'codex', or null when it cannot tell (a
+ * development checkout). Claude Code marks its shell with CLAUDECODE; otherwise the
+ * plugin's install path says which app installed it. WINSTON_HARNESS overrides both.
  */
-export const inChat = (cmd) => `in this Claude Code chat, type: !${cmd}`
+export const HARNESS = ['claude', 'codex'].includes(process.env.WINSTON_HARNESS) ? process.env.WINSTON_HARNESS
+  : process.env.WINSTON_HARNESS === 'unknown' ? null
+    : process.env.CLAUDECODE === '1' ? 'claude' : harnessOfRoot(ROOT)
+/**
+ * How a person runs a winston command. The plugin's bin/ is on PATH inside Claude Code
+ * (its shell, and the `!` prefix in the chat), not in a normal Terminal window. Codex
+ * runs it when asked: no in-session shell syntax is assumed for it. When the app is not
+ * known, both forms.
+ */
+export const inChat = (cmd) => HARNESS === 'codex' ? `ask Codex to run: ${cmd}`
+  : HARNESS === 'claude' ? `in this Claude Code chat, type: !${cmd}`
+    : `in Claude Code, type in the chat: !${cmd}   (in Codex, ask it to run: ${cmd})`
+/** How a person starts one of Winston's skills, by the app they use. */
+export const useSkill = (name) => HARNESS === 'codex' ? `ask Codex to use the winston:${name} skill`
+  : HARNESS === 'claude' ? `type /winston:${name} in this Claude Code chat`
+    : `type /winston:${name} in Claude Code   (in Codex, ask it to use the winston:${name} skill)`
+/** Printed once at the top of doctor and init outside Claude Code: how to read the rest. */
+const HARNESS_LEGEND = HARNESS === 'claude' ? null
+  : `${HARNESS === 'codex' ? 'In Codex' : 'If you use Codex'}: where this says /winston:<name>, ask Codex to use the winston:<name> skill; where it says !winston ..., ask Codex to run winston ....\n`
 /** Where a person types a command that is not Winston's own (gh, claude, brew). */
 const IN_TERMINAL = 'In the Terminal app'
 /** The generic rows of the starter policy's risk tiers; a policy still carrying one has not been fitted to its repo. */
@@ -614,6 +632,13 @@ const NO_FORCE = 'The deny list blocks every force push, --force-with-lease incl
 const GATES = 'An allow rule only removes a prompt, and deny wins over allow: deny and ask rules, hooks, production approval and secret grants still apply.'
 /** What the permission rules do, in plain words: the line a person reads first. */
 const RULES_PLAIN = 'Let Winston run everyday git and GitHub commands without asking you each time, while still blocking risky ones (force-pushing, pushing straight to the release branch, approving its own pull requests).'
+/** RULES_PLAIN, plus what the merge rule allows when the deploy gate guards merges (permissionRules adds it only then). */
+function rulesPlain(config) {
+  const gate = config.deployGate
+  if (!(gate?.guarded ?? []).some((g) => g?.kind === 'pr-merge')) return RULES_PLAIN
+  const bases = [...new Set(gate.guarded.filter((g) => g?.kind === 'pr-merge').map((g) => g.base).filter(Boolean))]
+  return `${RULES_PLAIN} It also lets Winston merge pull requests without asking; a merge into ${bases.join(' or ') || 'any branch'} still waits until you type "${gate.phrase || DEPLOY_PHRASE}" in the session (the deploy gate).`
+}
 const RULES_WHY_YOU = 'Claude is not allowed to grant itself permissions, so this one is yours to run'
 
 /**
@@ -633,7 +658,7 @@ function permissions(cwd, opts) {
   const denies = st.denies.filter((r) => r.state === 'missing')
   const skipped = st.rules.filter((r) => r.note)
   if (!opts.apply) {
-    console.log(RULES_PLAIN)
+    console.log(rulesPlain({ ...layers.user.data, ...layers.repo.data }))
     console.log(lacking.length || denies.length ? `${RULES_WHY_YOU}: ${inChat('winston permissions --apply')}` : 'Nothing is missing: this project already has every rule.')
     console.log(`\nDetails: the Claude Code rules Winston runs use in this repo, against ${shownPath(root, st.path)}${st.text === null ? ' (not there yet)' : ''}.`)
     console.log('\nAllow (these stop prompting):')
@@ -1272,7 +1297,7 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
     name: 'Fewer permission prompts', required: false, state: perms.error ? 'unknown' : lackingRules.length ? 'off' : 'ok',
     detail: perms.error ?? (lackingRules.length ? 'not set up yet: a long run stops to ask before everyday commands' : shownPath(root, perms.path)),
     ownerStep: lackingRules.length > 0 && [
-      RULES_PLAIN,
+      rulesPlain(config),
       `${RULES_WHY_YOU}: ${inChat('winston permissions --apply')}`,
       `It adds rules to this project's .claude/settings.json and changes nothing else. To see each rule first: ${inChat('winston permissions')}`,
     ],
@@ -1329,8 +1354,7 @@ const WHY = [
   [/^Triage rules: blanks/, 'Triage reads these lines as they stand, so a blank becomes part of the rule.'],
   [/^Triage rules/, 'Triage takes every rule from this file. Without rules a triage run finishes and changes nothing.'],
   [/^Automatic triage of new issues/, 'Triage means Winston reads each new issue, rates its risk and plans it; this workflow does that the moment an issue is opened.'],
-  [/^Automatic triage is up to date/, 'The older version can fail without saying so; the newer one reports every failure.'],
-  [/^triage workflow mechanism/, 'The script-based workflow makes one model call and applies the verdict in code, so nothing it needs can be silently denied; a stale pin runs an older script.'],
+  [/^Automatic triage is up to date/, 'The newer version makes one model call and Winston\'s code applies the result, so nothing it needs can be refused without notice; an old pinned version runs an older script.'],
   [/^Two workflows triage/, 'Two workflows that triage the same issue give it two verdicts, and one may start work the other stopped on.'],
   [/^Automatic triage keys/, 'The workflow signs in to GitHub and Claude with these two keys; without them new issues wait untriaged.'],
   [/^Automatic triage is working/, 'Failed runs mean new issues are not being triaged, and nothing else reports it.'],
@@ -1352,7 +1376,9 @@ export function statusOf(c) {
 }
 
 /** The slash command first, then the same step as a winston command typed in the chat. */
-const INIT_LINE = '/winston:init   (type it in this Claude Code chat. It shows its plan and changes nothing until you say yes)'
+const INIT_LINE = `${useSkill('init')[0].toUpperCase()}${useSkill('init').slice(1)}. It shows its plan and changes nothing until you say yes`
+/** The one paste-ready text for "run /winston:init": only Claude Code has a slash command to paste. */
+const INIT_COMMAND = HARNESS === 'claude' ? '/winston:init' : undefined
 
 /** Single-quote a path for a shell, escaping any quote inside it. */
 const shq = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`
@@ -1385,11 +1411,11 @@ function fixOf(c) {
     const lines = c.steps()
     return { lines, ...lines.next }
   }
-  if (c.ownerStep) return { command: '!winston permissions --apply', lines: [`${RULES_WHY_YOU}: ${inChat('winston permissions --apply')}`] }
+  if (c.ownerStep) return { command: HARNESS === 'codex' ? undefined : '!winston permissions --apply', how: inChat('winston permissions --apply'), lines: [`${RULES_WHY_YOU}: ${inChat('winston permissions --apply')}`] }
   if (c.command || c.fixLines) return { command: c.command, lines: c.fixLines }
-  if (c.unconfigured) return { command: '/winston:init', lines: [INIT_LINE] }
-  if (c.fix) return { command: '/winston:init', lines: [`${INIT_LINE}. It will: ${c.fix.plan}`] }
-  if (c.browser) return { lines: [`Next: type /winston:init and it does this for you in the browser. To do it yourself: ${c.hand}`] }
+  if (c.unconfigured) return { command: INIT_COMMAND, how: useSkill('init'), lines: [INIT_LINE] }
+  if (c.fix) return { command: INIT_COMMAND, how: useSkill('init'), lines: [`${INIT_LINE}. It will: ${c.fix.plan}`] }
+  if (c.browser) return { lines: [`Next: ${useSkill('init')} and it does this for you in the browser. To do it yourself: ${c.hand}`] }
   return { lines: [c.problem || c.hand || c.detail] }
 }
 
@@ -1465,6 +1491,7 @@ function doctor(cwd, copy = false) {
   if (version) list.splice(at === -1 ? list.length : at, 0, { detail: '', ...version })
   const root = repoRoot(cwd)
   console.log(`Winston setup checklist${root ? ` for ${basename(root)}` : ''}. Safe to run again: it only reads.\n`)
+  if (HARNESS_LEGEND) console.log(HARNESS_LEGEND)
   for (const c of list) console.log(`${statusOf(c).padEnd(16)} ${c.name}${c.detail ? `  — ${c.detail}` : ''}`)
 
   // A repo with no config has one thing to do; the rest follows from it.
@@ -1487,7 +1514,7 @@ function doctor(cwd, copy = false) {
       for (const c of tips) console.log(`  - ${c.problem}`)
     }
     if (off.length) {
-      console.log('\nOptional extras (off now; setup is complete without them):')
+      console.log('\nOptional extras (off now; not needed for setup):')
       for (const c of off) console.log(`  - ${c.name}: ${c.turnOn}`)
     }
   }
@@ -1515,9 +1542,9 @@ function doctor(cwd, copy = false) {
     else console.log(`\nNothing was copied: ${!command ? 'the next step is several steps, not one command' : process.platform !== 'darwin' ? '--copy works on macOS only' : 'pbcopy did not run'}.`)
   }
   extras()
-  // A slash command or a `!` command is typed in the chat; anything else in the Terminal app.
-  const how = command && /^[/!]/.test(command) ? `type in this Claude Code chat: ${command}` : `in the Terminal app, run: ${command}`
-  console.log(`\nNext step: ${open[0].name} – ${link ? `open ${link}${copied} and follow the steps under 1 above` : command ? `${how}${copied}` : 'follow the steps under 1 above'}. Then run /winston:doctor again.`)
+  // Winston's own steps say where they are typed (fixOf's `how`); any other command goes in the Terminal app.
+  const how = fixes[0].how ?? (command && `in the Terminal app, run: ${command}`)
+  console.log(`\nNext step: ${open[0].name} – ${link ? `open ${link}${copied} and follow the steps under 1 above` : how ? `${how}${copied}` : 'follow the steps under 1 above'}. Then run /winston:doctor again.`)
   return code
 }
 
@@ -1557,7 +1584,7 @@ function intro(sit) {
     console.log('\nCheck first: if this project is already on GitHub, connect this copy to it instead of making a second one.')
     console.log(`${IN_TERMINAL}, in this folder, run: git remote add origin <the project's GitHub address>, then run /winston:init again. If it is not on GitHub yet, go ahead with the plan below.`)
   }
-  console.log(`To choose a different setup, type in this chat: !winston init --mode ${MODES.filter((m) => m !== sit.mode).join(' or --mode ')}\n`)
+  console.log(`To choose a different setup, ${inChat(`winston init --mode ${MODES.filter((m) => m !== sit.mode).join(' (or --mode ')})`)}\n`)
 }
 
 /** join: the repo's setup is someone else's. Report; write nothing outside this machine. */
@@ -1591,7 +1618,7 @@ function join_(cwd, sit, yes) {
     const shown = sit.root.startsWith(homedir() + '/') ? `~${sit.root.slice(homedir().length)}` : sit.root
     const plan = `set launcher.repo to ${shown} in ${userPath} (the session launchers open that checkout)`
     if (!yes) {
-      console.log(`\nOn this computer, init would:\n  - ${plan}\n\nNothing has changed yet. To go ahead, type in this chat: !winston init --mode join --yes`)
+      console.log(`\nOn this computer, init would:\n  - ${plan}\n\nNothing has changed yet. To go ahead, ${inChat('winston init --mode join --yes')}`)
     } else {
       mkdirSync(dirname(userPath), { recursive: true })
       writeFileSync(userPath, JSON.stringify({ ...layers.user.data, launcher: { ...layers.user.data.launcher, repo: shown } }, null, 2) + '\n')
@@ -1761,7 +1788,7 @@ function bootstrap(cwd, sit, opts) {
 /** new and adopt: build what is missing. With a config already here, that config is the plan. */
 function setup(cwd, sit, opts) {
   if (opts.mode === 'adopt' && !sit.hasConfig && !(sit.root && sit.hasCommits && sit.origin)) {
-    console.log(`adopt is for a project that already has saved history and is on GitHub, and ${sit.why}. For a new project: !winston init --mode new   (or just /winston:init, which picks the right setup)`)
+    console.log(`adopt is for a project that already has saved history and is on GitHub, and ${sit.why}. For a new project, ${useSkill('init')}: it picks the right setup`)
     return 1
   }
   const boot = sit.hasConfig ? null : bootstrap(cwd, sit, opts)
@@ -1771,7 +1798,7 @@ function setup(cwd, sit, opts) {
     console.log(`  Recommended: --board ${pick.owner}/${pick.number}   ${pick.title}   (${boot.why})`)
     for (const b of rest) console.log(`  --board ${b.owner}/${b.number}   ${b.title}`)
     console.log('  --board new   make a new board instead')
-    console.log(`\nNothing has changed yet. To plan with the recommended board, type in this chat: ${applyCommand({ ...opts, board: `${pick.owner}/${pick.number}`, yes: false })}`)
+    console.log(`\nNothing has changed yet. To plan with the recommended board, ${applyCommand({ ...opts, board: `${pick.owner}/${pick.number}`, yes: false })}`)
     return opts.yes ? 2 : 0
   }
   const list = checks(cwd, boot?.planned, true, opts.triage)
@@ -1827,7 +1854,7 @@ function setup(cwd, sit, opts) {
     printMaybe(list)
     printOwnerSteps(list)
     printNotes(list, fixes.map((c) => c.fix))
-    if (plans.length) console.log(`\nNothing has changed yet. To go ahead, type in this chat: ${applyCommand({ ...opts, yes: true })}   (safe to run again: steps already done are skipped, and nothing existing is overwritten)`)
+    if (plans.length) console.log(`\nNothing has changed yet. To go ahead, ${applyCommand({ ...opts, yes: true })}   (safe to run again: steps already done are skipped, and nothing existing is overwritten)`)
     return 0
   }
 
@@ -1871,15 +1898,17 @@ function setup(cwd, sit, opts) {
 
 /** The init command that plans or applies exactly what this run planned, flags and all. */
 function applyCommand(opts) {
-  const flags = ['mode', 'board', 'integration', 'owner', 'repo', 'triage'].filter((k) => opts[k] !== undefined).map((k) => `--${k} ${/[\s'"$`\\]/.test(opts[k]) ? JSON.stringify(opts[k]) : opts[k]}`)
-  return ['!winston init', ...flags, ...(opts.public ? ['--public'] : []), ...(opts.yes ? ['--yes'] : [])].join(' ')
+  // Single quotes, so nothing in a value (a $, a backtick) is expanded by the shell.
+  const flags = ['mode', 'board', 'integration', 'owner', 'repo', 'triage'].filter((k) => opts[k] !== undefined).map((k) => `--${k} ${/^[\w./@:+-]+$/.test(opts[k]) ? opts[k] : shq(opts[k])}`)
+  return inChat(['winston init', ...flags, ...(opts.public ? ['--public'] : []), ...(opts.yes ? ['--yes'] : [])].join(' '))
 }
 
 function init(cwd, opts) {
   const sit = situation(cwd)
+  if (HARNESS_LEGEND) console.log(HARNESS_LEGEND)
   // A folder outside git that is no project (the home folder, a folder of projects) is
   // never planned as a new one: say where to go instead.
-  if (sit.unsuitable && (!opts.mode || opts.mode === 'new')) {
+  if (sit.unsuitable && opts.mode !== 'join') {
     console.log(`${WRONG_FOLDER}\n(Winston did not use ${cwd}: ${sit.unsuitable}.)`)
     return 1
   }

@@ -14,11 +14,14 @@ overwrites a file of theirs, production deploys and other gated actions, and sec
 chat) with a one-line plain explanation and the recommended answer first, marked
 (Recommended).
 
-Whenever you give the person a command to type, say where: a `winston` command goes in
-this Claude Code chat with `!` in front (`!winston permissions --apply`), because the
-plugin's commands are not on a normal Terminal's PATH; `gh`, `claude setup-token` and
-`brew` go in the Terminal app. On macOS also put the exact text on the clipboard with
-`pbcopy` and say so.
+Whenever you give the person a command to type, say where. In Claude Code a `winston`
+command goes in the chat with `!` in front (`!winston permissions --apply`), because the
+plugin's commands are not on a normal Terminal's PATH, and a skill is its slash command
+(`/winston:init`). In Codex there is neither: tell the person to ask Codex to run
+`winston ...`, and to use the `winston:<name>` skill by name. The CLI's own output already
+uses the form for the app it runs in (both forms when it cannot tell); relay it as printed.
+`gh`, `claude setup-token` and `brew` go in the Terminal app. On macOS also put the exact
+text on the clipboard with `pbcopy` and say so.
 
 It runs in five steps.
 
@@ -180,7 +183,7 @@ It runs in five steps.
 some of the Claude Code allow rules a Winston run uses, so those actions would prompt
 mid-run. Explain it in one line ("lets Winston run everyday git and GitHub commands without
 asking you each time, while still blocking risky ones"), then give the one command for
-them to type in this chat, `!winston permissions --apply`, and put it on the clipboard.
+them to type in this chat, `!winston permissions --apply` (in Codex: ask Codex to run `winston permissions --apply`), and put it on the clipboard.
 The rules always go in the project's own settings; never ask which scope. Never run
 `--apply` yourself or edit a settings file to grant yourself a permission: Claude is not
 allowed to grant itself permissions. It writes only the project's `.claude/settings.json`:
@@ -239,12 +242,19 @@ status the user must turn into a decision. In particular:
   approval; write access alone is not authority), every existing check passes, and the
   merge needs no bypass. Never use `gh pr merge --admin` or any other bypass of branch
   protection or required reviews.
-- **A merge into the production branch is a production deploy** wherever merges there
-  deploy (`deployGate` configured: every config init writes one). Then
-  init does not merge on its own authority: it uses the deploy gate's approval phrase when
-  the owner has given it, and otherwise asks once in a question box. Never merge silently.
-- **When init may not merge,** ask once in a question box with "Review and merge it" first,
-  or give the plain command `gh pr merge <n> --merge`, which is also put on the clipboard.
+- **A merge into the production branch is gated.** Every config init writes has a deploy
+  gate (`deployGate`, phrase `approve production deploy` unless the config names another),
+  so the setup PR into the production branch counts as a production deploy whether or not
+  merges there deploy anything. The deploy-gate hook blocks `gh pr merge` until the owner
+  **types** the phrase as their own prompt in this session; a question-box answer does not
+  open it, and you never write its marker. So, once the review and checks allow a merge,
+  offer the owner two ways, in one plain message: type `approve production deploy` (show the
+  exact phrase) and you merge, or merge it themselves: in the browser on the PR page, or in
+  the Terminal app with `gh pr merge <n> --merge` (give the line with the real number, and
+  put it on the clipboard). Never merge silently, and never try to get past the gate.
+- **When init may not merge** for another reason (no merge authority, a failing check),
+  give the plain command `gh pr merge <n> --merge`, also put on the clipboard, or the PR
+  link to merge in the browser, and say what was missing.
 - **A `processDocs` entry** in `.winston/config.json` that names a file that does not exist:
   if the file is absent from the repo and from the default branch's history (`git log
   --all -- <path>` is empty), init removes that one entry and says which. If the file

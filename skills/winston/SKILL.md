@@ -271,7 +271,7 @@ In order:
    decision, gated action, permission, and known possible stop. Summarize the decisions
    before asking them, so the owner can correct the shape of the run before answering. Where
    step 7 found rules to add, show them here too, as one step for the owner: the single
-   command `!winston permissions --apply` (with the `--add` rules from step 7), which the
+   command `!winston permissions --apply` (in Codex: ask Codex to run `winston permissions --apply`) (with the `--add` rules from step 7), which the
    owner types themselves in this chat (the plugin's `winston` is not on a normal
    Terminal's PATH); put it on the clipboard too and say so. It adds the missing
    rules to `permissions.allow` in the project's `.claude/settings.json`, and a short

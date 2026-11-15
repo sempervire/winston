@@ -62,7 +62,9 @@ parallel worktree lanes, merge one PR at a time, verify, and report.
    it off).
 
 `winston` commands work inside Claude Code: in the chat, type them with `!` in front
-(`!winston doctor`). The plugin's commands are not on a normal Terminal window's PATH.
+(`!winston doctor`). The plugin's commands are not on a normal Terminal window's PATH. In
+Codex, ask Codex to run `winston ...`, and to use a skill such as `winston:init` by name;
+Winston's own output uses the form for the app it runs in.
 
 Then `/winston` starts a session from the board's Ready column. See [Commands](#commands).
 
@@ -193,11 +195,15 @@ shows a tip, not a problem, until they are tailored.
 So that a run does not stop on permission prompts, `winston permissions` lists the Claude
 Code allow rules Winston runs use in the repo and which the project's
 `.claude/settings.json` lacks. The owner types `!winston permissions --apply` once in the
-Claude Code chat: it adds the missing rules to `permissions.allow`, and to
+Claude Code chat (in Codex: asks Codex to run `winston permissions --apply`): it adds the
+missing rules to `permissions.allow`, and to
 `permissions.deny` a short list for what an allow pattern cannot leave out (force pushes,
 pushes to the production branch, PR approvals, forced deletions; deny wins over allow). It
 prints what it added and never removes or loosens an existing rule. Allow rules never
-clear deny or ask rules, hooks, production approval or secret grants.
+clear deny or ask rules, hooks, production approval or secret grants. Because every config
+init writes has a deploy gate, the list includes `gh pr merge`: Winston merges pull
+requests into the work branch without asking, and a merge into the production branch still
+waits for you to type `approve production deploy`.
 
 ## Contributing
 
