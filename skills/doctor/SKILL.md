@@ -70,3 +70,8 @@ Who does what:
 - **Winston version**: a newer version is out. Give the user the update line as it stands,
   command included: they run it and restart. Do not run the update yourself; it replaces
   the hooks and skills this session is running on.
+
+**Closing report: no item without an action.** Doctor is read-only and performs no fix:
+the only thing it does itself is rerun `winston doctor`. Each item is (a) already done (doctor says `done`), or (b) a concrete command, which, when it is one for the user to paste, is also put on the
+clipboard with `pbcopy` (macOS) with the report saying so, or (c) a pointer to the skill that
+does the fix ("/winston:init does this") as a question-box choice with the recommended option first. Never end on a bare statement such as "tell me if you want X".

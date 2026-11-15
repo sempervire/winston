@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { harnessOfRoot } from '../lib/update.mjs';
 import { loadConfig, loadLayers } from '../lib/config.mjs';
 import { coveredBy, DOCTOR_POINTER, firesOnNewIssue, permissionRules, policyBlanks, policyState, tokenUrl } from '../bin/winston';
 
@@ -244,7 +245,7 @@ const KANBAN_NO_LABELS = [{ ...KANBAN[0], fields: { nodes: [{ id: 'TITLE1', name
 const INTAKE = ['Auto-add to project', 'Item added to project'];
 // Recent issues with their project events: [number, [[type, actor, board owner, board number], ...]].
 const BOT = 'github-project-automation';
-const timelineJson = (issues) => JSON.stringify({ data: { repository: { issues: { nodes: issues.map(([number, events]) => ({ number, timelineItems: { nodes: events.map(([type, login, owner, n]) => ({ __typename: type === 'add' ? 'AddedToProjectV2Event' : 'ProjectV2ItemStatusChangedEvent', actor: { login }, project: { number: n, owner: { login: owner } } })) } })) } } } });
+const timelineJson = (issues) => JSON.stringify({ data: { repository: { issues: { nodes: issues.map(([number, events]) => ({ number, timelineItems: { nodes: events.map(([type, login, owner, n]) => ({ __typename: type === 'add' ? 'AddedToProjectV2Event' : 'ProjectV2ItemStatusChangedEvent', actor: { login }, project: { number: n, title: `Project ${n}`, owner: { login: owner } } })) } })) } } } });
 const linkedJson = (boards) => JSON.stringify({ data: { repository: { projectsV2: { nodes: boards.map(([login, number, title]) => ({ number, title, closed: false, owner: { login } })) } } } });
 
 // An existing repo: one commit holding AGENTS.md on main, pushed to a bare origin.
@@ -334,7 +335,9 @@ test('init --mode new creates the repo, both branches, the board and the config,
   assert.match(plan.stdout, /Add the labels triage uses to rate each issue: risk: low/);
   assert.match(plan.stdout, /Save Winston's settings for this project \(\.winston\/config\.json\): releases from main, work lands on staging first, uses the new board\. Merging into main will need you to type "approve production deploy" in the session first/, 'repo-relative paths, plain words, and the default deploy gate stated');
   assert.doesNotMatch(plan.stdout, /process docs none found|No deploy gate/);
-  assert.doesNotMatch(plan.stdout, new RegExp(s.repo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'no absolute paths into the repo');
+  // The one absolute path is the cd that starts the paste-ready command that lands the files.
+  assert.doesNotMatch(plan.stdout.replaceAll(`cd '${s.repo}'`, ''), new RegExp(s.repo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'no absolute paths into the repo');
+  assert.match(plan.stdout, /\nNote: These files only start working once they are saved to main on GitHub [^\n]*: \.winston\/config\.json, \.github\/workflows\/set-issue-phase\.yml, TRIAGE\.md\. Next: \/winston:init asks in a question box \(recommended: yes\)/, 'one note for every file, including the config the phase step changes after the first commit');
   assert.doesNotMatch(plan.stdout, /Add .*triage-on-new-issue\.yml/, 'the first commit writes the workflow; it is not planned twice');
   assert.match(plan.stdout, /In the browser[^]*open the new board's Workflows page, choose "Auto-add to project"/);
   assert.doesNotMatch(plan.stdout, /set Status to New/, 'a new project already has "Item added" on, and init points it at New');
@@ -364,7 +367,7 @@ test('init --mode new creates the repo, both branches, the board and the config,
   assert.match(made.stdout, /\nNext: \/winston:doctor to see what's left\.\n$/);
   // The board is brand new and has no issues yet, so the "off" from the API cannot be told
   // apart from "on but not yet proven" (#45): not a required step, just an optional one.
-  assert.match(made.stdout, /Could not confirm \(may already be on; optional, in the browser\):\n {2}- board auto-adds new issues: open https:\/\/github\.com\/users\/pat\/projects\/7\/workflows, choose "Auto-add to project", click Edit, pick this repository and set the filter to is:issue/);
+  assert.match(made.stdout, /Could not confirm \(may already be on; optional, in the browser\):\n {2}- Board adds new issues: open https:\/\/github\.com\/users\/pat\/projects\/7\/workflows, choose "Auto-add to project", click Edit, pick this repository and set the filter to is:issue/);
 });
 
 test('init --mode adopt fits the config to the repo and adds to its board without replacing anything', (t) => {
@@ -382,7 +385,8 @@ test('init --mode adopt fits the config to the repo and adds to its board withou
   assert.match(plan.stdout, /Add the board columns Winston uses: New, In Progress, Verify, Verified, Done \(the board's existing columns stay as they are\)/);
   assert.match(plan.stdout, /Show labels on the cards of the board view: Pilot/);
   assert.match(plan.stdout, /Add a Priority field to the board/);
-  assert.match(plan.stdout, /Note: Commit \.winston\/config\.json and \.github\/workflows\/triage-on-new-issue\.yml to main/);
+  assert.match(plan.stdout, /Note: These files only start working once they are saved to main on GitHub \(GitHub runs workflows, and reads the settings they use, from there only\): \.winston\/config\.json, \.github\/workflows\/triage-on-new-issue\.yml, TRIAGE\.md\. Next: /);
+  assert.equal(plan.stdout.match(/\nNote: /g).length, 1, 'one note, not one per file');
   assert.match(plan.stdout, /Add TRIAGE\.md, the rules triage follows, filled in from these settings\. Winston's standard risk ratings come with it and work as they are/);
   assert.doesNotMatch(plan.stdout, /In the browser|By hand/, 'both intake workflows are on');
   assert.ok(!existsSync(join(s.repo, '.winston')));
@@ -447,7 +451,7 @@ test('with a config already here, init creates the integration branch it names w
   write({ integration: 'develop', production: 'release' });
   const wrong = s.cli(['init', '--mode', 'adopt']);
   assert.doesNotMatch(wrong.stdout, /Make the work branch/);
-  assert.match(wrong.stdout, /By hand:\n(\s+- [^\n]+\n)*\s+- Work branch on GitHub: develop is not on GitHub, and Winston makes it from the release branch, which must be on GitHub first/);
+  assert.match(wrong.stdout, /By hand \(each line says what to do next\):\n(\s+- [^\n]+\n)*\s+- Work branch on GitHub: develop is not on GitHub, and Winston makes it from the release branch, which must be on GitHub first/);
   assert.match(wrong.stdout, /- Release branch on GitHub: the settings name release as the release branch, and GitHub has no branch by that name: set branches\.production in \.winston\/config\.json/);
 });
 
@@ -597,8 +601,8 @@ test('a new issue gets the current phase\'s milestone: doctor reports hidden iss
   const made = s.cli(['init', '--mode', 'adopt', '--yes']);
   assert.equal(made.status, 0, made.stdout + made.stderr);
   assert.equal(config().phase, 'Pilot');
-  assert.match(made.stdout, /Note: Commit \.winston\/config\.json and \.github\/workflows\/set-issue-phase\.yml to main: GitHub runs the phase workflow from the default branch only/);
-  assert.match(plan.stdout, /Note: Commit .*set-issue-phase\.yml to main/);
+  assert.match(made.stdout, /Note: These files only start working once they are saved to main on GitHub [^\n]*: \.winston\/config\.json, \.github\/workflows\/set-issue-phase\.yml\. Next: /);
+  assert.match(plan.stdout, /Note: These files [^\n]*set-issue-phase\.yml/);
   assert.deepEqual(config().board, { owner: 'acme', number: 1 }, 'the rest of the config is as it was');
   assert.equal(readFileSync(wf, 'utf8'), readFileSync(join(ROOT, 'templates/set-issue-phase.yml'), 'utf8'));
   assert.match(s.calls(), /issue edit 7 --milestone Pilot\n[^]*issue edit 13 --milestone Pilot\n/);
@@ -613,7 +617,7 @@ test('a new issue gets the current phase\'s milestone: doctor reports hidden iss
   // The phase is one line: a milestone that is not open is the owner's to correct.
   write({ phase: 'Gone' });
   assert.match(s.cli(['doctor']).stdout, /^needs you\s+New issues join the current phase\s+— phase is "Gone", which is not an open milestone$/m);
-  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /By hand:\n\s+- New issues join the current phase: set "phase" in \.winston\/config\.json to the current milestone \(open: Pilot, Later\), or to false/);
+  assert.match(s.cli(['init', '--mode', 'adopt']).stdout, /By hand \(each line says what to do next\):\n\s+- New issues join the current phase: set "phase" in \.winston\/config\.json to the current milestone \(open: Pilot, Later\), or to false/);
 
   // Views filtered to several milestones: Winston picks the one GitHub lists first (the
   // nearest due date) and says so in the plan, rather than asking.
@@ -763,19 +767,19 @@ test('doctor checks the board\'s two intake workflows and the triage workflow\'s
   writeFileSync(join(s.tmp, 'timeline.json'), timelineJson([[9, []]]));
   const off = s.cli(['doctor']);
   assert.equal(off.status, 1);
-  assert.match(off.stdout, /^needs you\s+board auto-adds new issues\s+— the board's "Auto-add to project" workflow is off/m);
-  assert.match(off.stdout, /^done\s+board sets Inbox on added items\s+— on; GitHub's API does not show which Status it sets$/m);
+  assert.match(off.stdout, /^needs you\s+Board adds new issues\s+— not on yet: the board's "Auto-add to project" workflow is off/m);
+  assert.match(off.stdout, /^done\s+Board puts new issues in Inbox$/m);
   assert.match(off.stdout, /^needs you\s+triage workflow secrets\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN missing/m);
   assert.match(off.stdout, /\d\. triage workflow secrets\n   Why: [^\n]+\n   Fix:\n     Recommended: do this now \(about 5 minutes\)\. Without these two keys, Winston won't triage new issues on acme\/thing until you ask it to\.[^\n]*Missing: CLAUDE_CODE_OAUTH_TOKEN\.[^]*\n       1\. In the Terminal app, run: claude setup-token/);
-  assert.match(off.stdout, /\d\. board auto-adds new issues\n   Why: Without this a new issue never shows up on the board\.\n   Fix:\n     \/winston:init does this for you in the browser\. By hand: open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
-  assert.equal(off.stdout.match(/board auto-adds new issues/g).length, 2, 'once in the checklist, once under Needs you');
+  assert.match(off.stdout, /\d\. Board adds new issues\n   Why: Without this a new issue never shows up on the board\.\n   Fix:\n     Next: type \/winston:init and it does this for you in the browser\. To do it yourself: open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
+  assert.equal(off.stdout.match(/Board adds new issues/g).length, 2, 'once in the checklist, once under Needs you');
 
   writeFileSync(join(s.tmp, 'board.json'), boardJson({ options: ['Inbox', 'Ready', 'Verify', 'Verified'], workflows: INTAKE, views: KANBAN }));
   writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
   const on = s.cli(['doctor']);
-  assert.match(on.stdout, /^done\s+board auto-adds new issues$/m);
+  assert.match(on.stdout, /^done\s+Board adds new issues$/m);
   assert.match(on.stdout, /^done\s+triage workflow secrets\s+— GH_PAT set, CLAUDE_CODE_OAUTH_TOKEN set$/m);
-  assert.doesNotMatch(on.stdout, /\d\. (board auto-adds|board sets|triage workflow)/);
+  assert.doesNotMatch(on.stdout, /\d\. (Board adds|Board puts|triage workflow)/);
 });
 
 test('doctor takes the projects automation\'s events on this board as proof its intake runs, never another board\'s or a person\'s (#45)', (t) => {
@@ -793,30 +797,71 @@ test('doctor takes the projects automation\'s events on this board as proof its 
     [44, [['add', BOT, 'acme', 1], ['status', BOT, 'acme', 1], ['add', 'pat', 'acme', 6], ['status', 'pat', 'acme', 6], ['add', BOT, 'other', 6]]],
   ]));
   const elsewhere = s.cli(['doctor']);
-  assert.match(elsewhere.stdout, /^needs you\s+board auto-adds new issues\s+— the board's "Auto-add to project" workflow is off$/m);
-  assert.match(elsewhere.stdout, /\d\. board auto-adds new issues\n/);
+  assert.match(elsewhere.stdout, /^needs you\s+Board adds new issues\s+— not on yet: the board's "Auto-add to project" workflow is off$/m);
+  assert.match(elsewhere.stdout, /\d\. Board adds new issues\n/);
   // The automation's own event on this board is.
   writeFileSync(join(s.tmp, 'timeline.json'), timelineJson([[43, [['add', BOT, 'acme', 6]]], [44, [['add', BOT, 'acme', 6], ['status', BOT, 'acme', 6]]]]));
   const confirmed = s.cli(['doctor']);
-  assert.match(confirmed.stdout, /^done\s+board auto-adds new issues\s+— on \(confirmed by issue #44's timeline\)$/m);
-  assert.match(confirmed.stdout, /^done\s+board sets New on added items\s+— on; GitHub's API does not show which Status it sets$/m);
-  assert.doesNotMatch(confirmed.stdout, /In the browser|\d\. board (auto-adds|sets)/, 'confirmed by the bot: no browser step, required or optional');
+  assert.match(confirmed.stdout, /^done\s+Board adds new issues\s+— on \(confirmed by issue #44's timeline\)$/m);
+  assert.match(confirmed.stdout, /^done\s+Board puts new issues in New$/m);
+  assert.doesNotMatch(confirmed.stdout, /In the browser|\d\. Board (adds|puts)/, 'confirmed by the bot: no browser step, required or optional');
 
   // Control: a board whose API already says both are on (project 2 in #45) is unaffected,
   // and never asks the issue timeline at all.
   writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
   rmSync(join(s.tmp, 'gh-calls'));
   const already = s.cli(['doctor']);
-  assert.match(already.stdout, /^done\s+board auto-adds new issues$/m);
-  assert.doesNotMatch(s.calls(), /timelineItems/, 'both workflows already read as on: the timeline is never consulted');
+  assert.match(already.stdout, /^done\s+Board adds new issues$/m);
+  assert.match(s.calls(), /timelineItems/, 'the timeline is read even when both workflows are on, to look for another capturing project');
 
   // No issues at all yet: neither source can be trusted over the other, so doctor says so
   // rather than sending the owner to redo a step that may already be on.
   writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: ['Item added to project'], views: KANBAN }));
   rmSync(join(s.tmp, 'timeline.json'));
   const blind = s.cli(['doctor']);
-  assert.match(blind.stdout, /^could not check {2}board auto-adds new issues\s+— could not check — file one test issue and rerun doctor$/m);
-  assert.doesNotMatch(blind.stdout, /\d\. board auto-adds new issues/, 'not a required step: never counted as missing');
+  assert.match(blind.stdout, /^could not check {2}Board adds new issues\s+— could not check yet: there are no issues to look at\. File one test issue, then run \/winston:doctor again$/m);
+  assert.doesNotMatch(blind.stdout, /\d\. Board adds new issues/, 'not a required step: never counted as missing');
+});
+
+test('doctor names another project that auto-adds the repo\'s issues, ahead of the board\'s own workflows (#45)', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  mkdirSync(join(s.repo, '.winston'));
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ board: { owner: 'acme', number: 6 } }));
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: [], views: KANBAN }));
+  // Other project present: project 1 took the newest issues, board 6 took none.
+  writeFileSync(join(s.tmp, 'timeline.json'), timelineJson([[47, [['add', BOT, 'acme', 1], ['status', BOT, 'acme', 1]]], [48, [['add', BOT, 'acme', 1]]]]));
+  const other = s.cli(['doctor']);
+  assert.equal(other.status, 1);
+  assert.match(other.stdout, /^needs you\s+Another board also takes new issues \(project 1\)\s+— new issues \(#48, #47\) also went to project 1 "Project 1" through its Auto-add workflow, not only to board 6$/m);
+  assert.ok(other.stdout.indexOf('Another board also takes new issues (project 1)\n   Why') > 0 && other.stdout.indexOf('Another board also takes new issues (project 1)\n   Why') < other.stdout.indexOf('Board adds new issues\n   Why'), 'listed before the board\'s own workflows');
+  assert.match(other.stdout, /Fix:\n     Next: type \/winston:init and it does this for you in the browser\. To do it yourself: before turning on board 6's workflows, open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows/);
+  const plan = s.cli(['init', '--mode', 'adopt']);
+  assert.match(plan.stdout, /In the browser[^\n]*\n  - Another board also takes new issues \(project 1\): before turning on board 6's workflows, open https:\/\/github\.com\/users\/acme\/projects\/1\/workflows, choose "Auto-add to project", click Edit, remove this repository \(or turn the workflow off if this repository is its only one\), then Save\n  - Board adds new issues/);
+
+  // A project of another owner is named with its owner: numbers are owner-scoped.
+  writeFileSync(join(s.tmp, 'timeline.json'), timelineJson([[48, [['add', BOT, 'other-org', 6]]]]));
+  assert.match(s.cli(['doctor']).stdout, /^needs you\s+Another board also takes new issues \(other-org project 6\)\s+— new issues \(#48\) also went to other-org project 6 "Project 6"/m);
+
+  // None: only this board's own events, or none at all.
+  writeFileSync(join(s.tmp, 'timeline.json'), timelineJson([[47, [['add', BOT, 'acme', 6]]], [48, []]]));
+  assert.doesNotMatch(s.cli(['doctor']).stdout, /Another board also takes/);
+  // History that predates a fix is not flagged: board 6 has taken #50 since project 1 took #47.
+  writeFileSync(join(s.tmp, 'timeline.json'), timelineJson([[47, [['add', BOT, 'acme', 1]]], [50, [['add', BOT, 'acme', 6]]]]));
+  assert.doesNotMatch(s.cli(['doctor']).stdout, /Another board also takes/);
+  // A person adding to another project by hand is not an intake workflow.
+  writeFileSync(join(s.tmp, 'timeline.json'), timelineJson([[47, [['add', 'pat', 'acme', 1]]]]));
+  assert.doesNotMatch(s.cli(['doctor']).stdout, /Another board also takes/);
+
+  // The configured board already on: another project taking the newest issue too is still named.
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
+  writeFileSync(join(s.tmp, 'timeline.json'), timelineJson([[50, [['add', BOT, 'acme', 6]]], [51, [['add', BOT, 'acme', 6], ['add', BOT, 'acme', 1]]], [52, [['add', BOT, 'acme', 1], ['add', BOT, 'acme', 6]]]]));
+  const both = s.cli(['doctor']);
+  assert.match(both.stdout, /^done\s+Board adds new issues$/m);
+  assert.match(both.stdout, /^needs you\s+Another board also takes new issues \(project 1\)/m);
+  // ...and once the configured board has taken the newest issue alone, it is not.
+  writeFileSync(join(s.tmp, 'timeline.json'), timelineJson([[51, [['add', BOT, 'acme', 1], ['add', BOT, 'acme', 6]]], [52, [['add', BOT, 'acme', 6]]]]));
+  assert.doesNotMatch(s.cli(['doctor']).stdout, /Another board also takes/);
 });
 
 test('doctor says unknown, not missing, when it cannot list secrets, and flags a run of failed triage runs', (t) => {
@@ -943,7 +988,7 @@ test('doctor says when a newer Winston is out, with the command, and stays quiet
   latest('99.0.0');
   const old = s.cli(['doctor']);
   assert.match(old.stdout, new RegExp(`^needs you\\s+Winston version\\s+— ${have} installed, 99\\.0\\.0 available$`, 'm'));
-  assert.match(old.stdout, /\d\. Winston version\n   Why: [^\n]+\n   Fix:\n     To update, run `claude plugin marketplace update winston && claude plugin update winston@winston`, then restart Claude Code[^\n]*\n     Winston never updates itself/);
+  assert.match(old.stdout, /\d\. Winston version\n   Why: [^\n]+\n   Fix:\n     To update, follow the line for the app you use Winston in:\n       Claude Code: run `claude plugin marketplace update winston && claude plugin update winston@winston`, then restart Claude Code[^\n]*\n       Codex: run `codex plugin marketplace upgrade winston`, then `codex plugin add winston@winston`, and start a new Codex session\.\n     Winston never updates itself/);
   assert.doesNotMatch(s.calls(), /plugin update/, 'doctor never updates');
   assert.equal(s.cli(['doctor', '--fix']).status, 1, 'an unknown flag is refused');
   // GitHub is asked at most once a day: a new answer there is not seen until the cache ages out.
@@ -953,10 +998,28 @@ test('doctor says when a newer Winston is out, with the command, and stays quiet
   assert.match(s.cli(['doctor']).stdout, /^done\s+Winston version/m, 'a day later it asks again');
   assert.equal(old.status, unknown.status, 'an old Winston is reported, never a failed check');
 
+  // From a copy under Codex's plugin cache, doctor shows Codex's steps alone, and the next step runs both commands.
+  latest('99.0.0');
+  const home = join(s.tmp, '.codex/plugins/cache/winston/winston/0.0.1');
+  cpSync(ROOT, home, { recursive: true, filter: (src) => !/\/(\.git|\.claude\/worktrees|node_modules)$/.test(src) });
+  const codex = spawnSync(process.execPath, [join(home, 'bin/winston'), 'doctor'], { cwd: s.repo, env: s.env, encoding: 'utf8' }).stdout;
+  assert.match(codex, /Fix:\n     To update, run `codex plugin marketplace upgrade winston`, then `codex plugin add winston@winston`, and start a new Codex session\.\n     Winston never updates itself/);
+  assert.doesNotMatch(codex, /claude plugin/);
   latest('0.0.1');
   assert.match(s.cli(['doctor']).stdout, /^done\s+Winston version/m, 'an older "latest" is not an update');
   latest('not-a-version; rm -rf');
   assert.match(s.cli(['doctor']).stdout, /^could not check\s+Winston version/m, 'a manifest that is not a version is ignored');
+});
+
+test('harnessOfRoot tells a Codex install, a Claude install and a dev checkout apart', (t) => {
+  assert.equal(harnessOfRoot('/Users/x/.codex/plugins/cache/winston/winston/1.2.3'), 'codex');
+  assert.equal(harnessOfRoot('/Users/x/.claude/plugins/cache/winston/winston/1.2.3'), 'claude');
+  assert.equal(harnessOfRoot('/Users/x/Developer/winston'), null, 'a dev checkout is neither');
+  const dir = mkdtempSync(join(tmpdir(), 'winston-harness-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  assert.equal(harnessOfRoot(dir), null);
+  writeFileSync(join(dir, '.codex-marketplace-install.json'), '{}');
+  assert.equal(harnessOfRoot(dir), 'codex', 'the marker file Codex writes is enough');
 });
 
 test('a policy has triage rules when a heading names triage or it carries a risk tier', (t) => {
@@ -1055,7 +1118,7 @@ test('doctor flags a policy with no triage rules; init writes a starter, repoint
   // An existing TRIAGE.md without rules is the owner's to fill in: never overwritten.
   writeFileSync(join(s.repo, 'TRIAGE.md'), 'notes to self\n');
   const kept = s.cli(['init', '--mode', 'adopt', '--yes']);
-  assert.match(kept.stdout, /By hand:\n\s+- Triage rules: TRIAGE\.md exists and has no triage rules, and Winston does not overwrite your files: ask Claude/);
+  assert.match(kept.stdout, /By hand \(each line says what to do next\):\n\s+- Triage rules: TRIAGE\.md exists and has no triage rules, and Winston does not overwrite your files: ask Claude/);
   assert.equal(readFileSync(join(s.repo, 'TRIAGE.md'), 'utf8'), 'notes to self\n');
 });
 
@@ -1318,6 +1381,22 @@ test('every stop on a missing prerequisite points at /winston:doctor', (t) => {
   assert.match(noGh.stderr, /^Winston can't reach GitHub: the GitHub command-line tool \(gh\) is not signed in\. In the Terminal app, run: gh auth login, then: gh auth refresh -s project\. Then run \/winston:init again\.\n$/);
   assert.match(s.cli(['init', '--mode', 'join']).stdout, /run \/winston:init and Winston will set it up for you\.\n$/);
   assert.match(s.cli(['permissions'], s.tmp).stderr, /is not a project that uses git[^\n]*Open Claude Code in your project's folder and try again\.\n$/);
+});
+
+test('skills with a closing report carry the no-bare-statement rule (#52)', () => {
+  const flat = (f) => readFileSync(join(ROOT, 'skills', f, 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  for (const skill of ['init', 'doctor', 'handoff']) {
+    const t = flat(skill);
+    assert.ok(t.includes('Closing report') && t.includes('no item without an action') || t.includes('Closing report rule'), skill);
+    assert.match(t, /already done/, skill);
+    assert.match(t, /pbcopy/, skill);
+    assert.match(t, /question-box choice with the recommended option first/, skill);
+  }
+  assert.doesNotMatch(flat('init'), /Relay it as it stands/);
+  assert.match(flat('init'), /Never use `gh pr merge --admin`/);
+  assert.match(flat('init'), /gh pr merge <n> --merge/);
+  assert.match(flat('init'), /production deploy/);
+  assert.match(flat('doctor'), /read-only and performs no fix/);
 });
 
 test('the token link fills in what GitHub documents, by who owns the board', () => {

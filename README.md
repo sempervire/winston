@@ -186,6 +186,12 @@ pushes to the production branch, PR approvals, forced deletions; deny wins over 
 prints what it added and never removes or loosens an existing rule. Allow rules never
 clear deny or ask rules, hooks, production approval or secret grants.
 
+## Contributing
+
+This repository is itself managed by Winston: its `.winston/config.json` and board are
+shared, so a contributor types `/winston:init` in Claude Code in a clone (it sees the config and joins)
+to check their access and machine before working on it.
+
 ## Updating
 
 Winston says when a newer version is out: a notice at the start of a session (it asks

@@ -44,7 +44,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { fileURLToPath } from 'node:url'
 import { doctorResultPath, loadLayers, repoRoot, winstonHome } from '../lib/config.mjs'
 import { recordTitle } from '../hooks/session-title.mjs'
-import { installedVersion, installScope, newer, updateSteps } from '../lib/update.mjs'
+import { harnessOfRoot, installedVersion, installScope, newer, updateSteps } from '../lib/update.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -233,14 +233,14 @@ const openMilestones = (root) => run('gh', ['api', '--method', 'GET', 'repos/{ow
 
 // The projects automation's login as GraphQL gives it (REST adds "[bot]").
 const INTAKE_BOT = 'github-project-automation'
-const INTAKE_QUERY = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ issues(last:5){ nodes{ number
+const INTAKE_QUERY = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ issues(last:10){ nodes{ number
   timelineItems(first:100,itemTypes:[ADDED_TO_PROJECT_V2_EVENT,PROJECT_V2_ITEM_STATUS_CHANGED_EVENT]){ nodes{ __typename
-    ... on AddedToProjectV2Event{ actor{ login } project{ number owner{ ... on User{ login } ... on Organization{ login } } } }
-    ... on ProjectV2ItemStatusChangedEvent{ actor{ login } project{ number owner{ ... on User{ login } ... on Organization{ login } } } } } } } } } }`
+    ... on AddedToProjectV2Event{ actor{ login } project{ number title owner{ ... on User{ login } ... on Organization{ login } } } }
+    ... on ProjectV2ItemStatusChangedEvent{ actor{ login } project{ number title owner{ ... on User{ login } ... on Organization{ login } } } } } } } } } }`
 
 /**
  * Whether this board's two intake workflows have actually run recently, read from the
- * repo's five most recent issues: an "added to project" or "status changed" event made by
+ * repo's ten most recent issues: an "added to project" or "status changed" event made by
  * the projects automation ON THIS BOARD. The board is what makes it evidence. An issue
  * timeline also carries the events of every other project that took the issue, and of a
  * person or agent adding it by hand, and neither says anything about this board (#45: an
@@ -254,7 +254,7 @@ function intakeFromTimeline(root, owner, number) {
   try {
     issues = JSON.parse(r.out).data.repository.issues.nodes.filter(Boolean)
   } catch {}
-  const result = { checked: issues.length > 0, addedToProject: null, statusChanged: null }
+  const result = { checked: issues.length > 0, addedToProject: null, statusChanged: null, others: [] }
   const here = (e) => e?.actor?.login?.startsWith(INTAKE_BOT) && e.project?.number === number && e.project?.owner?.login?.toLowerCase() === String(owner).toLowerCase()
   // Newest first, so the detail names the most recent proof.
   for (const issue of [...issues].sort((a, b) => b.number - a.number)) {
@@ -263,6 +263,29 @@ function intakeFromTimeline(root, owner, number) {
       if (e.__typename === 'ProjectV2ItemStatusChangedEvent') result.statusChanged ??= issue.number
     }
   }
+  // Another project's intake automation taking this repo's issues (#45). Only an issue
+  // NEWER than the latest one this board took ALONE counts: once the board's own intake
+  // runs cleanly, anything older on another project is history from before the fix. An
+  // issue both boards took is not clean, so a repo still captured twice keeps being
+  // flagged; the cost is that right after a fix, the last double-captured issue still
+  // shows until the next issue is filed. The window is the ten most recent issues, so a
+  // repo that no longer files into the other project stops being flagged as they arrive.
+  const bot = (e) => e?.__typename === 'AddedToProjectV2Event' && e.actor?.login?.startsWith(INTAKE_BOT)
+  const clean = (i) => { const ev = (i.timelineItems?.nodes ?? []).filter(bot); return ev.some(here) && !ev.some((e) => !here(e)) }
+  const floor = Math.max(0, ...issues.filter(clean).map((i) => i.number))
+  const seen = new Map()
+  for (const issue of [...issues].sort((a, b) => b.number - a.number)) {
+    if (issue.number <= floor) continue
+    for (const e of issue.timelineItems?.nodes ?? []) {
+      if (!bot(e) || here(e)) continue
+      const owner2 = e.project?.owner?.login
+      if (!owner2 || !Number.isInteger(e.project?.number)) continue
+      const key = `${owner2.toLowerCase()}/${e.project.number}`
+      if (!seen.has(key)) seen.set(key, { owner: owner2, number: e.project.number, title: e.project.title || '', issues: [] })
+      seen.get(key).issues.push(issue.number)
+    }
+  }
+  result.others = [...seen.values()]
   return result
 }
 
@@ -945,7 +968,6 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
             fix: !done && {
               plan: `Put every new issue in the current phase, "${target}", so it shows on the board${chose}: ${set ? '' : `set "phase" in ${shownConfig}, and `}add ${shownPath(root, phaseWf)}. To move to the next phase later, change that one "phase" line`,
               commit: [configPath, phaseWf],
-              note: `Commit ${shownConfig} and ${shownPath(root, phaseWf)} to ${config.branches?.production ?? 'the default branch'}: GitHub runs the phase workflow from the default branch only, and it reads the phase from the config there.`,
               run: () => {
                 if (!set) {
                   const data = JSON.parse(readFileSync(configPath, 'utf8'))
@@ -989,21 +1011,35 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
       const intake = (config.board.statuses ?? DEFAULT_STATUSES)[0]
       const enabled = (name) => (project.workflows?.nodes ?? []).some((w) => w?.enabled && (w.name === name || (name === 'Auto-add to project' && /^Auto-add(?! sub-issues)/.test(w.name))))
       const apiOn = { add: enabled('Auto-add to project'), status: enabled('Item added to project') }
-      const timeline = !planned?.newBoard && (!apiOn.add || !apiOn.status) ? intakeFromTimeline(root, owner, number) : null
+      // The timeline is read every time: besides settling a workflow the API calls off, it
+      // shows whether another project is taking this repo's new issues first (#45).
+      const timeline = !planned?.newBoard ? intakeFromTimeline(root, owner, number) : null
+      for (const o of timeline?.others ?? []) {
+        const there = `${boardUrl(o.owner, o.number)}/workflows`
+        const label = o.owner.toLowerCase() === String(owner).toLowerCase() ? `project ${o.number}` : `${o.owner} project ${o.number}`
+        const nums = o.issues.map((n) => `#${n}`).join(', ')
+        add({
+          name: `Another board also takes new issues (${label})`, state: 'missing',
+          detail: `new issues (${nums}) also went to ${label}${o.title ? ` "${o.title}"` : ''} through its Auto-add workflow, not only to board ${number}`,
+          board: true,
+          browser: true,
+          hand: `before turning on board ${number}'s workflows, open ${there}, choose "Auto-add to project", click Edit, remove this repository (or turn the workflow off if this repository is its only one), then Save`,
+        })
+      }
       const stateOf = (apiSays, botSays) => (apiSays || botSays ? 'ok' : timeline && !timeline.checked ? 'unknown' : 'missing')
       add({
-        name: 'board auto-adds new issues', state: stateOf(apiOn.add, timeline?.addedToProject),
+        name: 'Board adds new issues', state: stateOf(apiOn.add, timeline?.addedToProject),
         detail: apiOn.add ? '' : timeline?.addedToProject ? `on (confirmed by issue #${timeline.addedToProject}'s timeline)`
-          : timeline && !timeline.checked ? 'could not check — file one test issue and rerun doctor' : 'the board\'s "Auto-add to project" workflow is off',
+          : timeline && !timeline.checked ? 'could not check yet: there are no issues to look at. File one test issue, then run /winston:doctor again' : 'not on yet: the board\'s "Auto-add to project" workflow is off',
         board: true,
         browser: true,
         hand: `open ${page}, choose "Auto-add to project", click Edit, pick this repository and set the filter to is:issue, then click "Save and turn on workflow"`,
       })
       add({
-        name: `board sets ${intake} on added items`, state: stateOf(apiOn.status, timeline?.statusChanged),
-        detail: apiOn.status ? `on; GitHub's API does not show which Status it sets`
-          : timeline?.statusChanged ? `on (confirmed by issue #${timeline.statusChanged}'s timeline); GitHub's API does not show which Status it sets`
-          : timeline && !timeline.checked ? 'could not check — file one test issue and rerun doctor' : 'the board\'s "Item added to project" workflow is off',
+        name: `Board puts new issues in ${intake}`, state: stateOf(apiOn.status, timeline?.statusChanged),
+        detail: apiOn.status ? ''
+          : timeline?.statusChanged ? `on (confirmed by issue #${timeline.statusChanged}'s timeline)`
+          : timeline && !timeline.checked ? 'could not check yet: there are no issues to look at. File one test issue, then run /winston:doctor again' : 'not on yet: the board\'s "Item added to project" workflow is off',
         board: true,
         browser: true,
         hand: `open ${page}, choose "Item added to project", click Edit, under Set value choose Status: ${intake}, then click "Save and turn on workflow"`,
@@ -1051,11 +1087,11 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
     detail: policyIs === 'ok' ? policy : policyIs === 'outside' ? `triage.policy must be a file inside the repository, got: ${policy}` : policyIs === 'missing' ? `${policy} not found, so triage has no rules to follow` : `${policy} has no triage rules (no heading that names triage, no risk: low/medium/high tier), so triage would change nothing`,
     hand: `${DEFAULT_POLICY} exists and has no triage rules, and Winston does not overwrite your files: ask Claude to add Winston's starter rules to it (the starter: ${join(ROOT, 'templates', 'TRIAGE.md')})${policy === DEFAULT_POLICY ? '' : `, then set triage.policy to ${DEFAULT_POLICY} in ${shownConfig}`}`,
     fix: policyIs !== 'ok' && (starterIs === 'ok'
-      ? { plan: `Use the triage rules already in ${DEFAULT_POLICY}: set triage.policy to it in ${shownConfig} (${policy} is left as it is)`, run: repoint }
+      ? { plan: `Use the triage rules already in ${DEFAULT_POLICY}: set triage.policy to it in ${shownConfig} (${policy} is left as it is)`, commit: [configPath], run: repoint }
       : starterIs === 'missing' && {
         plan: `Add ${DEFAULT_POLICY}, the rules triage follows, filled in from these settings${andPoint}. Winston's standard risk ratings come with it and work as they are; Claude can tailor them to this project afterwards`,
         starter,
-        commit: [starter],
+        commit: policy === DEFAULT_POLICY ? [starter] : [starter, configPath],
         run: () => { writeStarterPolicy(starter, config); repoint() },
       }),
   })
@@ -1119,7 +1155,7 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
       conflict: { rivals, plans },
       fix: plans[choice] && {
         plan: plans[choice], run: runs[choice],
-        note: choice === 'replace' && `Commit the deletion of ${files.join(', ')} to ${config.branches?.production ?? 'the default branch'}: until then it still runs on every new issue.`,
+        note: choice === 'replace' && `Commit the deletion of ${files.join(', ')} to ${config.branches?.production ?? 'the default branch'}: until then it still runs on every new issue. Next: /winston:init asks in a question box (recommended: yes) and does this for you, or from any branch run: ${landOnDefault(files, 'Remove auto-triage workflow', config.branches?.production, true)}`,
       },
     })
   }
@@ -1214,7 +1250,8 @@ const WHY = [
   [/^Current phase exists/, 'The board shows one phase (a GitHub milestone) at a time, so there must be one.'],
   [/^New issues join/, 'The board shows only the current phase, and a new issue starts with none, so without this it never appears.'],
   [/^Older issues in/, 'They are on the board but hidden from the view of the current phase.'],
-  [/^board (auto-adds|sets)/, 'Without this a new issue never shows up on the board.'],
+  [/^Another board also takes/, 'Another project capturing new issues means each one lands on two boards, or on the wrong one, and the board here never gets it cleanly.'],
+  [/^Board (adds|puts) new issues/, 'Without this a new issue never shows up on the board.'],
   [/^Triage labels/, 'Triage means Winston reads each new issue and rates how risky it is; it records that with these labels.'],
   [/^Triage rules: blanks/, 'Triage reads these lines as they stand, so a blank becomes part of the rule.'],
   [/^Triage rules/, 'Triage takes every rule from this file. Without rules a triage run finishes and changes nothing.'],
@@ -1242,6 +1279,26 @@ export function statusOf(c) {
 /** The slash command first, then the same step as a winston command typed in the chat. */
 const INIT_LINE = '/winston:init   (type it in this Claude Code chat. It shows its plan and changes nothing until you say yes)'
 
+/** Single-quote a path for a shell, escaping any quote inside it. */
+const shq = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`
+
+/**
+ * One command that puts files on the default branch, whatever branch is checked out and
+ * whatever local edits exist: it builds the commit in a temporary worktree cut from the
+ * remote default branch, so the user's own checkout is never switched or touched, and
+ * the pull request holds only these files. With `remove`, the files are deleted there
+ * instead of copied. It starts with a cd into the repository and a fetch.
+ */
+function landOnDefault(paths, message, production, remove = false) {
+  const root = repoRoot(process.cwd()) ?? process.cwd()
+  const rel = paths.map((p) => (isAbsolute(p) ? relative(root, p) : p)).filter((p) => p && !p.startsWith('..'))
+  const prod = production ? shq(production) : '"$(git symbolic-ref --short refs/remotes/origin/HEAD | cut -d/ -f2-)"'
+  const files = rel.map(shq).join(' ')
+  const branch = `winston-setup-${Date.now().toString(36)}`
+  const apply = remove ? `git -C "$T/w" rm -q -- ${files}` : `for f in ${files}; do mkdir -p "$T/w/$(dirname "$f")" && cp "$f" "$T/w/$f"; done`
+  return `cd ${shq(root)} && git fetch origin && P=${prod} && T=$(mktemp -d) && { git worktree add -b ${branch} "$T/w" "origin/$P" && ${apply} && git -C "$T/w" add -A && git -C "$T/w" commit -m ${shq(message)} && git -C "$T/w" push -u origin ${branch} && (cd "$T/w" && gh pr create --base "$P" --fill); git worktree remove --force "$T/w"; rmdir "$T"; }`
+}
+
 /** How to close an open item: { command } for one paste-ready command, and the lines to show. */
 function fixOf(c) {
   if (c.steps) {
@@ -1249,10 +1306,10 @@ function fixOf(c) {
     return { lines, ...lines.next }
   }
   if (c.ownerStep) return { command: '!winston permissions --apply', lines: [`${RULES_WHY_YOU}: ${inChat('winston permissions --apply')}`] }
-  if (c.command) return { command: c.command, lines: c.fixLines }
+  if (c.command || c.fixLines) return { command: c.command, lines: c.fixLines }
   if (c.unconfigured) return { command: '/winston:init', lines: [INIT_LINE] }
   if (c.fix) return { command: '/winston:init', lines: [`${INIT_LINE}. It will: ${c.fix.plan}`] }
-  if (c.browser) return { lines: [`/winston:init does this for you in the browser. By hand: ${c.hand}`] }
+  if (c.browser) return { lines: [`Next: type /winston:init and it does this for you in the browser. To do it yourself: ${c.hand}`] }
   return { lines: [c.problem || c.hand || c.detail] }
 }
 
@@ -1265,7 +1322,7 @@ function printSteps(items) {
     for (const c of browser) console.log(`  - ${c.name}: ${c.hand}`)
   }
   if (hand.length) {
-    console.log('\nBy hand:')
+    console.log('\nBy hand (each line says what to do next):')
     for (const c of hand) console.log(`  - ${c.name}: ${c.hand || c.detail}`)
   }
 }
@@ -1297,11 +1354,21 @@ function versionCheck(cwd) {
   const base = { name: 'Winston version', required: false, scope: 'you' }
   if (!latest) return { ...base, state: 'unknown', detail: `${have} installed; could not reach GitHub to check for a newer one` }
   if (!newer(latest, have)) return { ...base, state: 'ok', detail: `${have}, the latest` }
-  const steps = updateSteps('claude', installScope(cwd))
+  const harness = harnessOfRoot(ROOT)
+  const claude = updateSteps('claude', installScope(cwd))
+  const codex = updateSteps('codex')
+  const restart = 'Winston never updates itself: an update replaces hooks and skills and needs a restart.'
+  const out = { ...base, state: 'off', detail: `${have} installed, ${latest} available`, problem: `update to ${latest}` }
+  if (harness) {
+    // Codex's update is two commands; the one command offered as the next step runs both.
+    const command = harness === 'codex' ? [...codex.matchAll(/`([^`]+)`/g)].map((m) => m[1]).join(' && ') : claude.match(/`([^`]+)`/)?.[1]
+    return { ...out, command, fixLines: [`To update, ${harness === 'codex' ? codex : claude}.`, restart] }
+  }
+  // Cannot tell which app installed this copy: show both, and leave `command` unset so the
+  // "Next step" line points at these lines rather than naming one app's command.
   return {
-    ...base, state: 'off', detail: `${have} installed, ${latest} available`, problem: `update to ${latest}`,
-    command: steps.match(/`([^`]+)`/)?.[1],
-    fixLines: [`To update, ${steps}.`, 'Winston never updates itself: an update replaces hooks and skills and needs a restart.'],
+    ...out,
+    fixLines: ['To update, follow the line for the app you use Winston in:', `  Claude Code: ${claude}.`, `  Codex: ${codex}.`, restart],
   }
 }
 
@@ -1606,7 +1673,8 @@ function bootstrap(cwd, sit, opts) {
   }
 
   const notes = []
-  if (sit.hasCommits) notes.push({ withWorkflow: `Commit ${shown(configPath)} and ${shown(wf)} to ${production}: GitHub runs the triage workflow from the default branch only.`, without: `Commit ${shown(configPath)} to ${production}, so the setup is there for everyone who works in the repository.`, commit: { withWorkflow: [configPath, wf], without: [configPath] } })
+  // The files init writes into an existing repo, for the one note that lands them on the default branch.
+  if (sit.hasCommits) notes.push({ commit: { withWorkflow: [configPath, wf], without: [configPath] } })
   return { steps, notes, planned: { config, newBoard, noRepo, firstCommit: !sit.hasCommits, slug } }
 }
 
@@ -1633,7 +1701,22 @@ function setup(cwd, sit, opts) {
   const hand = missing(list).filter((c) => !c.fix)
   const printHand = printSteps
   // Winston's triage workflow is not written while another one waits on the owner's choice, or is kept.
-  const bootNotes = (l) => (boot?.notes ?? []).map((n) => (typeof n === 'string' ? n : l.some((c) => c.conflict && (!c.fix || opts.triage === 'keep')) ? n.without : n.withWorkflow))
+  const production = (boot?.planned?.config ?? (() => { const l = loadLayers(cwd); return { ...l.user.data, ...l.repo.data } })()).branches?.production
+  // One note for every file that works only once it is on the default branch, with one
+  // command that lands them all; any other note after it. Winston's triage workflow is
+  // not among them while another one waits on the owner's choice, or is kept.
+  const printNotes = (l, done) => {
+    const held = l.some((c) => c.conflict && (!c.fix || opts.triage === 'keep'))
+    const paths = [...new Set([
+      ...(boot?.notes ?? []).flatMap((n) => (held ? n.commit.without : n.commit.withWorkflow)),
+      ...done.flatMap((f) => f.commit ?? []),
+    ])]
+    if (paths.length) {
+      const root = repoRoot(cwd) ?? cwd
+      console.log(`\nNote: These files only start working once they are saved to ${production ?? 'the default branch'} on GitHub (GitHub runs workflows, and reads the settings they use, from there only): ${paths.map((f) => shownPath(root, f)).join(', ')}. Next: /winston:init asks in a question box (recommended: yes) and does this for you, or from any branch run: ${landOnDefault(paths, 'Set up Winston', production)}`)
+    }
+    for (const n of done.filter((f) => f.note && !f.commit).map((f) => f.note)) console.log(`\nNote: ${n}`)
+  }
   // A second triage workflow is the owner's choice, never a guess: asked until answered.
   const printChoice = (l) => {
     const c = l.find((x) => x.conflict && !x.fix)
@@ -1659,7 +1742,7 @@ function setup(cwd, sit, opts) {
     printChoice(list)
     printMaybe(list)
     printOwnerSteps(list)
-    for (const n of [...bootNotes(list), ...fixes.map((c) => c.fix.note).filter(Boolean)]) console.log(`\nNote: ${n}`)
+    printNotes(list, fixes.map((c) => c.fix))
     if (plans.length) console.log(`\nNothing has changed yet. To go ahead, type in this chat: ${applyCommand({ ...opts, yes: true })}   (safe to run again: steps already done are skipped, and nothing existing is overwritten)`)
     return 0
   }
@@ -1680,11 +1763,11 @@ function setup(cwd, sit, opts) {
   const after = boot ? checks(cwd, null, true, opts.triage) : list
   let failed = 0
   let written = null
-  const ranNotes = []
+  const ran = []
   for (const c of fixable(after)) {
     try {
       c.fix.run()
-      if (c.fix.note) ranNotes.push(c.fix.note)
+      ran.push(c.fix)
       if (c.fix.starter) written = c.fix.starter
       console.log(`done     ${c.fix.plan}`)
     } catch (e) {
@@ -1697,7 +1780,7 @@ function setup(cwd, sit, opts) {
   printMaybe(after)
   if (written) printBlanks(written, policyBlanks(written))
   printOwnerSteps(after)
-  for (const n of [...bootNotes(after), ...ranNotes]) console.log(`\nNote: ${n}`)
+  printNotes(after, ran)
   console.log(`\n${failed ? `${failed} ${failed === 1 ? 'step' : 'steps'} failed; running it again retries only what is left. ` : ''}Next: /winston:doctor to see what's left.`)
   return failed ? 1 : 0
 }

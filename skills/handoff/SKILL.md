@@ -87,7 +87,9 @@ If `osascript` succeeds, report exactly:
 
 The user exits manually. Do no further task work, do not poll for the successor, and do not report that it started.
 
-If the environment is unsupported or preflight fails, print the full handoff prompt in chat. If `osascript` fails, report the error and print the full prompt; do not open a second tab automatically. A failure inside the tab prints its reason and decoded prompt there, including a dead predecessor, failed directory change, unavailable mode, timeout, or Claude start failure.
+If the environment is unsupported or preflight fails, print the full handoff prompt in chat. If `osascript` fails, report the error, print the full prompt, and end with the next action: the exact command `cd <project directory> && claude` with the full prompt put on the clipboard (the prompt via `pbcopy`, the command in the report) and the report saying so; do not open a second tab automatically. A failure inside the tab prints its reason and decoded prompt there, including a dead predecessor, failed directory change, unavailable mode, timeout, or Claude start failure.
+
+Closing report rule: each pending item left at the end is (a) already done, (b) a concrete command (one for the user to paste is also put on the clipboard with `pbcopy` on macOS, and the report says so), or (c) a question-box choice with the recommended option first. Anything this skill may do itself is done, not offered. Never end on a bare statement. When closeout reports a blocker, the report names the smallest action that clears it and asks in a question box whether to take it, recommended option first.
 
 ## 5. Codex behavior
 

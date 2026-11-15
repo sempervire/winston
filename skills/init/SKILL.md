@@ -73,19 +73,25 @@ It runs in five steps.
    no confirmation and no `--yes`.
 
 4. **Do the browser steps.** The output's **In the browser** list is the board's two intake
-   workflows, "Auto-add to project" and "Item added to project". Without them a new issue
-   never reaches the board at its intake status. GitHub's API cannot create, edit or enable
+   workflows, "Auto-add to project" and "Item added to project", and, ahead of them when
+   another project is capturing this repo's issues, a line naming that project. Without the
+   two workflows a new issue never reaches the board at its intake status, and while the
+   other project keeps its Auto-add on, each new issue also lands on it. GitHub's API cannot create, edit or enable
    a project workflow, so they are done on the board's Workflows page. They are part of
    the setup, not an afterthought: say so in the plan you confirm in step 3, and do not
    call the setup finished while `winston doctor` still lists them. In **join** they are
    the owner's; relay them and stop.
    - **With browser control** (Claude Code with Claude in Chrome: the
      `mcp__claude-in-chrome__*` tools): do them yourself, in a new tab, exactly as each
-     line says. Open the `/workflows` address given. For "Item added to project": select
+     line says, in the order listed. Open the `/workflows` address given. For the other
+     project's line ("Another board also takes new issues (project N)"): open that project's
+     `/workflows` page, select **Auto-add to project**, **Edit**, remove this repository
+     from it (or, if this repository is the only one it adds from, turn the workflow off),
+     **Save**. Touch no other project setting, and never delete the project. For "Item added to project": select
      it, **Edit**, under **Set value** choose the Status named, **Save and turn on
      workflow**. For "Auto-add to project": select it, **Edit**, pick this repository,
      replace the filter with `is:issue`, **Save and turn on workflow**. Touch nothing else
-     on the page, close the tab, then run `winston doctor` and show that both checks pass.
+     on the page, close the tab, then run `winston doctor` and show that these checks pass (the other-project line clears once its Auto-add no longer takes new issues, and can read as present until one more issue is filed).
      With chattr, claim `resource:chrome` first and release it after.
    - **The page shows GitHub's 404 or a Sign in link:** that Chrome is not signed in to
      GitHub, or is signed in as an account without access to the board. Ask the user to
@@ -104,10 +110,10 @@ It runs in five steps.
    them as bare facts or errors; say what to do about them, and always offer the next step.
    - **A note to commit the config and workflows:** the files only start working once they
      are saved to the default branch on GitHub. Say that in one plain sentence and make it
-     the recommended default: "I'll commit and push these now – OK?" in a question box,
-     with yes (Recommended) first. On yes, commit exactly the files the notes name, and
-     get them onto the default branch the way the repo's rules allow (a pull request into
-     it where pushing to it directly is blocked).
+     the recommended default: "I'll save these to GitHub now – OK?" in a question box,
+     with yes (Recommended) first. On yes, commit exactly the files the note names on a new
+     branch from the default branch, push it and open a pull request into it, using the
+     note's command; merging that PR follows the merge rule in the closing report below.
    - **`triage workflow secrets` under Needs you, or the Turn on automatic triage list:**
      this is part of Winston's standard setup, so recommend doing it now (about 5
      minutes): without it, Winston won't triage new issues until asked. "Later" is the
@@ -208,14 +214,43 @@ and writes `.github/workflows/set-issue-phase.yml`, which sets it on each new is
 once a day on any open issue with none; it needs no secret and never changes a milestone
 that is set. A second line sets the milestone on the open issues that have none now. Say
 in plain words that both only take effect once the workflow and the config are committed
-to the default branch, and offer to commit them. To move to the next phase the owner
-edits that one `phase` line. When the board's views show several milestones, the plan
-line names the one Winston picked (due soonest) and says so: relay that, and change
-`phase` only if the person says another is current. `"phase": false` means the owner
-chose to go without.
+to the default branch, and ask in a question box (recommended: commit them now). To move
+to the next phase the owner edits that one `phase` line. When the board's views show
+several milestones, the plan line names the one Winston picked (due soonest) and says so:
+relay that, and change `phase` only if the person says another is current. `"phase": false`
+means the owner chose to go without.
 
 Anything under **By hand** needs a person: access someone else grants, or a missing policy
-file. Relay it as it stands, with the next action it names.
+file. Do not relay it as a bare statement: say who must do it, then give the exact next
+action (the link to open and the fields to fill, or the command), and for a missing policy
+file offer to write the starter in a question box.
+
+**Closing report: no item without an action.** These actions are yours to take as the agent running this skill (the `winston` command only prints the plan). This covers step 5 and every "Left for
+you", "Note:" and "By hand" item. Each pending item at the end of the run is one of: (a)
+already done; (b) a concrete command, which, when it is one for the user to paste, is also
+put on the clipboard with `pbcopy` (macOS) with the report saying so; or (c) a question-box
+choice with the recommended option first. Anything init is authorized to do itself is
+simply done, not offered. Never end a line with "tell me if you want", "say if", or a
+status the user must turn into a decision. In particular:
+
+- **Setup PR.** init reviews a setup PR it opened (the review posted on the PR) and merges
+  it only when all of these hold: the owner has given merge authority explicitly (a
+  standing policy in the user's own instructions that names this repo, or this session's
+  approval; write access alone is not authority), every existing check passes, and the
+  merge needs no bypass. Never use `gh pr merge --admin` or any other bypass of branch
+  protection or required reviews.
+- **A merge into the production branch is a production deploy** wherever merges there
+  deploy (`deployGate` configured: every config init writes one). Then
+  init does not merge on its own authority: it uses the deploy gate's approval phrase when
+  the owner has given it, and otherwise asks once in a question box. Never merge silently.
+- **When init may not merge,** ask once in a question box with "Review and merge it" first,
+  or give the plain command `gh pr merge <n> --merge`, which is also put on the clipboard.
+- **A `processDocs` entry** in `.winston/config.json` that names a file that does not exist:
+  if the file is absent from the repo and from the default branch's history (`git log
+  --all -- <path>` is empty), init removes that one entry and says which. If the file
+  existed once or the name looks intended, ask once in a question box with "Remove the
+  entry" recommended. The config edit goes into the same setup commit or PR as the rest,
+  never straight onto the default branch.
 
 `winston init` is safe to run again: it shows what is left, skips what is done, and never
 overwrites a finished step. When it stops, its message names the cause and the next
