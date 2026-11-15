@@ -210,3 +210,18 @@ test('installed for the user but turned off: flagged, since turning it on would 
   assert.equal(r['separate chattr plugin'].state, 'ok');
   assert.equal(r['chattr plugin installed but off'].command, 'claude plugin uninstall chattr@winston');
 });
+
+test('a project install turned on in user settings still gets -s project; stale records elsewhere are not reported', (t) => {
+  const f = fixture(t);
+  const files = join(f.tmp, 'cache-chattr');
+  mkdirSync(files);
+  const elsewhere = join(f.tmp, 'Elsewhere');
+  mkdirSync(elsewhere);
+  f.write('.claude/plugins/installed_plugins.json', JSON.stringify({ version: 2, plugins: { 'chattr@winston': [
+    { scope: 'project', projectPath: f.repo, installPath: files },
+    { scope: 'project', projectPath: elsewhere, installPath: join(f.tmp, 'gone') },
+  ] } }));
+  f.write('.claude/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
+  assert.match(f.rows()['separate chattr plugin'].command, /^cd .*repo && claude plugin uninstall chattr@winston -s project$/);
+  assert.equal(f.rows()['chattr plugin in other repositories'], undefined);
+});
