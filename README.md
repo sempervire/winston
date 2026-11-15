@@ -150,23 +150,25 @@ secrets and whether the workflow's latest runs failed.
 Triage in GitHub Actions is a script, not an agent. For each issue it asks Claude, with
 no tools, for one verdict, giving it the repo's triage policy and the issue (it asks once
 more only if the first answer is unusable). The script then writes the verdict itself: the `risk:` tier, Priority, the plan comment,
-the reporter as assignee, and any other labels the policy allows. Because Claude has no
-tools in this step, nothing it needs can be silently refused.
+the reporter as assignee (a person, not a bot), and any other labels the policy allows.
+When triage cannot decide (say the title and body contradict), it posts a "Triage stopped"
+comment with the reason and writes no label, so the issue stays untriaged until someone
+answers. Because Claude has no tools in this step, nothing it needs can be silently
+refused.
 
 - **When it runs.** On each new issue filed by the owner, a collaborator or an
   organization member. Once a day, as a sweep of up to five open issues with no `risk:`
   tier yet (in the board's first two columns, filed by those same people over an hour ago,
   lowest number first, skipping any where triage stopped and is waiting for an answer).
   And when you start it by hand from the Actions tab (one issue by number, or leave the
-  number empty for the sweep). Tick `dry_run` to see the verdict without anything being written.
-  An issue that already has a `risk:` tier is left alone; re-triaging is the
+  number empty for the sweep). Tick `dry_run` to see the verdict without anything being
+  written. An issue that already has a `risk:` tier is left alone; re-triaging is the
   `/winston:triage` pass's job.
-- **Which labels.** The policy's "Labels triage applies" line lists them; triage writes no
-  label that line does not name. The starter `TRIAGE.md` names the `risk:` tier,
-  `auto-verify` or `human-verify` (`auto-verify` only at `risk: low` when an agent can show
-  the change works; otherwise `human-verify`), and one of `duplicate`, `invalid` or
-  `wontfix` when an issue should not be worked. Triage never closes an issue; closing is
-  yours.
+- **Which labels.** Every plan gets a `risk:` tier. Any other label must be named on the
+  policy's "Labels triage applies" line. The starter `TRIAGE.md` allows `auto-verify` or
+  `human-verify` (`auto-verify` only at `risk: low` when an agent can show the change
+  works; otherwise `human-verify`), and at most one of `duplicate`, `invalid` or `wontfix`
+  when an issue should not be worked. Triage never closes an issue; closing is yours.
 - **Model.** `opus`, unless the repository variable `TRIAGE_MODEL` names another.
 - **Older repos.** The script comes from Winston at a pinned commit. Doctor says which kind
   of triage workflow a repo has; init offers to replace the older agent-based one
