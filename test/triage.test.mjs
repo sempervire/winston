@@ -317,6 +317,21 @@ test('a dropped assignee fails the run before the tier; an unassignable reporter
   assert.ok(g.issues.get(2).labels.includes('risk: low'));
 });
 
+test('a token that cannot read the board fails with what to fix, and writes nothing', async () => {
+  const g = github([issue(5)]);
+  const gh = (args, o) => {
+    if (args[1] === 'graphql') { const e = new Error('gh api graphql: error'); e.stdout = JSON.stringify({ errors: [{ message: 'Resource not accessible by personal access token' }] }); throw e; }
+    return g.gh(args, o);
+  };
+  const r = await run(['--issue', '5'], { gh, decide: decider({ all: PLAN }).decide });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /#5: Resource not accessible by personal access token \(the token cannot read the board: GH_PAT needs Projects read\/write/);
+  assert.deepEqual(g.writes, []);
+  const sweep = await run(['--sweep'], { gh, decide: decider({ all: PLAN }).decide });
+  assert.equal(sweep.code, 2);
+  assert.match(sweep.err, /cannot read the board: .*classic token with the repo and project scopes/);
+});
+
 test('verdicts are validated: an option the board lacks, a missing plan, a resolution without a reason', () => {
   const ctx = { priorities: PRIORITIES, granted: grantedLabels(STARTER) };
   assert.throws(() => parseVerdict({ ...PLAN, priority: 'Urgent' }, ctx), /one of the board's options: P0, P1, P2, P3/);
