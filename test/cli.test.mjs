@@ -909,7 +909,6 @@ test('doctor says when a newer Winston is out, with the command, and stays quiet
   const codex = spawnSync(process.execPath, [join(home, 'bin/winston'), 'doctor'], { cwd: s.repo, env: s.env, encoding: 'utf8' }).stdout;
   assert.match(codex, /Fix:\n     To update, run `codex plugin marketplace upgrade winston`, then `codex plugin add winston@winston`, and start a new Codex session\.\n     Winston never updates itself/);
   assert.doesNotMatch(codex, /claude plugin/);
-  writeFileSync(join(home, '.codex-marketplace-install.json'), '{}');
   latest('0.0.1');
   assert.match(s.cli(['doctor']).stdout, /^done\s+Winston version/m, 'an older "latest" is not an update');
   latest('not-a-version; rm -rf');
