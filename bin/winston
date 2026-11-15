@@ -1200,8 +1200,9 @@ function versionCheck(cwd) {
   const restart = 'Winston never updates itself: an update replaces hooks and skills and needs a restart.'
   const out = { ...base, state: 'off', detail: `${have} installed, ${latest} available`, problem: `update to ${latest}` }
   if (harness) {
-    const steps = harness === 'codex' ? codex : claude
-    return { ...out, command: steps.match(/`([^`]+)`/)?.[1], fixLines: [`To update, ${steps}.`, restart] }
+    // Codex's update is two commands; the one command offered as the next step runs both.
+    const command = harness === 'codex' ? [...codex.matchAll(/`([^`]+)`/g)].map((m) => m[1]).join(' && ') : claude.match(/`([^`]+)`/)?.[1]
+    return { ...out, command, fixLines: [`To update, ${harness === 'codex' ? codex : claude}.`, restart] }
   }
   // Cannot tell which app installed this copy: show both, and leave `command` unset so the
   // "Next step" line points at these lines rather than naming one app's command.

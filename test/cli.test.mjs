@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { harnessOfRoot } from '../lib/update.mjs';
@@ -902,6 +902,14 @@ test('doctor says when a newer Winston is out, with the command, and stays quiet
   assert.match(s.cli(['doctor']).stdout, /^done\s+Winston version/m, 'a day later it asks again');
   assert.equal(old.status, unknown.status, 'an old Winston is reported, never a failed check');
 
+  // From a copy under Codex's plugin cache, doctor shows Codex's steps alone, and the next step runs both commands.
+  latest('99.0.0');
+  const home = join(s.tmp, '.codex/plugins/cache/winston/winston/0.0.1');
+  cpSync(ROOT, home, { recursive: true, filter: (src) => !/\/(\.git|\.claude\/worktrees|node_modules)$/.test(src) });
+  const codex = spawnSync(process.execPath, [join(home, 'bin/winston'), 'doctor'], { cwd: s.repo, env: s.env, encoding: 'utf8' }).stdout;
+  assert.match(codex, /Fix:\n     To update, run `codex plugin marketplace upgrade winston`, then `codex plugin add winston@winston`, and start a new Codex session\.\n     Winston never updates itself/);
+  assert.doesNotMatch(codex, /claude plugin/);
+  writeFileSync(join(home, '.codex-marketplace-install.json'), '{}');
   latest('0.0.1');
   assert.match(s.cli(['doctor']).stdout, /^done\s+Winston version/m, 'an older "latest" is not an update');
   latest('not-a-version; rm -rf');
