@@ -1172,6 +1172,7 @@ const WHY = [
   [/^Node\.js version/, 'Every Winston hook, chattr\'s message store included, runs on this Node.'],
   [/^separate chattr plugin/, 'chattr is part of Winston; with the old plugin installed its hooks run from the old copy, and Winston\'s stay off.'],
   [/^old chattr install\.sh hooks/, 'These old entries run chattr\'s hooks from an old copy, and Winston\'s stay off while they exist.'],
+  [/^chattr plugin left enabled/, 'An enabled entry for a plugin whose files are gone would switch Winston\'s chattr hooks off again if the files came back.'],
   [/^stray chattr command/, 'A second chattr command on PATH runs an old copy that drifts from Winston\'s.'],
   [/^Codex can write the chattr store/, 'Without it, claims and peer messages fail inside a Codex session.'],
   [/^Winston version/, 'Newer versions fix setup problems like the ones this checklist looks for.'],

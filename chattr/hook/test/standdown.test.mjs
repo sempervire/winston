@@ -22,6 +22,7 @@ function home(t) {
   mkdirSync(path.join(dir, '.codex'));
   // The separate plugin's files, as an install leaves them; a test removes them to model a delisted plugin.
   mkdirSync(path.join(dir, '.codex', 'plugins', 'cache', 'winston', 'chattr'), { recursive: true });
+  mkdirSync(path.join(dir, '.claude', 'plugins', 'cache', 'winston', 'chattr'), { recursive: true });
   const env = { HOME: dir, PATH: process.env.PATH, WINSTON_HOME: path.join(dir, '.winston'), CHATTR_DB: path.join(dir, 'bridge.db') };
   const write = (rel, text) => { mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); writeFileSync(path.join(dir, rel), text); };
   return { dir, env, write };
@@ -33,6 +34,15 @@ test('codexPluginsEnabled reads [plugins."chattr@…"] tables and honours enable
   assert.deepEqual(codexPluginsEnabled("[plugins.'chattr@other']\n"), ['chattr@other']);
   assert.deepEqual(codexPluginsEnabled('# [plugins."chattr@winston"]\n[plugins."winston@winston"]\n'), []);
   assert.deepEqual(codexPluginsEnabled(null), []);
+  // Dotted keys and inline tables, at the top level and under [plugins].
+  assert.deepEqual(codexPluginsEnabled('plugins."chattr@winston".enabled = true\n'), ['chattr@winston']);
+  assert.deepEqual(codexPluginsEnabled('plugins."chattr@winston".enabled = false\n'), []);
+  assert.deepEqual(codexPluginsEnabled('plugins = { "winston@winston" = { enabled = true }, "chattr@winston" = { enabled = true } }\n'), ['chattr@winston']);
+  assert.deepEqual(codexPluginsEnabled('plugins = { "chattr@winston" = { enabled = false } }\n'), []);
+  assert.deepEqual(codexPluginsEnabled('[plugins]\n"chattr@winston" = { enabled = true }\n'), ['chattr@winston']);
+  assert.deepEqual(codexPluginsEnabled('[plugins]\n"chattr@winston".enabled = false\n'), []);
+  assert.deepEqual(codexPluginsEnabled('[ plugins . "chattr@winston" ]\nenabled = true\n'), ['chattr@winston']);
+  assert.deepEqual(codexPluginsEnabled('[features]\nplugins = true\n[plugins."winston@winston"]\nenabled = true\n'), []);
 });
 
 test('kindOf: turn_id, a rollout transcript or a Codex tool name is Codex; anything else Claude', () => {
@@ -56,6 +66,7 @@ test('standDownReason: Claude reads enabledPlugins and old hooks in settings.jso
   h.write('.claude/settings.json', '{ broken');
   assert.equal(standDownReason('claude', h.env), null, 'an unparseable file is not another chattr');
   h.write('alt/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
+  mkdirSync(path.join(h.dir, 'alt', 'plugins', 'cache', 'winston', 'chattr'), { recursive: true });
   assert.match(standDownReason('claude', { ...h.env, CLAUDE_CONFIG_DIR: path.join(h.dir, 'alt') }), /alt\/settings\.json/);
 });
 
@@ -83,7 +94,10 @@ test('an enabled plugin whose files are gone does not stand Winston down', (t) =
   assert.equal(standDownReason('codex', h.env), null);
 
   h.write('.claude/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
-  assert.ok(standDownReason('claude', h.env), 'no installed_plugins.json: assume present');
+  rmSync(path.join(h.dir, '.claude', 'plugins', 'cache'), { recursive: true });
+  assert.equal(standDownReason('claude', h.env), null, 'no record and no cache folder: not present');
+  mkdirSync(path.join(h.dir, '.claude', 'plugins', 'cache', 'winston', 'chattr'), { recursive: true });
+  assert.ok(standDownReason('claude', h.env), 'no record, cache folder on disk: present');
   const kept = path.join(h.dir, 'cache', 'chattr', '0.1.0');
   mkdirSync(kept, { recursive: true });
   h.write('.claude/plugins/installed_plugins.json', JSON.stringify({ version: 2, plugins: { 'chattr@winston': [{ scope: 'user', installPath: kept }] } }));

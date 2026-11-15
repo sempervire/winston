@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -664,4 +664,22 @@ test('who --coverage does not count codex sessions at a non-root codex pid', () 
     { pid: 960002, args: '/usr/local/bin/codex' },
   ]);
   assert.deepEqual([coverage.processes.codex, coverage.enrolled.codex, coverage.complete], [1, 0, false]);
+});
+
+test('the store and its WAL files are owner-only, and an existing world-readable store is tightened', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'chattr-mode-'));
+  const file = path.join(dir, 'bridge.db');
+  const mode = (f) => statSync(f).mode & 0o777;
+  let db = open(file);
+  db.close();
+  assert.equal(mode(file), 0o600);
+  chmodSync(file, 0o644);
+  db = open(file);
+  try {
+    assert.equal(mode(file), 0o600);
+    for (const f of [`${file}-wal`, `${file}-shm`]) if (existsSync(f)) assert.equal(mode(f), 0o600, f);
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

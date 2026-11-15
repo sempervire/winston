@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, rmSync, realpathSync, symlinkSync } from 'node:fs'
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, realpathSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -182,5 +182,24 @@ describe('describePeers', () => {
     assert.match(text, /working/)
     assert.match(text, /sess-2/)
     assert.match(text, /unknown/)
+  })
+})
+
+describe('findRepoRivals with a peer folder this session cannot read', () => {
+  test('compares it as spelled instead of throwing', (t) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'peers-unreadable-')))
+    const locked = join(root, 'locked')
+    mkdirSync(join(locked, 'inner'), { recursive: true })
+    chmodSync(locked, 0o000)
+    t.after(() => { chmodSync(locked, 0o755); rmSync(root, { recursive: true, force: true }) })
+    const me = join(root, 'me')
+    mkdirSync(me)
+    const sessions = [
+      { id: 'hidden', kind: 'claude', status: 'idle', cwd: join(locked, 'inner') },
+      { id: 'here', kind: 'codex', status: 'idle', cwd: me },
+    ]
+    assert.throws(() => canonical(join(locked, 'inner')), /EACCES/)
+    assert.deepEqual(findRepoRivals({ cwd: me, sessionId: 'mine', sessions }).map((s) => s.id), ['here'])
+    assert.deepEqual(findRepoRivals({ cwd: join(locked, 'inner'), sessionId: 'mine', sessions }).map((s) => s.id), ['hidden'])
   })
 })

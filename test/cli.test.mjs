@@ -933,7 +933,7 @@ test('doctor says when a newer Winston is out, with the command, and stays quiet
   latest('99.0.0');
   const old = s.cli(['doctor']);
   assert.match(old.stdout, new RegExp(`^needs you\\s+Winston version\\s+— ${have} installed, 99\\.0\\.0 available$`, 'm'));
-  assert.match(old.stdout, /\d\. Winston version\n   Why: [^\n]+\n   Fix:\n     To update, follow the line for the app you use Winston in:\n       Claude Code: run `claude plugin marketplace update winston && claude plugin update winston@winston`, then restart Claude Code[^\n]*\n       Codex: run `codex plugin marketplace upgrade winston`, then `codex plugin add winston@winston`, and start a new Codex session\.\n     Winston never updates itself/);
+  assert.match(old.stdout, /\d\. Winston version\n   Why: [^\n]+\n   Fix:\n     To update, follow the line for the app you use Winston in:\n       Claude Code: run `claude plugin marketplace update winston && claude plugin update winston@winston`, then restart Claude Code[^\n]*\n       Codex: run `codex plugin marketplace upgrade winston`, then `codex plugin add winston@winston`, start a new Codex session, and trust the new or changed hooks once with \/hooks\.\n     Winston never updates itself/);
   assert.doesNotMatch(s.calls(), /plugin update/, 'doctor never updates');
   assert.equal(s.cli(['doctor', '--fix']).status, 1, 'an unknown flag is refused');
   // GitHub is asked at most once a day: a new answer there is not seen until the cache ages out.
@@ -948,7 +948,7 @@ test('doctor says when a newer Winston is out, with the command, and stays quiet
   const home = join(s.tmp, '.codex/plugins/cache/winston/winston/0.0.1');
   cpSync(ROOT, home, { recursive: true, filter: (src) => !/\/(\.git|\.claude\/worktrees|node_modules)$/.test(src) });
   const codex = spawnSync(process.execPath, [join(home, 'bin/winston'), 'doctor'], { cwd: s.repo, env: s.env, encoding: 'utf8' }).stdout;
-  assert.match(codex, /Fix:\n     To update, run `codex plugin marketplace upgrade winston`, then `codex plugin add winston@winston`, and start a new Codex session\.\n     Winston never updates itself/);
+  assert.match(codex, /Fix:\n     To update, run `codex plugin marketplace upgrade winston`, then `codex plugin add winston@winston`, start a new Codex session, and trust the new or changed hooks once with \/hooks\.\n     Winston never updates itself/);
   assert.doesNotMatch(codex, /claude plugin/);
   latest('0.0.1');
   assert.match(s.cli(['doctor']).stdout, /^done\s+Winston version/m, 'an older "latest" is not an update');

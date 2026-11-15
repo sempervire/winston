@@ -50,6 +50,7 @@ test('a clean machine: every chattr row done, the guard on, nothing for Codex wh
   const r = f.rows();
   for (const name of ['Node.js version', 'separate chattr plugin', 'old chattr install.sh hooks', 'stray chattr command']) assert.equal(r[name].state, 'ok', name);
   assert.equal(r['Codex can write the chattr store'], undefined);
+  assert.equal(r['chattr plugin left enabled'], undefined);
   assert.equal(r['shared-checkout guard'].state, 'on');
   assert.match(r['shared-checkout guard'].detail, /"sharedCheckoutGuard": false in \.winston\/config\.json/);
   assert.equal(f.rows({ major: 22, version: 'v22.9.0' })['Node.js version'].state, 'missing');
@@ -59,6 +60,7 @@ test('a clean machine: every chattr row done, the guard on, nothing for Codex wh
 test('the separate plugin in either app gives the exact uninstall command for each', (t) => {
   const f = fixture(t);
   f.write('.claude/settings.json', JSON.stringify({ enabledPlugins: { 'winston@winston': true, 'chattr@winston': true } }));
+  mkdirSync(join(f.home, '.claude/plugins/cache/winston/chattr'), { recursive: true });
   let c = f.rows()['separate chattr plugin'];
   assert.equal(c.state, 'off');
   assert.equal(c.command, 'claude plugin uninstall chattr@winston');
@@ -71,6 +73,22 @@ test('the separate plugin in either app gives the exact uninstall command for ea
   f.write('.claude/settings.json', '{}');
   f.write('.codex/config.toml', '[plugins."chattr@winston"]\nenabled = false\n');
   assert.equal(f.rows()['separate chattr plugin'].state, 'ok');
+});
+
+test('a plugin left enabled after its files are gone is its own needs-you, with the command and the by-hand edit', (t) => {
+  const f = fixture(t);
+  f.write('.claude/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
+  f.write('.codex/config.toml', 'plugins."chattr@winston".enabled = true\n');
+  const r = f.rows();
+  assert.equal(r['separate chattr plugin'].state, 'ok', 'nothing on disk stands Winston down');
+  const c = r['chattr plugin left enabled'];
+  assert.equal(c.state, 'off');
+  assert.equal(c.command, 'claude plugin uninstall chattr@winston && codex plugin remove chattr@winston');
+  assert.match(c.fixLines.join('\n'), /delete the line "chattr@winston": true under enabledPlugins in ~\/\.claude\/settings\.json/);
+  assert.match(c.fixLines.join('\n'), /delete the \[plugins\."chattr@winston"\] table from ~\/\.codex\/config\.toml/);
+  mkdirSync(join(f.home, '.claude/plugins/cache/winston/chattr'), { recursive: true });
+  assert.equal(f.rows()['separate chattr plugin'].command, 'claude plugin uninstall chattr@winston');
+  assert.match(f.rows()['chattr plugin left enabled'].command, /^codex plugin remove chattr@winston$/);
 });
 
 test('old install.sh hooks: dry run first, then uninstall-hooks with a snapshot, through Winston\'s own chattr', (t) => {

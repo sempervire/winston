@@ -175,6 +175,10 @@ Claude Code. In Codex, run the following, then start a new Codex session:
 codex plugin marketplace upgrade winston && codex plugin add winston@winston
 ```
 
+Codex trusts each hook by its position, so an update that adds or moves hooks (as the one
+that brought chattr in did) needs one more step: in the new session, open `/hooks` and
+trust them once.
+
 `"updateCheck": false` in the config turns the session notice off.
 
 So that a run does not stop on permission prompts, `winston permissions` lists the Claude
@@ -243,6 +247,11 @@ it with `CLAUDE_ALLOW_SHARED_CWD=1`. To turn it off for a repository, set
 **Moving from the separate chattr plugin.** chattr used to be its own plugin. If it is
 still installed, or its old `install.sh` hooks are in `~/.claude/settings.json` or
 `~/.codex/hooks.json`, Winston's copy of the hooks stays off so that nothing runs twice.
+Do it in this order: uninstall the separate plugin first (`claude plugin uninstall
+chattr@winston`, `codex plugin remove chattr@winston`), then update Winston, restart, and in
+Codex trust the new hooks with `/hooks`. The update removes chattr from Winston's
+marketplace; if you update first and the uninstall then reports the plugin missing, doctor
+shows the line to delete by hand.
 `/winston:doctor` names what is left and gives the exact removal command for each
 (`claude plugin uninstall chattr@winston`, `codex plugin remove chattr@winston`, the old
 hooks' `uninstall-hooks`, a `~/.local/bin/chattr` link). Restart every session afterwards.

@@ -12,6 +12,7 @@
 // plugin counts only while its files are still on disk: Winston's marketplace no longer lists
 // chattr, and a plugin left enabled after its copy is gone runs nothing, so Winston's must.
 //   Claude Code  <config dir>/plugins/installed_plugins.json  an entry whose installPath exists
+//                (no readable record: <config dir>/plugins/cache/<marketplace>/<plugin>/)
 //   Codex        <CODEX_HOME>/plugins/cache/<marketplace>/chattr/
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -48,23 +49,40 @@ function json(file) {
   try { return JSON.parse(text); } catch { return null; }
 }
 
-/** Names of chattr plugins enabled in Codex config.toml text. */
+const CHATTR_KEY = /^plugins\.(?:"(chattr@[^"]+)"|'(chattr@[^']+)')(?:\.enabled\s*=\s*(true|false)\b|\s*=\s*\{([^}]*)\}|$)/;
+
+/**
+ * Names of chattr plugins enabled in Codex config.toml text. A plugin is declared by a
+ * [plugins."chattr@…"] table, a dotted key (plugins."chattr@…".enabled = …, at the top level or
+ * under [plugins]), or an inline table (plugins = { "chattr@…" = { … } }, or under [plugins]);
+ * a declared plugin is enabled unless it says enabled = false.
+ */
 export function codexPluginsEnabled(toml) {
-  const names = [];
-  let current = null;
+  const state = new Map();
+  let table = '';
   for (const raw of String(toml ?? '').split('\n')) {
     const line = raw.replace(/#.*$/, '').trim();
-    const header = line.match(/^\[(.+)\]$/);
+    if (!line) continue;
+    const header = line.match(/^\[\s*([^\[\]]+?)\s*\]$/);
     if (header) {
-      if (current) names.push(current.name);
-      const m = header[1].trim().match(/^plugins\.(?:"(chattr@[^"]+)"|'(chattr@[^']+)')$/);
-      current = m ? { name: m[1] ?? m[2] } : null;
+      table = header[1].replace(/\s*\.\s*/g, '.');
+      const m = table.match(CHATTR_KEY);
+      if (m) state.set(m[1] ?? m[2], state.get(m[1] ?? m[2]) ?? true);
       continue;
     }
-    if (current && /^enabled\s*=\s*false$/.test(line)) current = null;
+    const full = (table ? `${table}.${line}` : line).replace(/\s*\.\s*(?=["'\w])/g, '.');
+    const m = full.match(CHATTR_KEY);
+    if (m) {
+      const name = m[1] ?? m[2];
+      if (m[3]) state.set(name, m[3] === 'true');
+      else if (m[4] !== undefined) state.set(name, !/\benabled\s*=\s*false\b/.test(m[4]));
+      continue;
+    }
+    if (/^plugins\s*=\s*\{/.test(full)) {
+      for (const x of full.matchAll(/(?:"(chattr@[^"]+)"|'(chattr@[^']+)')\s*=\s*\{([^}]*)\}/g)) state.set(x[1] ?? x[2], !/\benabled\s*=\s*false\b/.test(x[3]));
+    }
   }
-  if (current) names.push(current.name);
-  return names;
+  return [...state].filter(([, on]) => on).map(([name]) => name);
 }
 
 /** Where each CLI keeps the files read here. */
@@ -81,15 +99,17 @@ export function configPaths(env = process.env) {
   };
 }
 
-/** True while an enabled plugin's files are still on disk; an unreadable record counts as present. */
+/**
+ * True while an enabled plugin's files are still on disk. Claude Code: an installed_plugins.json
+ * entry whose installPath exists; without a readable record, its cache folder
+ * (<config dir>/plugins/cache/<marketplace>/<plugin>). Codex: its cache folder.
+ */
 export function pluginPresent(kind, name, env = process.env) {
   const paths = configPaths(env);
-  if (kind === 'codex') {
-    const [plugin, marketplace] = name.split('@');
-    return existsSync(path.join(paths.codexCache, marketplace ?? '', plugin));
-  }
+  const [plugin, marketplace] = name.split('@');
+  if (kind === 'codex') return existsSync(path.join(paths.codexCache, marketplace ?? '', plugin));
   const record = json(paths.claudeInstalled);
-  if (!record?.plugins) return true;
+  if (!record?.plugins) return existsSync(path.join(paths.claudeInstalled, '..', 'cache', marketplace ?? '', plugin));
   return (record.plugins[name] ?? []).some((e) => typeof e?.installPath === 'string' && existsSync(e.installPath));
 }
 
