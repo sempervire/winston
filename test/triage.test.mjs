@@ -35,6 +35,13 @@ function github(issues, { failOn = null, appearAfter = 0 } = {}) {
   const stamp = () => new Date(Date.UTC(2026, 0, 2, 0, minute++)).toISOString();
   for (const i of issues) for (const c of i.comments) c.createdAt ??= stamp();
   const gql = (query, vars) => {
+    if (/updateProjectV2ItemFieldValue/.test(query)) {
+      assert.equal(vars.project, 'PROJECT1');
+      assert.equal(vars.field, 'PRIO1');
+      const item = [...byNumber.values()].find((x) => x.item?.id === vars.item);
+      const name = vars.option.replace('opt-', '');
+      return write(`Priority #${item.number}=${name}`, () => { item.item.priority = name; return { data: { updateProjectV2ItemFieldValue: { projectV2Item: { id: vars.item } } } }; });
+    }
     if (/items\(first:100/.test(query)) {
       return { data: { repositoryOwner: { projectV2: { items: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [...byNumber.values()].filter((i) => i.item).map((i) => ({
         isArchived: false, status: i.item.status ? { name: i.item.status } : null,
@@ -76,11 +83,7 @@ function github(issues, { failOn = null, appearAfter = 0 } = {}) {
     const [, n] = /issues\/(\d+)/.exec(args.join(' ')) ?? /comment (\d+)/.exec(args.join(' ')) ?? [];
     const i = byNumber.get(Number(n));
     if (args[0] === 'issue' && args[1] === 'comment') return write(`comment #${args[2]}`, () => { byNumber.get(Number(args[2])).comments.push({ author: 'triage-bot', body: input, createdAt: stamp() }); return ''; });
-    if (args[0] === 'project' && args[1] === 'item-edit') {
-      const item = [...byNumber.values()].find((x) => x.item?.id === args[args.indexOf('--id') + 1]);
-      const name = args[args.indexOf('--single-select-option-id') + 1].replace('opt-', '');
-      return write(`Priority #${item.number}=${name}`, () => { item.item.priority = name; return ''; });
-    }
+    if (args[0] === 'project') throw new Error(`gh project needs read:org and read:discussion, which GH_PAT lacks: ${args.join(' ')}`);
     if (/\/assignees\//.test(args[1] ?? '')) return '';
     if (args.includes('PATCH')) {
       const login = args.at(-1).split('=')[1];
@@ -209,6 +212,13 @@ test('acceptance 5: the sweep takes only unstamped issues in scope from trusted 
   const capped = await run(['--sweep', '--max', '1', '--dry-run'], { gh: g.gh, decide: d.decide });
   assert.match(capped.out, /taking up to 1,/);
   assert.deepEqual(d.calls.slice(5).map((c) => c.issue.number), [12]);
+});
+
+test('the script never runs `gh project`, which needs scopes beyond repo and project', () => {
+  for (const file of ['scripts/triage-issue.mjs', ...['args', 'decide', 'github', 'run', 'verdict'].map((n) => `lib/triage/${n}.mjs`)]) {
+    const code = readFileSync(join(ROOT, file), 'utf8').split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*\*)/.test(l)).join('\n');
+    assert.doesNotMatch(code, /\[\s*'project'|gh project/, file);
+  }
 });
 
 test('acceptance 6: nothing in the script names ShareView or its phases', () => {
