@@ -170,17 +170,20 @@ export function unsuitableFolder(dir, { nested = true } = {}) {
 
 /**
  * The way out for a folder refused because it holds other repositories: open the one that
- * is the project, or make this folder a repository if it is the project. '' otherwise.
+ * is the project, or make this folder a repository if it is the project. '' for any other
+ * refusal: the home folder or Documents is never a place to run git init.
  */
-function folderWayOut(dir) {
+function folderWayOut(dir, reason) {
+  if (!String(reason ?? '').startsWith('it holds other projects')) return ''
   let repos = []
   try {
     repos = readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() && existsSync(join(dir, e.name, '.git'))).map((e) => e.name)
   } catch {}
   if (!repos.length) return ''
-  const which = repos.length === 1 ? `If ${repos[0]} is your project, open Claude Code there (in the Terminal app: cd ${shq(repos[0])}, then claude) and run /winston:init.`
-    : `If one of them is your project, open Claude Code in it (in the Terminal app: cd <its folder>, then claude) and run /winston:init.`
-  return ` ${which} If this folder itself is your project, run git init here first (in the Terminal app), then /winston:init.`
+  const [app, start] = HARNESS === 'codex' ? ['Codex', 'codex'] : ['Claude Code', 'claude']
+  const there = (where) => `open ${app} ${where} (in the Terminal app: cd ${repos.length === 1 ? shq(repos[0]) : '<its folder>'}, then ${start}) and ${useSkill('init')}`
+  const which = repos.length === 1 ? `If ${repos[0]} is your project, ${there('there')}.` : `If one of them is your project, ${there('in it')}.`
+  return ` ${which} If this folder itself is your project, run git init here first (in the Terminal app), then ${useSkill('init')}.`
 }
 
 /** A path as a person reads it: relative to the repository root when it is inside it. */
@@ -899,7 +902,7 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
     const unsuitable = unsuitableFolder(cwd)
     add({
       name: 'Project folder uses git', state: 'missing', detail: unsuitable ? `this folder is not a project folder: ${unsuitable}` : `this folder (${basename(cwd)}) does not use git yet`,
-      unconfigured: !unsuitable, hand: unsuitable ? `${WRONG_FOLDER}${folderWayOut(cwd)}` : undefined,
+      unconfigured: !unsuitable, hand: unsuitable ? `${WRONG_FOLDER}${folderWayOut(cwd, unsuitable)}` : undefined,
     })
     return out
   }
@@ -1940,7 +1943,7 @@ function init(cwd, opts) {
   // A folder outside git that is no project (the home folder, a folder of projects) is
   // never planned as a new one: say where to go instead.
   if (sit.unsuitable && opts.mode !== 'join') {
-    console.log(`${WRONG_FOLDER}\n(Winston did not use ${cwd}: ${sit.unsuitable}.)${sit.root ? '' : folderWayOut(cwd).replace(/^ /, '\n')}`)
+    console.log(`${WRONG_FOLDER}\n(Winston did not use ${cwd}: ${sit.unsuitable}.)${sit.root ? '' : folderWayOut(cwd, sit.unsuitable).replace(/^ /, '\n')}`)
     return 1
   }
   if (!opts.mode) {

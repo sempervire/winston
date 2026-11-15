@@ -302,7 +302,7 @@ test('init refuses the home folder and a folder of projects, and asks first wher
   for (const args of [['init'], ['init', '--mode', 'new']]) {
     const r = s.cli(args, s.tmp);
     assert.equal(r.status, 1, args.join(' '));
-    assert.match(r.stdout, /^This folder doesn't look like a project\. Open Claude Code in your project's folder[^\n]*\n\(Winston did not use [^\n]*: it holds other projects \(repo\)\.\)\nIf repo is your project, open Claude Code there \(in the Terminal app: cd 'repo', then claude\) and run \/winston:init\. If this folder itself is your project, run git init here first/);
+    assert.match(r.stdout, /^This folder doesn't look like a project\. Open Claude Code in your project's folder[^\n]*\n\(Winston did not use [^\n]*: it holds other projects \(repo\)\.\)\nIf repo is your project, open Claude Code there \(in the Terminal app: cd 'repo', then claude\) and type \/winston:init in this Claude Code chat\. If this folder itself is your project, run git init here first \(in the Terminal app\), then type \/winston:init in this Claude Code chat\.\n$/);
   }
   // Doctor there says where to go instead of sending the person to init.
   const doc = s.cli(['doctor'], s.tmp);
@@ -310,6 +310,14 @@ test('init refuses the home folder and a folder of projects, and asks first wher
   assert.match(doc.stdout, /Fix:\n     This folder doesn't look like a project\. Open Claude Code in your project's folder[^\n]* If repo is your project, open Claude Code there/);
   const home = spawnSync(process.execPath, [CLI, 'init', '--mode', 'new'], { cwd: s.tmp, env: { ...s.env, HOME: s.tmp }, encoding: 'utf8' });
   assert.match(home.stdout, /it is your home folder/);
+  // The home folder (here it also holds a repo) is never told to run git init or to cd somewhere.
+  assert.doesNotMatch(home.stdout, /git init|cd '/);
+  const homeDoc = spawnSync(process.execPath, [CLI, 'doctor'], { cwd: s.tmp, env: { ...s.env, HOME: s.tmp }, encoding: 'utf8' });
+  assert.match(homeDoc.stdout, /Fix:\n     This folder doesn't look like a project\.[^\n]*again\.\n/);
+  assert.doesNotMatch(homeDoc.stdout, /git init/);
+  // In Codex the way out names Codex and the skill.
+  const codexWay = spawnSync(process.execPath, [CLI, 'init'], { cwd: s.tmp, env: { ...s.env, WINSTON_HARNESS: 'codex' }, encoding: 'utf8' });
+  assert.match(codexWay.stdout, /If repo is your project, open Codex there \(in the Terminal app: cd 'repo', then codex\) and ask Codex to use the winston:init skill\./);
   // A home folder that is itself a git repository is refused too.
   const gitHome = spawnSync(process.execPath, [CLI, 'init'], { cwd: s.repo, env: { ...s.env, HOME: s.repo }, encoding: 'utf8' });
   assert.equal(gitHome.status, 1);
