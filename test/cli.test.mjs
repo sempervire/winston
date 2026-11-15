@@ -309,7 +309,7 @@ test('init refuses the home folder and a folder of projects, and asks first wher
   const gitHome = spawnSync(process.execPath, [CLI, 'init'], { cwd: s.repo, env: { ...s.env, HOME: s.repo }, encoding: 'utf8' });
   assert.equal(gitHome.status, 1);
   assert.match(gitHome.stdout, /^This folder doesn't look like a project\.[^]*it is your home folder/);
-  assert.doesNotMatch(s.calls(), /^(?!auth status)/m, 'GitHub not touched beyond doctor reading the sign-in');
+  assert.ok(s.calls().trim().split('\n').every((l) => l.startsWith('auth status')), 'GitHub not touched beyond doctor reading the sign-in');
   // History and no GitHub address: maybe a copy that lost its link, so say how to connect it.
   s.git('symbolic-ref', 'HEAD', 'refs/heads/main');
   writeFileSync(join(s.repo, 'a.txt'), 'a');
