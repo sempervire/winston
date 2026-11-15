@@ -269,8 +269,9 @@ In order:
    decision, gated action, permission, and known possible stop. Summarize the decisions
    before asking them, so the owner can correct the shape of the run before answering. Where
    step 7 found rules to add, show them here too, as one step for the owner: the single
-   command `winston permissions --apply` (with the `--add` rules from step 7), which the
-   owner runs themselves, in their terminal or with the `!` prefix. It adds the missing
+   command `!winston permissions --apply` (in Codex: ask Codex to run `winston permissions --apply`) (with the `--add` rules from step 7), which the
+   owner types themselves in this chat (the plugin's `winston` is not on a normal
+   Terminal's PATH); put it on the clipboard too and say so. It adds the missing
    rules to `permissions.allow` in the project's `.claude/settings.json`, and a short
    `permissions.deny` list beside them: an allow pattern cannot leave out a flag, so
    `git push origin *` alone would also cover a force push, a push to the production
@@ -284,17 +285,16 @@ In order:
    hand the owner a multi-line block to paste into `/permissions`: that dialog takes a
    pasted block as one rule, which matches nothing.
 
-   Explain the scope; never choose it for the owner: the command writes **Project** scope,
-   so matching actions won't prompt again in this project, in this and future sessions, for
-   everyone who uses the committed file. An owner who wants **Session** or **User** scope
-   instead adds the listed rules one at a time in `/permissions` → **Add** and picks that
-   scope there; **User** carries a rule into every project. This covers only the prompts the
-   new allow rules remove.
+   The rules go in **Project** scope, which is what the command writes: matching actions
+   won't prompt again in this project, in this and future sessions, for everyone who uses
+   the committed file. That is Winston's default; do not ask about scope. Only if the owner
+   asks for another scope: **Session** or **User** rules are added one at a time in
+   `/permissions` → **Add**, picking that scope there.
    Claude Code evaluates deny, then ask, then allow, and a hook can block an action before any
    rule is reached, so an allow rule never clears a `permissions.ask`/`permissions.deny` rule,
    a hook, production approval, a secret grant, or any other gate below — those stay explicit.
 9. Ask every independent setup decision in a question box, including the permission-rules
-   step and its scope from step 8 where rules are to be added. Give each its own question, explain the tradeoff,
+   step from step 8 where rules are to be added. Give each its own question, explain the tradeoff,
    recommend an answer and say why. Batch the questions in one setup round where the interface
    permits; ask dependent questions after their prerequisites are answered. This skill requires
    question boxes as its standing setup behavior, even where the repository's general chat
