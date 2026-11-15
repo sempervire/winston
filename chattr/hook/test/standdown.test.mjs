@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { codexPluginsEnabled, kindOf, standDownReason } from '../standdown.mjs';
+import { codexPluginsEnabled, kindOf, pluginPresent, standDownReason } from '../standdown.mjs';
 import { compose } from '../install.mjs';
 import { open } from '../../chattr.mjs';
 
@@ -20,6 +20,8 @@ function home(t) {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(path.join(dir, '.claude'));
   mkdirSync(path.join(dir, '.codex'));
+  // The separate plugin's files, as an install leaves them; a test removes them to model a delisted plugin.
+  mkdirSync(path.join(dir, '.codex', 'plugins', 'cache', 'winston', 'chattr'), { recursive: true });
   const env = { HOME: dir, PATH: process.env.PATH, WINSTON_HOME: path.join(dir, '.winston'), CHATTR_DB: path.join(dir, 'bridge.db') };
   const write = (rel, text) => { mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); writeFileSync(path.join(dir, rel), text); };
   return { dir, env, write };
@@ -69,7 +71,27 @@ test('standDownReason: Codex reads config.toml plugins and old hooks.json, honou
   h.write('.codex/hooks.json', JSON.stringify(compose({}, 'codex', '/old/chattr')));
   assert.match(standDownReason('codex', h.env), /old chattr install\.sh hooks/);
   h.write('ch/config.toml', '[plugins."chattr@winston"]\n');
+  mkdirSync(path.join(h.dir, 'ch', 'plugins', 'cache', 'winston', 'chattr'), { recursive: true });
   assert.match(standDownReason('codex', { ...h.env, CODEX_HOME: path.join(h.dir, 'ch') }), /ch\/config\.toml/);
+});
+
+test('an enabled plugin whose files are gone does not stand Winston down', (t) => {
+  const h = home(t);
+  h.write('.codex/config.toml', '[plugins."chattr@winston"]\nenabled = true\n');
+  rmSync(path.join(h.dir, '.codex', 'plugins', 'cache', 'winston', 'chattr'), { recursive: true });
+  assert.equal(pluginPresent('codex', 'chattr@winston', h.env), false);
+  assert.equal(standDownReason('codex', h.env), null);
+
+  h.write('.claude/settings.json', JSON.stringify({ enabledPlugins: { 'chattr@winston': true } }));
+  assert.ok(standDownReason('claude', h.env), 'no installed_plugins.json: assume present');
+  const kept = path.join(h.dir, 'cache', 'chattr', '0.1.0');
+  mkdirSync(kept, { recursive: true });
+  h.write('.claude/plugins/installed_plugins.json', JSON.stringify({ version: 2, plugins: { 'chattr@winston': [{ scope: 'user', installPath: kept }] } }));
+  assert.ok(standDownReason('claude', h.env), 'files on disk');
+  rmSync(kept, { recursive: true });
+  assert.equal(standDownReason('claude', h.env), null, 'record names a path that is gone');
+  h.write('.claude/plugins/installed_plugins.json', JSON.stringify({ version: 2, plugins: {} }));
+  assert.equal(standDownReason('claude', h.env), null, 'not installed at all');
 });
 
 const hook = (env, event, payload, extra = []) => spawnSync(process.execPath, [CHATTR, 'hook', event, ...extra], { input: JSON.stringify(payload), env, encoding: 'utf8' });

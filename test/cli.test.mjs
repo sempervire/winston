@@ -22,7 +22,7 @@ function sandbox(t) {
   const bin = join(tmp, 'bin');
   mkdirSync(bin);
   // No test asks the network for the latest version: the lookup reads a file that is absent unless a test writes it.
-  const env = { ...process.env, WINSTON_HOME: home, CODEX_HOME: join(tmp, 'codex'), CLAUDE_CONFIG_DIR: join(tmp, 'claude'), WINSTON_UPDATE_URL: `file://${join(tmp, 'latest.json')}`, PATH: `${bin}:${process.env.PATH}` };
+  const env = { ...process.env, HOME: join(tmp, 'home'), WINSTON_HOME: home, CODEX_HOME: join(tmp, 'codex'), CLAUDE_CONFIG_DIR: join(tmp, 'claude'), WINSTON_UPDATE_URL: `file://${join(tmp, 'latest.json')}`, PATH: `${bin}:${process.env.PATH}` };
   const cli = (args, cwd = repo) => spawnSync(process.execPath, [CLI, ...args], { cwd, env, encoding: 'utf8' });
   const fake = (name, script) => { writeFileSync(join(bin, name), `#!/bin/sh\n${script}\n`); chmodSync(join(bin, name), 0o755); };
   return { tmp, home, repo, env, cli, fake };

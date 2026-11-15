@@ -79,7 +79,7 @@ claude --session-id "$successor_uuid" --name "$session_name" --permission-mode "
 
 The wait prevents predecessor and successor overlap in this directory. Never set or inherit `CLAUDE_ALLOW_SHARED_CWD`. A third session is still governed by the existing shared-directory guard.
 
-After the tab opens, release this session's relevant chattr claims (where chattr is installed) with `handed to <successor_uuid>` as the note. The successor claims normally when it starts; there is no claim transfer. Automatic `owner_gone` reconciliation remains a fallback.
+After the tab opens, release this session's relevant chattr claims with `handed to <successor_uuid>` as the note. The successor claims normally when it starts; there is no claim transfer. Automatic `owner_gone` reconciliation remains a fallback.
 
 If `osascript` succeeds, report exactly:
 

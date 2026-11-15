@@ -18,7 +18,9 @@ export function collectSourceInventory({
   stateRoot = join(process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share'), 'rex'),
   from, to, command,
 } = {}) {
-  const run = command ?? ((name) => name === 'chattr state' ? systemCommand('chattr', ['state']) :
+  // chattr is part of Winston: call this install's copy by path (Codex puts no plugin bin/ on PATH).
+  const chattr = [process.execPath, ['--disable-warning=ExperimentalWarning', join(rexRoot, 'chattr', 'chattr.mjs'), 'state']];
+  const run = command ?? ((name) => name === 'chattr state' ? systemCommand(...chattr) :
     systemCommand('git', ['-C', rexRoot, 'log', '--reverse', '--format=%cI', '--', 'skills/rex']));
   const candidates = [];
   const missingCandidates = [];

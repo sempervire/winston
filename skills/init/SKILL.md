@@ -61,7 +61,7 @@ It runs in five steps and never skips the first two.
      workflow**. For "Auto-add to project": select it, **Edit**, pick this repository,
      replace the filter with `is:issue`, **Save and turn on workflow**. Touch nothing else
      on the page, close the tab, then run `winston doctor` and show that these checks pass (the other-project line clears once its Auto-add no longer takes new issues, and can read as present until one more issue is filed).
-     With chattr, claim `resource:chrome` first and release it after.
+     Claim `resource:chrome` first (`chattr claim resource:chrome`) and release it after.
    - **The page shows GitHub's 404 or a Sign in link:** that Chrome is not signed in to
      GitHub, or is signed in as an account without access to the board. Ask the user to
      sign in to GitHub in that Chrome window as the board's owner and tell you when done.
@@ -113,8 +113,8 @@ It runs in five steps and never skips the first two.
         the tab is closed (or tells you to close it after they have navigated away). The
         owner clicks Generate and answers any password or two-factor prompt; GitHub then
         shows the token in that same tab, which is why you do not look. A token is a
-        credential: it stays with the owner. With chattr, claim `resource:chrome` first
-        and release it after.
+        credential: it stays with the owner. Claim `resource:chrome` first and release
+        it after.
      - **If the harness or a hook stops you from opening that page, that is the stop.**
        Do not ask the owner to type a grant phrase for this. Go back to 1: the owner
        opens the link, and you give the numbered directions.

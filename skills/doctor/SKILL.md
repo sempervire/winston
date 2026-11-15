@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Check Winston's setup in this repo and on this machine - config, GitHub board, labels, branches, and which optional tools (Codex, Gemini key, chattr) are on or off. Use when the user runs /winston:doctor, asks whether Winston is set up correctly, or a Winston skill reports a missing prerequisite.
+description: Check Winston's setup in this repo and on this machine - config, GitHub board, labels, branches, Node, chattr's leftovers from a separate install, the shared-checkout guard, and which optional tools (Codex, Gemini key) are on or off. Use when the user runs /winston:doctor, asks whether Winston is set up correctly, or a Winston skill reports a missing prerequisite.
 ---
 
 # /winston:doctor
@@ -18,7 +18,7 @@ The output is a checklist. Each line starts with a plain status:
 - `needs you`
 - `could not check`: this account or network cannot see it. That is not the same as
   missing; never report it as missing.
-- `on` or `off`, for an optional tool.
+- `on` or `off`, for an optional tool or a switch (the shared-checkout guard).
 
 Under **Needs you**, every open item says why it matters and how to fix it. The last line,
 **Next step:**, names the first open item, so the user never has to choose. Offer that one
@@ -54,6 +54,18 @@ Who does what:
   write them only after the user approves.
 - **project permission rules**: one command the owner runs, `winston permissions --apply`
   (deny wins over allow). Relay it, never run it yourself.
+- **separate chattr plugin**, **old chattr install.sh hooks**, **stray chattr command**:
+  chattr is part of Winston, and these are what is left of a separate install. While the
+  plugin or the old hooks are there, Winston's own copy of chattr's hooks stays off so
+  nothing runs twice. Relay the fix lines as they stand; the owner runs them in a normal
+  terminal and restarts every Claude Code and Codex session. Do not run them yourself: the
+  current session may depend on the separate copy until it restarts.
+- **Codex can write the chattr store**: give the owner the two `config.toml` lines; they
+  add them, since editing the Codex config is theirs to do.
+- **shared-checkout guard** is `on` by default: it blocks an edit while another session
+  works in the same folder. If the owner wants it off for a repo, the line is
+  `"sharedCheckoutGuard": false` in `.winston/config.json`; say what they lose first.
+- **Node.js version**: every hook runs on the `node` on PATH, and Winston needs 24 or later.
 - **Winston version**: a newer version is out. Give the user the update line as it stands,
   command included: they run it and restart. Do not run the update yourself; it replaces
   the hooks and skills this session is running on.
