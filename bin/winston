@@ -1227,7 +1227,8 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
       fix: plans[choice] && {
         plan: plans[choice], run: runs[choice],
         ...(choice === 'keep' ? { commit: [configPath] } : choice === 'both' ? { commit: [configPath, wf] } : {}),
-        note: choice === 'replace' && `${shownFiles} keeps running on every new issue until its deletion is saved to ${config.branches?.production ?? 'the default branch'}. Next: /winston:init asks in a question box (recommended: yes) and does this for you, or from any branch run: ${landOnDefault(files, 'Remove auto-triage workflow', config.branches?.production, true)}`,
+        // replace: Winston's workflow lands and the other's deletion lands in the same note.
+        ...(choice === 'replace' ? { commit: [wf], removed: files } : {}),
       },
     })
   }
@@ -1363,14 +1364,19 @@ const shq = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`
  * the pull request holds only these files. With `remove`, the files are deleted there
  * instead of copied. It starts with a cd into the repository and a fetch.
  */
-function landOnDefault(paths, message, production, remove = false) {
+function landOnDefault(paths, message, production, remove = false, removed = []) {
   const root = repoRoot(process.cwd()) ?? process.cwd()
-  const rel = paths.map((p) => (isAbsolute(p) ? relative(root, p) : p)).filter((p) => p && !p.startsWith('..'))
+  const rel = (list) => list.map((p) => (isAbsolute(p) ? relative(root, p) : p)).filter((p) => p && !p.startsWith('..'))
+  const [copy, gone] = remove ? [[], rel(paths)] : [rel(paths), rel(removed)]
   const prod = production ? shq(production) : '"$(git symbolic-ref --short refs/remotes/origin/HEAD | cut -d/ -f2-)"'
-  const files = rel.map(shq).join(' ')
   const branch = `winston-setup-${Date.now().toString(36)}`
-  const apply = remove ? `git -C "$T/w" rm -q -- ${files}` : `for f in ${files}; do mkdir -p "$T/w/$(dirname "$f")" && cp "$f" "$T/w/$f"; done`
-  return `cd ${shq(root)} && git fetch origin && P=${prod} && T=$(mktemp -d) && { git worktree add -b ${branch} "$T/w" "origin/$P" && ${apply} && git -C "$T/w" add -A && git -C "$T/w" commit -m ${shq(message)} && git -C "$T/w" push -u origin ${branch} && (cd "$T/w" && gh pr create --base "$P" --fill); git worktree remove --force "$T/w"; rmdir "$T"; }`
+  const apply = [
+    ...(copy.length ? [`for f in ${copy.map(shq).join(' ')}; do mkdir -p "$T/w/$(dirname "$f")" && cp "$f" "$T/w/$f" || exit 1; done`] : []),
+    ...(gone.length ? [`git -C "$T/w" rm -q -- ${gone.map(shq).join(' ')}`] : []),
+  ].join(' && ')
+  // The worktree is removed whatever happened, and the command still fails when a step did,
+  // so a PR that was never opened never reads as done.
+  return `cd ${shq(root)} && git fetch origin && P=${prod} && T=$(mktemp -d) && { (git worktree add -b ${branch} "$T/w" "origin/$P" && ${apply} && git -C "$T/w" add -A && git -C "$T/w" commit -m ${shq(message)} && git -C "$T/w" push -u origin ${branch} && cd "$T/w" && gh pr create --base "$P" --fill); s=$?; git worktree remove --force "$T/w"; rmdir "$T"; test $s -eq 0; }`
 }
 
 /** How to close an open item: { command } for one paste-ready command, and the lines to show. */
@@ -1786,9 +1792,12 @@ function setup(cwd, sit, opts) {
       ...(boot?.notes ?? []).flatMap((n) => (held ? n.commit.without : n.commit.withWorkflow)),
       ...done.flatMap((f) => f.commit ?? []),
     ])]
-    if (paths.length) {
+    const removed = [...new Set(done.flatMap((f) => f.removed ?? []))]
+    if (paths.length || removed.length) {
       const root = repoRoot(cwd) ?? cwd
-      console.log(`\nNote: These files only start working once they are saved to ${production ?? 'the default branch'} on GitHub (GitHub runs workflows, and reads the settings they use, from there only): ${paths.map((f) => shownPath(root, f)).join(', ')}. Next: /winston:init asks in a question box (recommended: yes) and does this for you, or from any branch run: ${landOnDefault(paths, 'Set up Winston', production)}`)
+      const list = (l) => l.map((f) => shownPath(root, f)).join(', ')
+      const what = [paths.length && `These files only start working once they are saved to ${production ?? 'the default branch'} on GitHub (GitHub runs workflows, and reads the settings they use, from there only): ${list(paths)}.`, removed.length && `${list(removed)} ${removed.length === 1 ? 'keeps' : 'keep'} running on every new issue until ${removed.length === 1 ? 'its' : 'their'} deletion is saved there too.`].filter(Boolean).join(' ')
+      console.log(`\nNote: ${what} Next: /winston:init asks in a question box (recommended: yes) and does this for you, or from any branch run: ${landOnDefault(paths, 'Set up Winston', production, false, removed)}`)
     }
     for (const n of done.filter((f) => f.note && !f.commit).map((f) => f.note)) console.log(`\nNote: ${n}`)
   }

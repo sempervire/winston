@@ -536,7 +536,7 @@ test('a second workflow that triages new issues is the owner\'s choice: doctor r
   // replace: Winston's stays, the other goes.
   assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace']).stdout, /Winston will:\n\s+- Make Winston's automatic triage the only one, so each issue is triaged once: delete \.github\/workflows\/auto-triage\.yml/);
   assert.ok(existsSync(theirs), 'a plan changes nothing');
-  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace', '--yes']).stdout, /done\s+Make Winston's automatic triage the only one[^]*Note: \.github\/workflows\/auto-triage\.yml keeps running on every new issue until its deletion is saved to main\. Next: /);
+  assert.match(s.cli(['init', '--mode', 'adopt', '--triage', 'replace', '--yes']).stdout, /done\s+Make Winston's automatic triage the only one[^]*Note: These files only start working once they are saved to main on GitHub [^\n]*: \.github\/workflows\/triage-on-new-issue\.yml\. \.github\/workflows\/auto-triage\.yml keeps running on every new issue until its deletion is saved there too\. Next: [^\n]*git -C "\$T\/w" rm -q -- '\.github\/workflows\/auto-triage\.yml'[^\n]*test \$s -eq 0; \}\n/);
   assert.ok(existsSync(ours) && !existsSync(theirs) && existsSync(join(dir, 'greet.yml')));
   assert.doesNotMatch(s.cli(['doctor']).stdout, /triage workflow conflicts/);
 
