@@ -1553,7 +1553,7 @@ test('model tiers, scope, fresh review lane, lane briefs and handoff rules (#78)
   assert.match(scope, /fewer, larger agents/);
   const review = row('Fresh review lane');
   assert.match(review, /Provisional/);
-  assert.match(review, /reports when its PR opens and then sits idle/);
+  assert.match(review, /reports when the PR is green, then sits idle for review/);
   assert.match(review, /one or two files, Winston resumes that same build lane/);
   assert.match(review, /over two files goes to a fresh lane briefed with the PR, its findings and the files touched/);
   assert.match(review, /review-round limits are unchanged/);
