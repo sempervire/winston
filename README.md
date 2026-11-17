@@ -139,13 +139,17 @@ to a milestone whose cards show labels. On a board that already exists, missing 
 added in that order and Labels is switched on for the view; nothing already there is
 renamed, recoloured or removed. Doctor reports any column the board lacks.
 
-Two steps cannot go through GitHub's API, which can delete a project workflow but not
+Some steps cannot go through GitHub's API, which can delete a project workflow but not
 create or enable one: on the board's Workflows page, **Auto-add to project** (this
 repository, filter `is:issue`) and **Item added to project** (set Status to `New`). Without
-them a new issue never reaches the board. `/winston:init` does both through browser
+them a new issue never reaches the board. A third is recommended, not required: **Item
+closed** (set Status to `Done`), so an issue closed outside a release, completed or not
+planned, moves to `Done` instead of staying in its column (closed pull requests move
+too); doctor shows it as a `tip`.
+`/winston:init` does all three through browser
 control, so have [Claude in Chrome](https://code.claude.com/docs/en/chrome) ready during
 setup: install the extension, sign in to GitHub in that Chrome, and connect it with
-`/chrome` (or start with `claude --chrome`). Without browser control it prints the two
+`/chrome` (or start with `claude --chrome`). Without browser control it prints the
 steps for you to do, and doctor reports them until they are done.
 
 Every config init writes has a deploy gate: merging a pull request into the production
@@ -348,7 +352,7 @@ Top-level keys merge shallowly; the repo wins. See `templates/config.sample.json
 |---|---|
 | `owner` | Who approves and decides. |
 | `branches` | `integration` and `production` branch names. |
-| `board` | Projects v2 owner, number, statuses, priority field. `statuses` names the four columns Winston moves cards through (`New`, `Ready`, `Verify`, `Verified` by default); `In Progress` and a `Done` column after the four are expected under those fixed names. On a board Winston creates, GitHub's own closing workflow moves closed items to `Done`; on an existing board that depends on its own workflow settings. |
+| `board` | Projects v2 owner, number, statuses, priority field. `statuses` names the four columns Winston moves cards through (`New`, `Ready`, `Verify`, `Verified` by default); `In Progress` and a `Done` column after the four are expected under those fixed names. Closed items move to `Done` only through the board's **Item closed** workflow, which init sets up in the browser and doctor shows as a `tip` until it is on. |
 | `processDocs`, `triage.policy` | The repo docs whose rules win over Winston's. |
 | `phase` | The current milestone, given to every new issue. `false` to go without. |
 | `triage.workflow`, `triage.alongside` | The triage workflow's file name, or `false` when another workflow is the repo's triage; other triage workflows kept knowingly. |
