@@ -212,7 +212,7 @@ const codexSources = () => {
 const BOARD_QUERY = `query($owner:String!,$number:Int!){ repositoryOwner(login:$owner){
   ... on Organization{ projectV2(number:$number){ ...F } } ... on User{ projectV2(number:$number){ ...F } } } }
 fragment F on ProjectV2 { id title fields(first:100){ nodes{ ... on ProjectV2FieldCommon{ id name } ... on ProjectV2SingleSelectField{ options{ id name color description } } } }
-  workflows(first:50){ nodes{ name enabled } }
+  workflows(first:50){ nodes{ name enabled updatedAt } }
   views(first:50){ nodes{ id name layout filter fields(first:50){ nodes{ ... on ProjectV2FieldCommon{ id name } } }
     groupByFields(first:10){ nodes{ ... on ProjectV2FieldCommon{ name } } } verticalGroupByFields(first:10){ nodes{ ... on ProjectV2FieldCommon{ name } } } } } }`
 
@@ -272,8 +272,8 @@ const openMilestones = (root) => run('gh', ['api', '--method', 'GET', 'repos/{ow
 const INTAKE_BOT = 'github-project-automation'
 const INTAKE_QUERY = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ issues(last:10){ nodes{ number
   timelineItems(first:100,itemTypes:[ADDED_TO_PROJECT_V2_EVENT,PROJECT_V2_ITEM_STATUS_CHANGED_EVENT]){ nodes{ __typename
-    ... on AddedToProjectV2Event{ actor{ login } project{ number title owner{ ... on User{ login } ... on Organization{ login } } } }
-    ... on ProjectV2ItemStatusChangedEvent{ actor{ login } project{ number title owner{ ... on User{ login } ... on Organization{ login } } } } } } } } } }`
+    ... on AddedToProjectV2Event{ createdAt actor{ login } project{ number title owner{ ... on User{ login } ... on Organization{ login } } } }
+    ... on ProjectV2ItemStatusChangedEvent{ createdAt actor{ login } project{ number title owner{ ... on User{ login } ... on Organization{ login } } } } } } } } } }`
 
 /**
  * Whether this board's two intake workflows have actually run recently, read from the
@@ -284,20 +284,41 @@ const INTAKE_QUERY = `query($owner:String!,$name:String!){ repository(owner:$own
  * older project was auto-adding the repo's issues while this board's workflows were off).
  * A second source beside the `ProjectV2.workflows` listing. `checked` is false when the
  * repo has no issues to read.
+ *
+ * `since` bounds that evidence by time (#68), per workflow (`add`, `status`): the time
+ * the listing last saw that workflow change, its `updatedAt`, as milliseconds. A bot event
+ * proves the workflow runs only if it is NEWER than that, so one switched off after it ran
+ * is not read as on. `undefined` means the listing shows no switch to bound by (the
+ * workflow is missing from it, #45's shape) and every event counts; `null` means it was
+ * listed but when it last changed is unreadable. An event that cannot be placed against
+ * its bound (no time on either side) is neither proof nor disproof: it lands in
+ * `unsure`. One at or before the bound lands in `stale`.
  */
-function intakeFromTimeline(root, owner, number) {
+function intakeFromTimeline(root, owner, number, since = {}) {
   const r = run('gh', ['api', 'graphql', '-f', `query=${INTAKE_QUERY}`, '-F', 'owner={owner}', '-F', 'name={repo}'], { cwd: root })
   let issues = []
   try {
     issues = JSON.parse(r.out).data.repository.issues.nodes.filter(Boolean)
   } catch {}
-  const result = { checked: issues.length > 0, addedToProject: null, statusChanged: null, others: [] }
+  const result = { checked: issues.length > 0, addedToProject: null, statusChanged: null, unsure: { add: null, status: null }, stale: { add: null, status: null }, others: [] }
   const here = (e) => e?.actor?.login?.startsWith(INTAKE_BOT) && e.project?.number === number && e.project?.owner?.login?.toLowerCase() === String(owner).toLowerCase()
+  // Where one event stands against its workflow's bound: proof, unsure, or stale.
+  const place = (e, bound) => {
+    if (bound === undefined) return 'proof'
+    const at = typeof e.createdAt === 'string' ? Date.parse(e.createdAt) : NaN
+    if (bound === null || !Number.isFinite(bound) || !Number.isFinite(at)) return 'unsure'
+    return at > bound ? 'proof' : 'stale'
+  }
+  const kinds = { AddedToProjectV2Event: ['add', 'addedToProject'], ProjectV2ItemStatusChangedEvent: ['status', 'statusChanged'] }
   // Newest first, so the detail names the most recent proof.
   for (const issue of [...issues].sort((a, b) => b.number - a.number)) {
     for (const e of (issue.timelineItems?.nodes ?? []).filter(here)) {
-      if (e.__typename === 'AddedToProjectV2Event') result.addedToProject ??= issue.number
-      if (e.__typename === 'ProjectV2ItemStatusChangedEvent') result.statusChanged ??= issue.number
+      const kind = kinds[e.__typename]
+      if (!kind) continue
+      const [key, field] = kind
+      const where = place(e, since[key])
+      if (where === 'proof') result[field] ??= issue.number
+      else result[where][key] ??= issue.number
     }
   }
   // Another project's intake automation taking this repo's issues (#45). Only an issue
@@ -1089,7 +1110,19 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
       const apiOn = { add: enabled('Auto-add to project'), status: enabled('Item added to project') }
       // The timeline is read every time: besides settling a workflow the API calls off, it
       // shows whether another project is taking this repo's new issues first (#45).
-      const timeline = !planned?.newBoard ? intakeFromTimeline(root, owner, number) : null
+      // The bound on that timeline (#68): when the listing last saw each workflow change, so
+      // a bot event from before a workflow was switched off is not read as it being on. Only
+      // a workflow the API calls off needs one; with several listed under the name, the
+      // latest change bounds them all, and an unreadable time leaves the bound unknown.
+      const listed = (name) => (project.workflows?.nodes ?? []).filter((w) => w && (w.name === name || (name === 'Auto-add to project' && /^Auto-add(?! sub-issues)/.test(w.name))))
+      const boundOf = (name) => {
+        const ws = listed(name)
+        if (!ws.length) return undefined
+        const times = ws.map((w) => (typeof w.updatedAt === 'string' ? Date.parse(w.updatedAt) : NaN))
+        return times.every(Number.isFinite) ? Math.max(...times) : null
+      }
+      const since = { add: apiOn.add ? undefined : boundOf('Auto-add to project'), status: apiOn.status ? undefined : boundOf('Item added to project') }
+      const timeline = !planned?.newBoard ? intakeFromTimeline(root, owner, number, since) : null
       for (const o of timeline?.others ?? []) {
         const there = `${boardUrl(o.owner, o.number)}/workflows`
         const label = o.owner.toLowerCase() === String(owner).toLowerCase() ? `project ${o.number}` : `${o.owner} project ${o.number}`
@@ -1102,20 +1135,26 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
           hand: `before turning on board ${number}'s workflows, open ${there}, choose "Auto-add to project", click Edit, remove this repository (or turn the workflow off if this repository is its only one), then Save`,
         })
       }
-      const stateOf = (apiSays, botSays) => (apiSays || botSays ? 'ok' : timeline && !timeline.checked ? 'unknown' : 'missing')
+      const stateOf = (apiSays, botSays, unsure) => (apiSays || botSays ? 'ok' : unsure || (timeline && !timeline.checked) ? 'unknown' : 'missing')
+      // Off, though the bot ran: either before the switch-off (stale) or at a time that
+      // cannot be placed against it (unsure). Only a confident "on" or "off" is stated.
+      const offDetail = (key, workflow) => timeline?.unsure[key]
+        ? `may be on: issue #${timeline.unsure[key]}'s timeline shows the board's automation ran, but GitHub gave no time for that run or for the "${workflow}" workflow's last change, so doctor cannot tell whether it ran before the workflow was switched off; check ${page}`
+        : timeline && !timeline.checked ? 'could not check yet: there are no issues to look at. File one test issue, then run /winston:doctor again'
+        : `not on yet: the board's "${workflow}" workflow is off${timeline?.stale[key] ? ` (issue #${timeline.stale[key]}'s timeline shows it ran, but before the workflow was last changed)` : ''}`
       add({
-        name: 'Board adds new issues', state: stateOf(apiOn.add, timeline?.addedToProject),
+        name: 'Board adds new issues', state: stateOf(apiOn.add, timeline?.addedToProject, timeline?.unsure.add),
         detail: apiOn.add ? '' : timeline?.addedToProject ? `on (confirmed by issue #${timeline.addedToProject}'s timeline)`
-          : timeline && !timeline.checked ? 'could not check yet: there are no issues to look at. File one test issue, then run /winston:doctor again' : 'not on yet: the board\'s "Auto-add to project" workflow is off',
+          : offDetail('add', 'Auto-add to project'),
         board: true,
         browser: true,
         hand: `open ${page}, choose "Auto-add to project", click Edit, pick this repository and set the filter to is:issue, then click "Save and turn on workflow"`,
       })
       add({
-        name: `Board puts new issues in ${intake}`, state: stateOf(apiOn.status, timeline?.statusChanged),
+        name: `Board puts new issues in ${intake}`, state: stateOf(apiOn.status, timeline?.statusChanged, timeline?.unsure.status),
         detail: apiOn.status ? ''
           : timeline?.statusChanged ? `on (confirmed by issue #${timeline.statusChanged}'s timeline)`
-          : timeline && !timeline.checked ? 'could not check yet: there are no issues to look at. File one test issue, then run /winston:doctor again' : 'not on yet: the board\'s "Item added to project" workflow is off',
+          : offDetail('status', 'Item added to project'),
         board: true,
         browser: true,
         hand: `open ${page}, choose "Item added to project", click Edit, under Set value choose Status: ${intake}, then click "Save and turn on workflow"`,
