@@ -1543,6 +1543,9 @@ test('model tiers, scope, fresh review lane, lane briefs and handoff rules (#78)
   assert.match(tiers, /Lowest tier for pure scripting \(provisional\)/);
   assert.match(tiers, /both the production model and the middle tier/);
   assert.match(tiers, /one-line reason in its dispatch/);
+  assert.match(tiers, /This table is the default; the cost rule governs any deviation/);
+  assert.match(tiers, /the model whose output the stand-in must match/);
+  assert.match(tiers, /recorded with the slice result in the dispatch/);
   const scope = row('Scope and fan-out');
   assert.match(scope, /required scope first/);
   assert.match(scope, /if the required-scope result misses its acceptance check, or if the owner opted in at setup/);
@@ -1550,9 +1553,10 @@ test('model tiers, scope, fresh review lane, lane briefs and handoff rules (#78)
   assert.match(scope, /fewer, larger agents/);
   const review = row('Fresh review lane');
   assert.match(review, /Provisional/);
-  assert.match(review, /exits when its PR opens, and Winston still merges only a green, reviewed PR/);
-  assert.match(review, /fresh lane briefed with the PR, its findings and the files touched/);
-  assert.match(review, /one or two files is made by the fresh lane itself/);
+  assert.match(review, /reports when its PR opens and then sits idle/);
+  assert.match(review, /one or two files, Winston resumes that same build lane/);
+  assert.match(review, /over two files goes to a fresh lane briefed with the PR, its findings and the files touched/);
+  assert.match(review, /review-round limits are unchanged/);
   const briefs = row('Lane briefs');
   assert.match(briefs, /Pin the base commit/);
   assert.match(briefs, /Grep before reading any file over about 500 lines/);
