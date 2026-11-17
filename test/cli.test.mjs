@@ -1541,7 +1541,7 @@ test('model tiers, scope, fresh review lane, lane briefs and handoff rules (#78)
   const tiers = row('Model tiers');
   assert.match(tiers, /top, middle, lowest/);
   assert.match(tiers, /Lowest tier for pure scripting \(provisional\)/);
-  assert.match(tiers, /both the production model and the middle tier/);
+  assert.match(tiers, /both the production model \(.*?\) and the middle tier/);
   assert.match(tiers, /one-line reason in its dispatch/);
   assert.match(tiers, /This table is the default; the cost rule governs any deviation/);
   assert.match(tiers, /the model whose output the stand-in must match/);
