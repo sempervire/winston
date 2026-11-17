@@ -70,7 +70,8 @@ unattended, from the workflow named by `triage.workflow` in `.winston/config.jso
 that a card carries its stamp before a `{{board.statuses[0]}}` -> `{{board.statuses[1]}}` move is possible, rather than
 whenever the next whole-board pass happens to run. It runs when an issue is opened by the
 owner or a collaborator, on a manual dispatch naming one issue number, and on a manual
-dispatch with no number as a sweep. Nothing runs on a timer. A run on an opened or dispatched issue triages that one issue and no other.
+dispatch with no number as a sweep. Nothing runs on a timer. A run on an opened or
+dispatched issue triages that one issue and no other.
 
 **The unattended pass applies the Effects above and nothing more.** The `risk:` tier,
 Priority, the plan comment, the reporter assignment, and the labels the "Labels triage
@@ -80,8 +81,8 @@ record that the issue was read, never a promotion.
 
 On the `opened` event the run waits for the board to add the issue and reads its status
 there; an issue that never reaches the board gets nothing written, and the next manual
-sweep or whole-board pass takes it once it is there. On a dispatch, read the status from the board; an issue that is closed,
-not on the board, or at any status other than `{{board.statuses[0]}}` or `{{board.statuses[1]}}`, gets nothing written.
+sweep or whole-board pass takes it once it is there. On a dispatch, read the status from
+the board; an issue that is closed, not on the board, or at any status other than `{{board.statuses[0]}}` or `{{board.statuses[1]}}`, gets nothing written.
 
 **The unattended pass skips an issue that already has a `risk:` tier.** Re-reading
 triaged issues is the whole-board pass's job, and "no skip" applies there. A dispatch
@@ -101,8 +102,9 @@ visible state — a card with no `risk:` tier, which is the untriaged queue both
 `/winston:radar` and `/winston:triage` already read. The manual sweep (a dispatch with no
 issue number) is the backstop: it takes up to five open issues at `{{board.statuses[0]}}` or `{{board.statuses[1]}}` with no
 `risk:` tier, filed by the owner, a member or a collaborator, oldest first, so an issue the
-`opened` run missed is stamped the next time someone runs it. It passes by an issue whose last triage comment is a stop nobody has answered (no
-comment, body edit or rename since), so unresolved stops do not use up its five.
+`opened` run missed is stamped the next time someone runs it. It passes by an issue whose
+last triage comment is a stop nobody has answered (no comment, body edit or rename
+since), so unresolved stops do not use up its five.
 
 **The invariant is a normal-path guarantee, not an absolute one.** A card can still reach
 `{{board.statuses[1]}}` unstamped, because nothing gates the `{{board.statuses[1]}}` move.

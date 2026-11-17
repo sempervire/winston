@@ -65,8 +65,9 @@ Everything above describes a pass over the board. Triage also runs one issue at 
 unattended, from the workflow named by `triage.workflow` in `.winston/config.json` — so
 that a card carries its stamp before a `New` -> `Ready` move is possible, rather than
 whenever the next whole-board pass happens to run. It runs when an issue is opened by the
-owner or a collaborator, on a manual dispatch naming one issue number, and once a day as a
-sweep. A run on an opened or dispatched issue triages that one issue and no other.
+owner or a collaborator, on a manual dispatch naming one issue number, and on a manual
+dispatch with no number as a sweep. Nothing runs on a timer. A run on an opened or
+dispatched issue triages that one issue and no other.
 
 **The unattended pass applies the Effects above and nothing more.** The `risk:` tier,
 Priority, the plan comment, the reporter assignment, and the labels the "Labels triage
@@ -75,8 +76,8 @@ never edits a file, closes an issue, merges or deploys. A stamp at `New` is tria
 record that the issue was read, never a promotion.
 
 On the `opened` event the run waits for the board to add the issue and reads its status
-there; an issue that never reaches the board gets nothing written, and the sweep takes it
-once it is there. On a dispatch, read the status from the board; an issue that is closed,
+there; an issue that never reaches the board gets nothing written, and the next manual
+sweep or whole-board pass takes it once it is there. On a dispatch, read the status from the board; an issue that is closed,
 not on the board, or at any status other than `New` or `Ready`, gets nothing written.
 
 **The unattended pass skips an issue that already has a `risk:` tier.** Re-reading
@@ -94,11 +95,12 @@ is already a stop, do not post another.
 **When Actions is unavailable the card stays unstamped, and that is the designed
 failure.** A budget that has run out, an outage, or a failed run all produce the same
 visible state — a card with no `risk:` tier, which is the untriaged queue both
-`/winston:radar` and `/winston:triage` already read. The daily sweep is the backstop: it takes
-up to five open issues at `New` or `Ready` with no `risk:` tier, filed by the owner, a member
-or a collaborator, oldest first, so an issue the `opened` run missed is stamped within a
-day. It passes by an issue whose last triage comment is a stop nobody has answered (no
-comment, body edit or rename since), so unresolved stops do not use up its five.
+`/winston:radar` and `/winston:triage` already read. The manual sweep (a dispatch with no
+issue number) is the backstop: it takes up to five open issues at `New` or `Ready` with no
+`risk:` tier, filed by the owner, a member or a collaborator, oldest first, so an issue the
+`opened` run missed is stamped the next time someone runs it. It passes by an issue whose
+last triage comment is a stop nobody has answered (no comment, body edit or rename
+since), so unresolved stops do not use up its five.
 
 **The invariant is a normal-path guarantee, not an absolute one.** A card can still reach
 `Ready` unstamped, because nothing gates the `Ready` move.
