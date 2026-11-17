@@ -70,8 +70,8 @@ unattended, from the workflow named by `triage.workflow` in `.winston/config.jso
 that a card carries its stamp before a `{{board.statuses[0]}}` -> `{{board.statuses[1]}}` move is possible, rather than
 whenever the next whole-board pass happens to run. It runs when an issue is opened by the
 owner or a collaborator, on a manual dispatch naming one issue number, and on a manual
-dispatch with no number as a sweep. Nothing runs on a timer. A run on an opened or
-dispatched issue triages that one issue and no other.
+dispatch with no number as a sweep. Nothing runs on a timer. A run on an opened issue,
+or on a dispatch naming one, triages that one issue and no other.
 
 **The unattended pass applies the Effects above and nothing more.** The `risk:` tier,
 Priority, the plan comment, the reporter assignment, and the labels the "Labels triage
