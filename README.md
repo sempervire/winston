@@ -185,11 +185,11 @@ so the issue stays untriaged until someone answers. Because Claude has no tools 
 step, nothing it needs can be silently refused.
 
 - **When it runs.** On each new issue filed by the owner, a collaborator or an
-  organization member. Once a day, as a sweep of up to five open issues with no `risk:`
+  organization member. And when you start it by hand from the Actions tab: one issue by
+  number, or leave the number empty for a sweep of up to five open issues with no `risk:`
   tier yet (in the board's first two columns, filed by those same people over an hour ago,
   lowest number first, skipping any where triage stopped and is waiting for an answer).
-  And when you start it by hand from the Actions tab (one issue by number, or leave the
-  number empty for the sweep). Tick `dry_run` to see the verdict without anything being
+  Nothing runs on a timer. Tick `dry_run` to see the verdict without anything being
   written. An issue that already has a `risk:` tier is left alone; re-triaging is the
   `/winston:triage` pass's job.
 - **Which labels.** Every plan gets a `risk:` tier. Any other label must be named on the

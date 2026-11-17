@@ -214,9 +214,9 @@ on an explicit yes.
 A plan line that puts every new issue in the current phase is the **issue phase**. The board view
 is filtered to one milestone, and a new issue has none, so without this it reaches the
 board and never appears in that view. init sets `phase` in the config to that milestone
-and writes `.github/workflows/set-issue-phase.yml`, which sets it on each new issue and
-once a day on any open issue with none; it needs no secret and never changes a milestone
-that is set. A second line sets the milestone on the open issues that have none now. Say
+and writes `.github/workflows/set-issue-phase.yml`, which sets it on each new issue (and,
+on a manual dispatch, on any open issue with none; nothing runs on a timer); it needs no
+secret and never changes a milestone that is set. A second line sets the milestone on the open issues that have none now. Say
 in plain words that both only take effect once the workflow and the config are committed
 to the default branch, and ask in a question box (recommended: commit them now). To move
 to the next phase the owner edits that one `phase` line. When the board's views show

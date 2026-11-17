@@ -9,6 +9,29 @@ import { loadConfig, loadLayers } from '../lib/config.mjs';
 import { coveredBy, DOCTOR_POINTER, firesOnNewIssue, permissionRules, policyBlanks, policyState, repinTriage, tokenUrl, triageMechanism } from '../bin/winston';
 
 const ROOT = resolve(import.meta.dirname, '..');
+
+// The keys directly under a workflow's top-level `on:` block, each with the lines nested under it.
+function triggers(text) {
+  const block = text.match(/^on:\n((?:[ \t]+.*\n|\n)*)/m);
+  assert.ok(block, 'the workflow has a block-style on:');
+  const out = {};
+  let key = null;
+  for (const line of block[1].split('\n')) {
+    const top = line.match(/^  ([A-Za-z_]+):/);
+    if (top) out[key = top[1]] = '';
+    else if (key && line.trim()) out[key] += line.trim() + '\n';
+  }
+  return out;
+}
+
+// Both installed workflows fire on a new issue and on a manual dispatch, and never on a timer (#76).
+function assertNoTimer(text, name) {
+  const on = triggers(text);
+  assert.ok(!('schedule' in on), `${name} has no schedule trigger`);
+  assert.doesNotMatch(text, /^\s*-\s*cron:/m, `${name} has no cron line`);
+  assert.match(on.issues ?? '', /^types: \[opened\]$/m, `${name} runs on issues: opened`);
+  assert.ok('workflow_dispatch' in on, `${name} can be dispatched by hand`);
+}
 const CLI = join(ROOT, 'bin/winston');
 
 function sandbox(t) {
@@ -236,16 +259,16 @@ const boardJson = ({ options = ['New', 'Ready', 'In Progress', 'Verify', 'Verifi
       ...(priority ? [{ id: 'PRIO1', name: 'Priority' }] : []),
       { id: 'TITLE1', name: 'Title' }, { id: 'LABELS1', name: 'Labels' }, { id: 'LINKED1', name: 'Linked pull requests' },
     ] },
-    workflows: { nodes: workflows.map((name) => ({ name, enabled: true })) },
+    workflows: { nodes: workflows.map((w) => (typeof w === 'string' ? { name: w, enabled: true } : w)) },
     views: { nodes: views },
   } } } });
 // As GitHub returns a board view: the columns are the vertical grouping, groupByFields is empty.
 const KANBAN = [{ id: 'VIEW9', name: 'Pilot', layout: 'BOARD_LAYOUT', fields: { nodes: [{ id: 'TITLE1', name: 'Title' }, { id: 'LABELS1', name: 'Labels' }] }, groupByFields: { nodes: [] }, verticalGroupByFields: { nodes: [{ name: 'Status' }] } }];
 const KANBAN_NO_LABELS = [{ ...KANBAN[0], fields: { nodes: [{ id: 'TITLE1', name: 'Title' }] } }];
 const INTAKE = ['Auto-add to project', 'Item added to project'];
-// Recent issues with their project events: [number, [[type, actor, board owner, board number], ...]].
+// Recent issues with their project events: [number, [[type, actor, board owner, board number, createdAt?], ...], { createdAt?, closed? }?].
 const BOT = 'github-project-automation';
-const timelineJson = (issues) => JSON.stringify({ data: { repository: { issues: { nodes: issues.map(([number, events]) => ({ number, timelineItems: { nodes: events.map(([type, login, owner, n]) => ({ __typename: type === 'add' ? 'AddedToProjectV2Event' : 'ProjectV2ItemStatusChangedEvent', actor: { login }, project: { number: n, title: `Project ${n}`, owner: { login: owner } } })) } })) } } } });
+const timelineJson = (issues) => JSON.stringify({ data: { repository: { issues: { nodes: issues.map(([number, events, issue = {}]) => ({ number, ...issue, timelineItems: { nodes: events.map(([type, login, owner, n, at]) => ({ __typename: type === 'add' ? 'AddedToProjectV2Event' : 'ProjectV2ItemStatusChangedEvent', ...(at ? { createdAt: at } : {}), actor: { login }, project: { number: n, title: `Project ${n}`, owner: { login: owner } } })) } })) } } } });
 const linkedJson = (boards) => JSON.stringify({ data: { repository: { projectsV2: { nodes: boards.map(([login, number, title]) => ({ number, title, closed: false, owner: { login } })) } } } });
 
 // An existing repo: one commit holding AGENTS.md on main, pushed to a bare origin.
@@ -370,6 +393,7 @@ test('init --mode new creates the repo, both branches, the board and the config,
   assert.deepEqual(config.deployGate, { phrase: 'approve production deploy', guarded: [{ kind: 'pr-merge', base: 'main' }] }, 'every config init writes carries the default deploy gate');
   assert.deepEqual(originHeads(s), ['main', 'staging']);
   assert.deepEqual(s.git('show', '--name-only', '--format=', 'HEAD').split('\n').sort(), ['.github/workflows/triage-on-new-issue.yml', '.winston/config.json'], 'the first commit holds only what init wrote');
+  assertNoTimer(readFileSync(join(s.repo, '.github/workflows/triage-on-new-issue.yml'), 'utf8'), 'the installed triage workflow');
   const calls = s.calls();
   assert.match(calls, /updateProjectV2Field[^\n]*\[\{id:"opt0",name:"New",color:BLUE,description:"New issues, waiting to be looked at\."\},\{name:"Ready",color:GREEN[^\n]*\{id:"opt1",name:"In Progress",color:YELLOW[^\n]*\{name:"Verify",color:RED[^\n]*\{name:"Verified",color:GRAY[^\n]*\{id:"opt2",name:"Done",color:PURPLE/, 'six columns in order; each stock option kept by id, Todo as New so the board\'s own workflow sets it');
   assert.match(calls, /project field-create 7 --owner pat --name Start date --data-type DATE/);
@@ -622,6 +646,7 @@ test('a new issue gets the current phase\'s milestone: doctor reports hidden iss
   assert.match(plan.stdout, /Note: These files [^\n]*set-issue-phase\.yml/);
   assert.deepEqual(config().board, { owner: 'acme', number: 1 }, 'the rest of the config is as it was');
   assert.equal(readFileSync(wf, 'utf8'), readFileSync(join(ROOT, 'templates/set-issue-phase.yml'), 'utf8'));
+  assertNoTimer(readFileSync(wf, 'utf8'), 'the installed phase workflow');
   assert.match(s.calls(), /issue edit 7 --milestone Pilot\n[^]*issue edit 13 --milestone Pilot\n/);
   const after = s.cli(['doctor']);
   assert.match(after.stdout, /^done\s+New issues join the current phase\s+— new issues get the milestone "Pilot" once set-issue-phase\.yml and the settings are saved to the default branch on GitHub$/m);
@@ -692,10 +717,11 @@ test('with no board view yet, the phase is the milestone init is about to filter
   assert.match(s.calls(), /issue edit 4 --milestone Phase 1\.0\n/);
 });
 
-test('the phase workflow runs on a new issue and daily, needs no secret, and never changes a set milestone', () => {
+test('the phase workflow runs on a new issue and on a manual dispatch, never on a timer, needs no secret, and never changes a set milestone', () => {
   const text = readFileSync(join(ROOT, 'templates/set-issue-phase.yml'), 'utf8');
   assert.equal(firesOnNewIssue(text), true);
-  assert.match(text, /schedule:\n\s+- cron:/);
+  assertNoTimer(text, 'templates/set-issue-phase.yml');
+  assert.match(text, /if \[ -n "\$ISSUE" \]; then\n\s+numbers=\$ISSUE\n\s+else\n\s+numbers=\$\(gh issue list/, 'a dispatch with no issue still sweeps the open issues with no milestone');
   assert.match(text, /permissions:\n\s+contents: read\n\s+issues: write\n/);
   assert.doesNotMatch(text, /secrets\./);
   assert.match(text, /if \[ -z "\$has" \]; then\n\s+gh issue edit "\$n" --milestone "\$phase"/);
@@ -838,6 +864,86 @@ test('doctor takes the projects automation\'s events on this board as proof its 
   const blind = s.cli(['doctor']);
   assert.match(blind.stdout, /^could not check {2}Board adds new issues\s+— could not check yet: there are no issues to look at\. File one test issue, then run \/winston:doctor again$/m);
   assert.doesNotMatch(blind.stdout, /\d\. Board adds new issues/, 'not a required step: never counted as missing');
+});
+
+test('doctor counts the automation\'s events only when newer than the workflow\'s last change (#68)', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  mkdirSync(join(s.repo, '.winston'));
+  writeFileSync(join(s.repo, '.winston/config.json'), JSON.stringify({ board: { owner: 'acme', number: 6 } }));
+  // Both intake workflows are listed as off, last changed on 1 October.
+  const OFF_AT = '2026-10-01T00:00:00Z';
+  const offBoard = (updatedAt = OFF_AT) => boardJson({ workflows: INTAKE.map((name) => ({ name, enabled: false, ...(updatedAt ? { updatedAt } : {}) })), views: KANBAN });
+  writeFileSync(join(s.tmp, 'board.json'), offBoard());
+  const BEFORE = '2026-09-15T12:00:00Z';
+  const AFTER = '2026-10-05T12:00:00Z';
+  const doctor = (issues) => { writeFileSync(join(s.tmp, 'timeline.json'), timelineJson(issues)); return s.cli(['doctor']).stdout; };
+  const staleRow = (row, wf, n) => new RegExp(`^needs you\\s+${row}\\s+— not on yet: the board's "${wf}" workflow is off \\(issue #${n}'s timeline shows it ran, but before the workflow was last changed\\)$`, 'm');
+
+  // False green: the bot ran, then the workflows were switched off. Not "on".
+  const off = doctor([[44, [['add', BOT, 'acme', 6, BEFORE], ['status', BOT, 'acme', 6, BEFORE]]]]);
+  assert.match(off, staleRow('Board adds new issues', 'Auto-add to project', 44));
+  assert.match(off, staleRow('Board puts new issues in New', 'Item added to project', 44));
+  assert.doesNotMatch(off, /confirmed by issue/);
+
+  // False red (#45): the API says off, but the bot ran after the last change. "On".
+  const running = doctor([[44, [['add', BOT, 'acme', 6, AFTER], ['status', BOT, 'acme', 6, AFTER]]]]);
+  assert.match(running, /^done\s+Board adds new issues\s+— on \(confirmed by issue #44's timeline\)$/m);
+  assert.match(running, /^done\s+Board puts new issues in New\s+— on \(confirmed by issue #44's timeline\)$/m);
+
+  // A transferred issue carries its old board events: the newest-numbered issue's event is
+  // old, so it proves nothing, and with nothing newer the row stays off.
+  const moved = doctor([[49, []], [50, [['add', BOT, 'acme', 6, '2026-08-01T00:00:00Z']]]]);
+  assert.match(moved, staleRow('Board adds new issues', 'Auto-add to project', 50));
+  // An older issue's fresh event still proves it: the event's time counts, not the issue number.
+  const movedFresh = doctor([[40, [['add', BOT, 'acme', 6, AFTER]]], [50, [['add', BOT, 'acme', 6, '2026-08-01T00:00:00Z']]]]);
+  assert.match(movedFresh, /^done\s+Board adds new issues\s+— on \(confirmed by issue #40's timeline\)$/m);
+
+  // An issue filed before the board existed, and one closed at once, carry no events of
+  // this board; neither hides a fresh run on another issue.
+  const quiet = doctor([[30, []], [45, [['add', BOT, 'acme', 6, AFTER], ['status', BOT, 'acme', 6, AFTER]]], [51, []]]);
+  assert.match(quiet, /^done\s+Board adds new issues\s+— on \(confirmed by issue #45's timeline\)$/m);
+  assert.match(quiet, /^done\s+Board puts new issues in New\s+— on \(confirmed by issue #45's timeline\)$/m);
+
+  // Ambiguous: an event without a time can't be placed against the switch-off. Uncertain,
+  // never a confident "on", and not counted as a required step either.
+  const unsureRow = (row, wf, n) => new RegExp(`^could not check\\s+${row}\\s+— may be on: issue #${n}'s timeline shows the board's automation ran, but GitHub gave no time to compare it against, so doctor cannot tell whether the "${wf}" workflow was switched off since; check https://github\\.com/users/acme/projects/6/workflows$`, 'm');
+  const untimed = doctor([[44, [['add', BOT, 'acme', 6], ['status', BOT, 'acme', 6]]]]);
+  assert.match(untimed, unsureRow('Board adds new issues', 'Auto-add to project', 44));
+  assert.match(untimed, unsureRow('Board puts new issues in New', 'Item added to project', 44));
+  assert.doesNotMatch(untimed, /\d\. Board (adds|puts)/);
+  // A workflow listed as off with no time of its last change: likewise uncertain.
+  writeFileSync(join(s.tmp, 'board.json'), offBoard(null));
+  const unbounded = doctor([[44, [['add', BOT, 'acme', 6, AFTER]]]]);
+  assert.match(unbounded, unsureRow('Board adds new issues', 'Auto-add to project', 44));
+  assert.match(unbounded, /^needs you\s+Board puts new issues in New\s+— not on yet: the board's "Item added to project" workflow is off$/m);
+  // A dated proof outranks an undated one: with a bound, a fresh event still reads "on".
+  writeFileSync(join(s.tmp, 'board.json'), offBoard());
+  const mixed = doctor([[43, [['add', BOT, 'acme', 6, AFTER]]], [44, [['add', BOT, 'acme', 6]]]]);
+  assert.match(mixed, /^done\s+Board adds new issues\s+— on \(confirmed by issue #43's timeline\)$/m);
+
+  // Several Auto-add workflows, all off: the latest change bounds them all.
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: [
+    { name: 'Auto-add to project', enabled: false, updatedAt: '2026-09-01T00:00:00Z' },
+    { name: 'Auto-add to project (2)', enabled: false, updatedAt: OFF_AT },
+    { name: 'Item added to project', enabled: true },
+  ], views: KANBAN }));
+  assert.match(doctor([[44, [['add', BOT, 'acme', 6, BEFORE]]]]), staleRow('Board adds new issues', 'Auto-add to project', 44), 'after the older workflow changed but before the newer one: not proof');
+  assert.match(doctor([[44, [['add', BOT, 'acme', 6, AFTER]]]]), /^done\s+Board adds new issues\s+— on \(confirmed by issue #44's timeline\)$/m);
+
+  // A workflow missing from the listing (#45's shape, or deleted) has no switch to bound
+  // by: a newer open issue the automation did not take means intake stopped.
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: ['Item added to project'], views: KANBAN }));
+  const ran = ['add', BOT, 'acme', 6, BEFORE];
+  const stopped = doctor([[44, [ran], { createdAt: '2026-09-15T11:00:00Z' }], [45, [], { createdAt: OFF_AT }]]);
+  assert.match(stopped, /^needs you\s+Board adds new issues\s+— not on yet: the board's "Auto-add to project" workflow is off \(issue #44's timeline shows it ran, but newer issue #45 was not taken\)$/m);
+  assert.doesNotMatch(stopped, /confirmed by issue/);
+  // The untaken issue was closed at once, or is older than the run (filed before the board
+  // existed, or transferred in): neither says intake stopped.
+  assert.match(doctor([[44, [ran]], [45, [], { createdAt: OFF_AT, closed: true }]]), /^done\s+Board adds new issues\s+— on \(confirmed by issue #44's timeline\)$/m);
+  assert.match(doctor([[44, [ran]], [45, [], { createdAt: '2026-08-01T00:00:00Z' }]]), /^done\s+Board adds new issues\s+— on \(confirmed by issue #44's timeline\)$/m);
+  // The untaken issue has no time: uncertain, not "on".
+  assert.match(doctor([[44, [ran]], [45, []]]), unsureRow('Board adds new issues', 'Auto-add to project', 44));
 });
 
 test('doctor names another project that auto-adds the repo\'s issues, ahead of the board\'s own workflows (#45)', (t) => {
@@ -1526,4 +1632,43 @@ test('commands for a person take the form of the app Winston runs in, and the me
   const adopt = spawnSync(process.execPath, [CLI, 'init', '--mode', 'adopt'], { cwd: s.repo, env: { ...s.env, HOME: s.repo }, encoding: 'utf8' });
   assert.equal(adopt.status, 1);
   assert.match(adopt.stdout, /it is your home folder/);
+});
+
+test('model tiers, scope, fresh review lane, lane briefs and handoff rules (#78)', () => {
+  const flat = (f) => readFileSync(join(ROOT, 'skills', f, 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  const w = flat('winston');
+  const cost = "Cost never delays startable work. It still sets each lane's model tier and scope: the lowest tier and narrowest scope that do the job, unless a lane states why not.";
+  assert.equal(w.split(cost).length - 1, 2, 'Parallelism row and Parallelism check');
+  assert.match(w, /name it\. Cost never delays/);
+  assert.match(w, /\. Only the real limits in step 3 hold work back\./);
+  assert.doesNotMatch(w, /Token or model cost is never a reason/);
+  const raw = readFileSync(join(ROOT, 'skills', 'winston', 'SKILL.md'), 'utf8').split('\n');
+  const row = (name) => { const l = raw.find((x) => x.startsWith('| ' + name + ' |')); assert.ok(l, name); return l; };
+  const tiers = row('Model tiers');
+  assert.match(tiers, /top, middle, lowest/);
+  assert.match(tiers, /Lowest tier for pure scripting \(provisional\)/);
+  assert.match(tiers, /both the production model \(.*?\) and the middle tier/);
+  assert.match(tiers, /one-line reason in its dispatch/);
+  assert.match(tiers, /This table is the default; the cost rule governs any deviation/);
+  assert.match(tiers, /the model whose output the stand-in must match/);
+  assert.match(tiers, /recorded with the slice result in the dispatch/);
+  const scope = row('Scope and fan-out');
+  assert.match(scope, /required scope first/);
+  assert.match(scope, /if the required-scope result misses its acceptance check, or if the owner opted in at setup/);
+  assert.match(scope, /more than 5 agents, write a token estimate in the plan; it is a note, not a stop/);
+  assert.match(scope, /fewer, larger agents/);
+  const review = row('Fresh review lane');
+  assert.match(review, /Provisional/);
+  assert.match(review, /reports when the PR is green, then sits idle for review/);
+  assert.match(review, /one or two files, Winston resumes that same build lane/);
+  assert.match(review, /over two files goes to a fresh lane briefed with the PR, its findings and the files touched/);
+  assert.match(review, /review-round limits are unchanged/);
+  const briefs = row('Lane briefs');
+  assert.match(briefs, /Pin the base commit/);
+  assert.match(briefs, /Grep before reading any file over about 500 lines/);
+  assert.match(briefs, /Trim inputs/);
+  assert.match(briefs, /Lane dispatch prompts carry this rule/);
+  const size = row('Orchestrator size');
+  assert.match(size, /\/winston:handoff/);
+  for (const r of [tiers, scope, review, briefs, size]) assert.doesNotMatch(r, /haiku|sonnet|opus/i);
 });
