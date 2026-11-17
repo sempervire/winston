@@ -1638,7 +1638,7 @@ test('release step: per-issue Fixes lines, Verify excluded, Done after promotion
   const w = readFileSync(join(ROOT, 'skills', 'winston', 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
   assert.match(w, /one `Fixes #N` line per issue then in `Verified`, read with one `gh project item-list` call just before the body is written \(configured status names\); each line has its own keyword/);
   assert.match(w, /Issues still in `Verify` get no keyword; they stay with the promotion gate/);
-  assert.match(w, /After the promotion PR merges, Winston moves every released card from `Verified` to `Done`/);
+  assert.match(w, /After the promotion PR merges, Winston moves every released card \(the issues on those `Fixes` lines, not later arrivals in `Verified`\) from `Verified` to `Done`/);
   assert.match(w, /`Done` is not one of the four config roles/);
 });
 
