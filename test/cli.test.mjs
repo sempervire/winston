@@ -840,7 +840,7 @@ test('doctor shows the board\'s "Item closed" workflow as a tip, never a gap, an
   const needsYou = (out) => (out.match(/^Needs you \((\d+)\):$/m) ?? [, '0'])[1];
   const URL = 'https://github.com/users/acme/projects/1/workflows';
   const on = s.cli(['doctor']);
-  assert.match(on.stdout, /^done\s+Board moves closed issues to Done\s+— the board's "Item closed" workflow is on \(GitHub does not show which column it sets; Done is its default, and https:\/\/github\.com\/users\/acme\/projects\/1\/workflows shows it\)$/m);
+  assert.match(on.stdout, /^done\s+Board moves closed issues to Done\s+— the board's "Item closed" workflow is on; GitHub does not show which column it sets, so check on https:\/\/github\.com\/users\/acme\/projects\/1\/workflows that it sets Done$/m);
   assert.doesNotMatch(on.stdout, /Tip: turn on the board's "Item closed"/);
 
   // Off, then missing from the listing: a tip with the Workflows page, and doctor's count

@@ -144,7 +144,8 @@ create or enable one: on the board's Workflows page, **Auto-add to project** (th
 repository, filter `is:issue`) and **Item added to project** (set Status to `New`). Without
 them a new issue never reaches the board. A third is recommended, not required: **Item
 closed** (set Status to `Done`), so an issue closed outside a release, completed or not
-planned, moves to `Done` instead of staying in its column; doctor shows it as a `tip`.
+planned, moves to `Done` instead of staying in its column (closed pull requests move
+too); doctor shows it as a `tip`.
 `/winston:init` does all three through browser
 control, so have [Claude in Chrome](https://code.claude.com/docs/en/chrome) ready during
 setup: install the extension, sign in to GitHub in that Chrome, and connect it with
@@ -351,7 +352,7 @@ Top-level keys merge shallowly; the repo wins. See `templates/config.sample.json
 |---|---|
 | `owner` | Who approves and decides. |
 | `branches` | `integration` and `production` branch names. |
-| `board` | Projects v2 owner, number, statuses, priority field. `statuses` names the four columns Winston moves cards through (`New`, `Ready`, `Verify`, `Verified` by default); `In Progress` and a `Done` column after the four are expected under those fixed names. On a board Winston creates, GitHub's own closing workflow moves closed items to `Done`; on an existing board that depends on its own workflow settings. |
+| `board` | Projects v2 owner, number, statuses, priority field. `statuses` names the four columns Winston moves cards through (`New`, `Ready`, `Verify`, `Verified` by default); `In Progress` and a `Done` column after the four are expected under those fixed names. Closed items move to `Done` only through the board's **Item closed** workflow, which init sets up in the browser and doctor shows as a `tip` until it is on. |
 | `processDocs`, `triage.policy` | The repo docs whose rules win over Winston's. |
 | `phase` | The current milestone, given to every new issue. `false` to go without. |
 | `triage.workflow`, `triage.alongside` | The triage workflow's file name, or `false` when another workflow is the repo's triage; other triage workflows kept knowingly. |

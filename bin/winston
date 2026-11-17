@@ -1183,7 +1183,7 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
       const closedHand = `open ${page}, choose "Item closed", click Edit, under Set value choose Status: Done, then click "Save and turn on workflow"`
       add(enabled('Item closed')
         // On says nothing of the column it sets: the API does not show it (see above).
-        ? { name: 'Board moves closed issues to Done', state: 'ok', detail: `the board's "Item closed" workflow is on (GitHub does not show which column it sets; Done is its default, and ${page} shows it)`, board: true }
+        ? { name: 'Board moves closed issues to Done', state: 'ok', detail: `the board's "Item closed" workflow is on; GitHub does not show which column it sets, so check on ${page} that it sets Done`, board: true }
         : {
             name: 'Board moves closed issues to Done', required: false, state: 'off', tip: true, board: true, browser: true,
             detail: `the board's "Item closed" workflow is ${listed('Item closed').length ? 'off' : 'not on this board'}, so a closed issue's card stays in its column`,
@@ -1830,7 +1830,7 @@ function bootstrap(cwd, sit, opts) {
   const steps = []
   if (!sit.root) steps.push({ plan: `Start keeping versions of this folder with git (git init, on branch ${production})`, run: () => must(run('git', ['init', '-q', '-b', production, root]), 'git init') })
   // A new project's own workflows point at its default options: "Item added to project" at
-  // Todo, and the closing ones at Done. Each stock option is kept by id under the column
+  // Todo, and any closing ones at Done. Each stock option is kept by id under the column
   // that takes its place, so Todo becomes the intake column and that workflow sets it.
   const configureNewBoard = () => {
     const status = fetchBoard(ghOwner, config.board.number).project?.fields.nodes.find((f) => f?.name === 'Status')
