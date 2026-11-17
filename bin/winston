@@ -69,7 +69,8 @@ export const REQUIRED_LABELS = [
 const DEFAULT_STATUSES = ['New', 'Ready', 'Verify', 'Verified']
 // The board Winston builds: six columns in this order, with these colours and
 // descriptions. Four are the Winston roles, named by config `board.statuses`; In Progress
-// and Done are GitHub's own, which the board's closing workflows point at.
+// and Done are GitHub's own columns. Done is reached when Winston moves released cards at
+// release (and, where enabled, the board's Item closed workflow).
 const COLUMNS = [
   { role: 0, name: 'New', color: 'BLUE', description: 'New issues, waiting to be looked at.' },
   { role: 1, name: 'Ready', color: 'GREEN', description: 'Looked at and approved. Ready to build.' },
