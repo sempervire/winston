@@ -984,8 +984,8 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
     const { owner, number } = config.board
     // A board init is about to create has none of this yet. Its own step gives it the
     // Status options and the Priority field, and GitHub turns "Item added to project" on
-    // in every new project.
-    const fetched = planned?.newBoard ? { project: { id: null, fields: { nodes: [] }, views: { nodes: [] }, workflows: { nodes: [{ name: 'Item added to project', enabled: true }] } } } : fetchBoard(owner, number)
+    // in every new project, with "Item closed" pointing at Done (kept by configureNewBoard).
+    const fetched = planned?.newBoard ? { project: { id: null, fields: { nodes: [] }, views: { nodes: [] }, workflows: { nodes: [{ name: 'Item added to project', enabled: true }, { name: 'Item closed', enabled: true }] } } } : fetchBoard(owner, number)
     const project = fetched.project
     const where = `${owner} project ${number}`
     if (!project) {
@@ -1176,6 +1176,18 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
         browser: true,
         hand: `open ${page}, choose "Item added to project", click Edit, under Set value choose Status: ${intake}, then click "Save and turn on workflow"`,
       })
+      // A closed issue's card moves to Done through the board's "Item closed" workflow
+      // (#86). A release moves its own cards to Done, so this only matters for issues
+      // closed outside one: a tip, never "needs you", and the API's word is taken as is.
+      const closedHand = `open ${page}, choose "Item closed", click Edit, under Set value choose Status: Done, then click "Save and turn on workflow"`
+      add(enabled('Item closed')
+        ? { name: 'Board moves closed issues to Done', state: 'ok', detail: 'the board\'s "Item closed" workflow is on', board: true }
+        : {
+            name: 'Board moves closed issues to Done', required: false, state: 'off', tip: true, board: true, browser: true,
+            detail: `the board's "Item closed" workflow is ${listed('Item closed').length ? 'off' : 'not on this board'}, so a closed issue's card stays in its column`,
+            problem: `Tip: turn on the board's "Item closed" workflow so a closed issue's card moves to Done: ${closedHand}`,
+            hand: closedHand,
+          })
     }
   }
 
@@ -1522,8 +1534,14 @@ function printSteps(items) {
  * Browser checks doctor could not confirm either way (state `unknown`, e.g. no issues yet
  * to read a timeline from, #45): never required, never performed automatically, but still
  * worth the owner's or agent's knowledge that the step exists, in case it is genuinely off.
+ * Browser tips (#86) go first: recommended, never required, done by init's browser step.
  */
 function printMaybe(list) {
+  const tips = list.filter((c) => c.browser && c.tip && c.state !== 'ok' && c.state !== 'later')
+  if (tips.length) {
+    console.log('\nAlso in the browser, recommended (a tip: setup is complete without it):')
+    for (const c of tips) console.log(`  - ${c.name}: ${c.hand}`)
+  }
   const maybe = list.filter((c) => c.browser && c.state === 'unknown')
   if (!maybe.length) return
   console.log('\nCould not confirm (may already be on; optional, in the browser):')

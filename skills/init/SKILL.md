@@ -83,7 +83,12 @@ It runs in five steps.
    other project keeps its Auto-add on, each new issue also lands on it. GitHub's API cannot create, edit or enable
    a project workflow, so they are done on the board's Workflows page. They are part of
    the setup, not an afterthought: say so in the plan you confirm in step 3, and do not
-   call the setup finished while `winston doctor` still lists them. In **join** they are
+   call the setup finished while `winston doctor` still lists them. The output can also
+   have an **Also in the browser, recommended** line for the board's "Item closed"
+   workflow, which moves a closed issue's card to `Done` (doctor shows it as a `tip`,
+   "Board moves closed issues to Done"), on a new board or an adopted one alike. Name it
+   in the plan too and do it in the same visit, after the required ones; the setup is
+   complete without it, so never hold the setup open for it. In **join** they are
    the owner's; relay them and stop.
    - **With browser control** (Claude Code with Claude in Chrome: the
      `mcp__claude-in-chrome__*` tools): do them yourself, in a new tab, exactly as each
@@ -94,7 +99,10 @@ It runs in five steps.
      **Save**. Touch no other project setting, and never delete the project. For "Item added to project": select
      it, **Edit**, under **Set value** choose the Status named, **Save and turn on
      workflow**. For "Auto-add to project": select it, **Edit**, pick this repository,
-     replace the filter with `is:issue`, **Save and turn on workflow**. Touch nothing else
+     replace the filter with `is:issue`, **Save and turn on workflow**. For "Item closed":
+     select it, **Edit**, under **Set value** choose Status `Done`, **Save and turn on
+     workflow**; it moves every closed issue's card, completed or not planned alike, and
+     no other closing workflow is touched. Touch nothing else
      on the page, close the tab, then run `winston doctor` and show that these checks pass (the other-project line clears once its Auto-add no longer takes new issues, and can read as present until one more issue is filed).
      Claim `resource:chrome` first (`chattr claim resource:chrome`) and release it after.
    - **The page shows GitHub's 404 or a Sign in link:** that Chrome is not signed in to
@@ -105,7 +113,7 @@ It runs in five steps.
      install the Claude in Chrome extension in Chrome, sign in to GitHub there, and
      connect it to this session with `/chrome` (or start Claude Code with
      `claude --chrome`). When they say it is on, carry out the steps. If they would
-     rather not, or the harness has no browser control (Codex), give them the two lines
+     rather not, or the harness has no browser control (Codex), give them the browser lines
      from the output to do by hand, and run `winston doctor` once they say they have.
 
 5. **Carry the plan's notes through as help, not status.** `winston init`'s output can end

@@ -266,6 +266,8 @@ const boardJson = ({ options = ['New', 'Ready', 'In Progress', 'Verify', 'Verifi
 const KANBAN = [{ id: 'VIEW9', name: 'Pilot', layout: 'BOARD_LAYOUT', fields: { nodes: [{ id: 'TITLE1', name: 'Title' }, { id: 'LABELS1', name: 'Labels' }] }, groupByFields: { nodes: [] }, verticalGroupByFields: { nodes: [{ name: 'Status' }] } }];
 const KANBAN_NO_LABELS = [{ ...KANBAN[0], fields: { nodes: [{ id: 'TITLE1', name: 'Title' }] } }];
 const INTAKE = ['Auto-add to project', 'Item added to project'];
+// The intake workflows and the closing one (#86): a board with nothing left to turn on.
+const ALL_ON = [...INTAKE, 'Item closed'];
 // Recent issues with their project events: [number, [[type, actor, board owner, board number, createdAt?], ...], { createdAt?, closed? }?].
 const BOT = 'github-project-automation';
 const timelineJson = (issues) => JSON.stringify({ data: { repository: { issues: { nodes: issues.map(([number, events, issue = {}]) => ({ number, ...issue, timelineItems: { nodes: events.map(([type, login, owner, n, at]) => ({ __typename: type === 'add' ? 'AddedToProjectV2Event' : 'ProjectV2ItemStatusChangedEvent', ...(at ? { createdAt: at } : {}), actor: { login }, project: { number: n, title: `Project ${n}`, owner: { login: owner } } })) } })) } } } });
@@ -825,6 +827,49 @@ test('doctor checks the board\'s two intake workflows and the triage workflow\'s
   assert.doesNotMatch(on.stdout, /\d\. (Board adds|Board puts|triage workflow)/);
 });
 
+test('doctor shows the board\'s "Item closed" workflow as a tip, never a gap, and init names it as a browser step (#86)', (t) => {
+  const s = sandbox(t);
+  fakeGh(s);
+  existingRepo(s);
+  writeFileSync(join(s.tmp, 'linked.json'), linkedJson([['acme', 1, 'Acme board']]));
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: ALL_ON, views: KANBAN }));
+  writeFileSync(join(s.tmp, 'milestones'), 'Pilot\n');
+  writeFileSync(join(s.tmp, 'secrets'), 'GH_PAT\nCLAUDE_CODE_OAUTH_TOKEN\n');
+  assert.equal(s.cli(['init', '--mode', 'adopt', '--yes']).status, 0);
+  const needsYou = (out) => (out.match(/^Needs you \((\d+)\):$/m) ?? [, '0'])[1];
+  const URL = 'https://github.com/users/acme/projects/1/workflows';
+  const on = s.cli(['doctor']);
+  assert.match(on.stdout, /^done\s+Board moves closed issues to Done\s+— the board's "Item closed" workflow is on$/m);
+  assert.doesNotMatch(on.stdout, /Tip: turn on the board's "Item closed"/);
+
+  // Off, then missing from the listing: a tip with the Workflows page, and doctor's count
+  // of what needs the owner, and its exit status, stay exactly as they were.
+  for (const [workflows, said] of [[[...INTAKE, { name: 'Item closed', enabled: false }], 'off'], [INTAKE, 'not on this board']]) {
+    writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows, views: KANBAN }));
+    const tip = s.cli(['doctor']);
+    assert.match(tip.stdout, new RegExp(`^tip\\s+Board moves closed issues to Done\\s+— the board's "Item closed" workflow is ${said}, so a closed issue's card stays in its column$`, 'm'));
+    assert.ok(tip.stdout.includes(`\n  - Tip: turn on the board's "Item closed" workflow so a closed issue's card moves to Done: open ${URL}, choose "Item closed", click Edit, under Set value choose Status: Done, then click "Save and turn on workflow"\n`), tip.stdout);
+    assert.doesNotMatch(tip.stdout, /\d\. Board moves closed issues/, 'never under Needs you');
+    assert.equal(needsYou(tip.stdout), needsYou(on.stdout));
+    assert.equal(tip.status, on.status, 'a tip is not a failed setup');
+    // init does not count it as unfinished setup, but names it for its browser step.
+    const plan = s.cli(['init', '--mode', 'adopt']);
+    assert.equal(plan.status, 0);
+    assert.doesNotMatch(plan.stdout, /Winston will:|\nIn the browser/);
+    assert.ok(plan.stdout.includes(`\nAlso in the browser, recommended (a tip: setup is complete without it):\n  - Board moves closed issues to Done: open ${URL}, choose "Item closed"`), plan.stdout);
+  }
+
+  // An organization's board: the Workflows page lives under orgs/.
+  writeFileSync(join(s.tmp, 'owner-type'), 'Organization\n');
+  assert.match(s.cli(['doctor']).stdout, /Tip: turn on the board's "Item closed" workflow[^\n]*open https:\/\/github\.com\/orgs\/acme\/projects\/1\/workflows, choose "Item closed"/);
+});
+
+test('init\'s browser steps turn on "Item closed" with Status Done, and the README lists it (#86)', () => {
+  const flat = (f) => readFileSync(join(ROOT, f), 'utf8').replace(/\s+/g, ' ');
+  assert.match(flat('skills/init/SKILL.md'), /For "Item closed": select it, \*\*Edit\*\*, under \*\*Set value\*\* choose Status `Done`, \*\*Save and turn on workflow\*\*/);
+  assert.match(flat('README.md'), /\*\*Item closed\*\* \(set Status to `Done`\)/);
+});
+
 test('doctor takes the projects automation\'s events on this board as proof its intake runs, never another board\'s or a person\'s (#45)', (t) => {
   const s = sandbox(t);
   fakeGh(s);
@@ -1029,7 +1074,7 @@ test('init walks the owner through the triage workflow\'s missing secrets, by wh
   fakeGh(s);
   existingRepo(s);
   writeFileSync(join(s.tmp, 'linked.json'), linkedJson([['acme', 3, 'Roadmap']]));
-  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: ALL_ON, views: KANBAN }));
   writeFileSync(join(s.tmp, 'milestones'), 'Pilot\n');
   writeFileSync(join(s.tmp, 'secrets'), 'CLAUDE_CODE_OAUTH_TOKEN\n');
 
@@ -1482,7 +1527,7 @@ test('doctor reports the permission rules the project lacks', (t) => {
 function gappedRepo(s) {
   fakeGh(s);
   existingRepo(s);
-  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: INTAKE, views: KANBAN }));
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: ALL_ON, views: KANBAN }));
   writeFileSync(join(s.tmp, 'milestones'), 'Pilot\n');
   writeFileSync(join(s.tmp, 'labels'), 'risk: low\nrisk: medium\nrisk: high\nauto-merge\nauto-verify\nhuman-verify\n');
   writeFileSync(join(s.tmp, 'runs'), '');

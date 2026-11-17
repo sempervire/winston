@@ -139,13 +139,16 @@ to a milestone whose cards show labels. On a board that already exists, missing 
 added in that order and Labels is switched on for the view; nothing already there is
 renamed, recoloured or removed. Doctor reports any column the board lacks.
 
-Two steps cannot go through GitHub's API, which can delete a project workflow but not
+Some steps cannot go through GitHub's API, which can delete a project workflow but not
 create or enable one: on the board's Workflows page, **Auto-add to project** (this
 repository, filter `is:issue`) and **Item added to project** (set Status to `New`). Without
-them a new issue never reaches the board. `/winston:init` does both through browser
+them a new issue never reaches the board. A third is recommended, not required: **Item
+closed** (set Status to `Done`), so an issue closed outside a release, completed or not
+planned, moves to `Done` instead of staying in its column; doctor shows it as a `tip`.
+`/winston:init` does all three through browser
 control, so have [Claude in Chrome](https://code.claude.com/docs/en/chrome) ready during
 setup: install the extension, sign in to GitHub in that Chrome, and connect it with
-`/chrome` (or start with `claude --chrome`). Without browser control it prints the two
+`/chrome` (or start with `claude --chrome`). Without browser control it prints the
 steps for you to do, and doctor reports them until they are done.
 
 Every config init writes has a deploy gate: merging a pull request into the production
