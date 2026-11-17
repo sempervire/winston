@@ -6,19 +6,18 @@
 # is the `phase` key in .winston/config.json: the title of an open milestone. To move to
 # the next phase, edit that one line and commit it.
 #
-# Takes effect only from the DEFAULT branch, and reads the config from it: `issues` and
-# `schedule` are repository-level events, which GitHub runs from the default branch alone.
+# Takes effect only from the DEFAULT branch, and reads the config from it: `issues` is a
+# repository-level event, which GitHub runs from the default branch alone.
 #
 # It needs no secret: the workflow's own token sets a milestone. An issue that already
-# has a milestone is never changed. The daily run catches issues the `opened` event
-# missed (Actions down, or the workflow not yet installed when they were filed).
+# has a milestone is never changed. Nothing runs on a timer: a manual dispatch (Actions ->
+# Run workflow) catches issues the `opened` event missed (Actions down, or the workflow
+# not yet installed when they were filed).
 name: Set a new issue's phase
 
 on:
   issues:
     types: [opened]
-  schedule:
-    - cron: "23 5 * * *"
   workflow_dispatch:
 
 permissions:

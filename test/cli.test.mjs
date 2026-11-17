@@ -9,6 +9,29 @@ import { loadConfig, loadLayers } from '../lib/config.mjs';
 import { coveredBy, DOCTOR_POINTER, firesOnNewIssue, permissionRules, policyBlanks, policyState, repinTriage, tokenUrl, triageMechanism } from '../bin/winston';
 
 const ROOT = resolve(import.meta.dirname, '..');
+
+// The keys directly under a workflow's top-level `on:` block, each with the lines nested under it.
+function triggers(text) {
+  const block = text.match(/^on:\n((?:[ \t]+.*\n|\n)*)/m);
+  assert.ok(block, 'the workflow has a block-style on:');
+  const out = {};
+  let key = null;
+  for (const line of block[1].split('\n')) {
+    const top = line.match(/^  ([A-Za-z_]+):/);
+    if (top) out[key = top[1]] = '';
+    else if (key && line.trim()) out[key] += line.trim() + '\n';
+  }
+  return out;
+}
+
+// Both installed workflows fire on a new issue and on a manual dispatch, and never on a timer (#76).
+function assertNoTimer(text, name) {
+  const on = triggers(text);
+  assert.ok(!('schedule' in on), `${name} has no schedule trigger`);
+  assert.doesNotMatch(text, /^\s*-\s*cron:/m, `${name} has no cron line`);
+  assert.match(on.issues ?? '', /^types: \[opened\]$/m, `${name} runs on issues: opened`);
+  assert.ok('workflow_dispatch' in on, `${name} can be dispatched by hand`);
+}
 const CLI = join(ROOT, 'bin/winston');
 
 function sandbox(t) {
@@ -370,6 +393,7 @@ test('init --mode new creates the repo, both branches, the board and the config,
   assert.deepEqual(config.deployGate, { phrase: 'approve production deploy', guarded: [{ kind: 'pr-merge', base: 'main' }] }, 'every config init writes carries the default deploy gate');
   assert.deepEqual(originHeads(s), ['main', 'staging']);
   assert.deepEqual(s.git('show', '--name-only', '--format=', 'HEAD').split('\n').sort(), ['.github/workflows/triage-on-new-issue.yml', '.winston/config.json'], 'the first commit holds only what init wrote');
+  assertNoTimer(readFileSync(join(s.repo, '.github/workflows/triage-on-new-issue.yml'), 'utf8'), 'the installed triage workflow');
   const calls = s.calls();
   assert.match(calls, /updateProjectV2Field[^\n]*\[\{id:"opt0",name:"New",color:BLUE,description:"New issues, waiting to be looked at\."\},\{name:"Ready",color:GREEN[^\n]*\{id:"opt1",name:"In Progress",color:YELLOW[^\n]*\{name:"Verify",color:RED[^\n]*\{name:"Verified",color:GRAY[^\n]*\{id:"opt2",name:"Done",color:PURPLE/, 'six columns in order; each stock option kept by id, Todo as New so the board\'s own workflow sets it');
   assert.match(calls, /project field-create 7 --owner pat --name Start date --data-type DATE/);
@@ -622,6 +646,7 @@ test('a new issue gets the current phase\'s milestone: doctor reports hidden iss
   assert.match(plan.stdout, /Note: These files [^\n]*set-issue-phase\.yml/);
   assert.deepEqual(config().board, { owner: 'acme', number: 1 }, 'the rest of the config is as it was');
   assert.equal(readFileSync(wf, 'utf8'), readFileSync(join(ROOT, 'templates/set-issue-phase.yml'), 'utf8'));
+  assertNoTimer(readFileSync(wf, 'utf8'), 'the installed phase workflow');
   assert.match(s.calls(), /issue edit 7 --milestone Pilot\n[^]*issue edit 13 --milestone Pilot\n/);
   const after = s.cli(['doctor']);
   assert.match(after.stdout, /^done\s+New issues join the current phase\s+— new issues get the milestone "Pilot" once set-issue-phase\.yml and the settings are saved to the default branch on GitHub$/m);
@@ -692,10 +717,11 @@ test('with no board view yet, the phase is the milestone init is about to filter
   assert.match(s.calls(), /issue edit 4 --milestone Phase 1\.0\n/);
 });
 
-test('the phase workflow runs on a new issue and daily, needs no secret, and never changes a set milestone', () => {
+test('the phase workflow runs on a new issue and on a manual dispatch, never on a timer, needs no secret, and never changes a set milestone', () => {
   const text = readFileSync(join(ROOT, 'templates/set-issue-phase.yml'), 'utf8');
   assert.equal(firesOnNewIssue(text), true);
-  assert.match(text, /schedule:\n\s+- cron:/);
+  assertNoTimer(text, 'templates/set-issue-phase.yml');
+  assert.match(text, /if \[ -n "\$ISSUE" \]; then\n\s+numbers=\$ISSUE\n\s+else\n\s+numbers=\$\(gh issue list/, 'a dispatch with no issue still sweeps the open issues with no milestone');
   assert.match(text, /permissions:\n\s+contents: read\n\s+issues: write\n/);
   assert.doesNotMatch(text, /secrets\./);
   assert.match(text, /if \[ -z "\$has" \]; then\n\s+gh issue edit "\$n" --milestone "\$phase"/);

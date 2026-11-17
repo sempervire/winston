@@ -4,7 +4,7 @@
 # the script runs from this checkout rather than from a pinned Winston commit, so a
 # dispatch with --ref <branch> runs that branch's script.
 #
-# Takes effect only from the DEFAULT branch for `issues` and `schedule`; a dispatch runs
+# Takes effect only from the DEFAULT branch for `issues`; a dispatch runs
 # the workflow file and the script of the ref it names. Secrets: GH_PAT and
 # CLAUDE_CODE_OAUTH_TOKEN, as the template describes. Without them the run skips and
 # stays green.
@@ -13,8 +13,6 @@ name: Triage a new issue
 on:
   issues:
     types: [opened]
-  schedule:
-    - cron: "23 7 * * *"
   workflow_dispatch:
     inputs:
       issue:

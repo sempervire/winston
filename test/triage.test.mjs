@@ -142,6 +142,13 @@ test('acceptance 1: a new issue gets a risk: label, a Priority and a plan commen
     const yml = readFileSync(join(ROOT, file), 'utf8');
     assert.doesNotMatch(yml, /claude-code-action|allowedTools|allowed_tools/, `${file} runs no agent`);
     assert.match(yml, /triage-issue\.mjs/);
+    // No timer (#76): an opened issue and a manual dispatch run it; a dispatch with no number sweeps.
+    const on = yml.slice(yml.indexOf('\non:\n'), yml.indexOf('\nconcurrency:'));
+    assert.doesNotMatch(on, /^  schedule:/m, `${file} has no schedule trigger`);
+    assert.doesNotMatch(yml, /cron:/, `${file} has no cron line`);
+    assert.match(on, /^  issues:\n    types: \[opened\]$/m, `${file} runs on issues: opened`);
+    assert.match(on, /^  workflow_dispatch:$/m, `${file} can be dispatched by hand`);
+    assert.match(yml, /triage-issue\.mjs --sweep --max 5/, `${file} still sweeps on a dispatch with no number`);
   }
 });
 
@@ -311,7 +318,7 @@ test('an opened issue waits for its board item, and writes nothing if it never a
   assert.equal(gone.code, 0);
   assert.deepEqual(never.writes, []);
   assert.equal(d.calls.length, 0);
-  assert.match(gone.out, /^#6: not on board acme project 1 with a status yet — nothing written; the daily sweep takes it once it is$/m);
+  assert.match(gone.out, /^#6: not on board acme project 1 with a status yet — nothing written; a manual sweep or whole-board pass takes it once it is$/m);
 });
 
 test('a dispatch outside scope writes nothing: closed, off the board, or past the first two statuses', async () => {
