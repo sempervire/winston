@@ -279,7 +279,7 @@ test('parallelism-check: asks once per turn, only in a session holding resource:
   const out = stop();
   assert.match(out.hookSpecificOutput.additionalContext, /unmerged code is not a blocker/);
   assert.match(out.hookSpecificOutput.additionalContext, /prep list.*item \| state \| prep running \| blocker/s);
-  assert.match(out.hookSpecificOutput.additionalContext, /token or model cost never holds startable work/);
+  assert.match(out.hookSpecificOutput.additionalContext, /cost never delays startable work, though it still sets each lane's model tier and scope/);
   writeFileSync(transcript, [prompt, toolResult, JSON.stringify({ type: 'attachment', attachment: { type: 'hook_additional_context', content: [out.hookSpecificOutput.additionalContext] } }), toolResult].join('\n'));
   assert.equal(stop(), '', 'already asked this turn');
   writeFileSync(transcript, [readFileSync(transcript, 'utf8'), prompt].join('\n'));

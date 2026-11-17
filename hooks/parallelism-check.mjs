@@ -33,8 +33,8 @@ const CHATTR = join(import.meta.dirname, '..', 'chattr', 'chattr.mjs')
 
 const MARK = 'Parallelism check (Winston)'
 const ASK =
-  `${MARK}, before you end this turn: the goal is minimum wall-clock time, and token or model cost ` +
-  'never holds startable work. List every remaining item as running, startable now, or blocked by a ' +
+  `${MARK}, before you end this turn: the goal is minimum wall-clock time; cost ` +
+  "never delays startable work, though it still sets each lane's model tier and scope. List every remaining item as running, startable now, or blocked by a " +
   'named dependency, and launch everything startable now in this turn. Mark an item blocked only ' +
   "after walking the skill's prep list (review of unopened or stacked branches, restacks, " +
   'verification plans and probes, promotion-gate prep, PR body and report drafts, evidence for ' +
