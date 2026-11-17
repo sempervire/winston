@@ -1181,7 +1181,8 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
       // closed outside one: a tip, never "needs you", and the API's word is taken as is.
       const closedHand = `open ${page}, choose "Item closed", click Edit, under Set value choose Status: Done, then click "Save and turn on workflow"`
       add(enabled('Item closed')
-        ? { name: 'Board moves closed issues to Done', state: 'ok', detail: 'the board\'s "Item closed" workflow is on', board: true }
+        // On says nothing of the column it sets: the API does not show it (see above).
+        ? { name: 'Board moves closed issues to Done', state: 'ok', detail: `the board's "Item closed" workflow is on (GitHub does not show which column it sets; Done is its default, and ${page} shows it)`, board: true }
         : {
             name: 'Board moves closed issues to Done', required: false, state: 'off', tip: true, board: true, browser: true,
             detail: `the board's "Item closed" workflow is ${listed('Item closed').length ? 'off' : 'not on this board'}, so a closed issue's card stays in its column`,
