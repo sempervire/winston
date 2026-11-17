@@ -1552,7 +1552,7 @@ test('model tiers, scope, fresh review lane, lane briefs and handoff rules (#78)
   assert.match(review, /Provisional/);
   assert.match(review, /exits when its PR opens, and Winston still merges only a green, reviewed PR/);
   assert.match(review, /fresh lane briefed with the PR, its findings and the files touched/);
-  assert.match(review, /one or two files goes back to the build lane/);
+  assert.match(review, /one or two files is made by the fresh lane itself/);
   const briefs = row('Lane briefs');
   assert.match(briefs, /Pin the base commit/);
   assert.match(briefs, /Grep before reading any file over about 500 lines/);
