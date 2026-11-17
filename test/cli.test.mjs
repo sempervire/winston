@@ -383,6 +383,7 @@ test('init --mode new creates the repo, both branches, the board and the config,
   assert.doesNotMatch(plan.stdout, /Add .*triage-on-new-issue\.yml/, 'the first commit writes the workflow; it is not planned twice');
   assert.match(plan.stdout, /In the browser[^]*open the new board's Workflows page, choose "Auto-add to project"/);
   assert.doesNotMatch(plan.stdout, /set Status to New/, 'a new project already has "Item added" on, and init points it at New');
+  assert.match(plan.stdout, /\nAlso in the browser, recommended \(a tip: setup is complete without it\):\n  - Board moves closed issues to Done: open the new board's Workflows page, choose "Item closed"[^\n]*Status: Done/, 'a new board gets the Item closed step too (#86)');
   assert.ok(!existsSync(join(s.repo, '.winston')), 'no --yes, no change');
   assert.doesNotMatch(s.calls(), /project create|repo create|label create/);
 

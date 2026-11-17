@@ -984,8 +984,9 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
     const { owner, number } = config.board
     // A board init is about to create has none of this yet. Its own step gives it the
     // Status options and the Priority field, and GitHub turns "Item added to project" on
-    // in every new project, with "Item closed" pointing at Done (kept by configureNewBoard).
-    const fetched = planned?.newBoard ? { project: { id: null, fields: { nodes: [] }, views: { nodes: [] }, workflows: { nodes: [{ name: 'Item added to project', enabled: true }, { name: 'Item closed', enabled: true }] } } } : fetchBoard(owner, number)
+    // in every new project. "Item closed" is not assumed on: init's browser step sets it
+    // to Done on a new board as on an adopted one (#86).
+    const fetched = planned?.newBoard ? { project: { id: null, fields: { nodes: [] }, views: { nodes: [] }, workflows: { nodes: [{ name: 'Item added to project', enabled: true }] } } } : fetchBoard(owner, number)
     const project = fetched.project
     const where = `${owner} project ${number}`
     if (!project) {
