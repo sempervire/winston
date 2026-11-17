@@ -69,7 +69,8 @@ export const REQUIRED_LABELS = [
 const DEFAULT_STATUSES = ['New', 'Ready', 'Verify', 'Verified']
 // The board Winston builds: six columns in this order, with these colours and
 // descriptions. Four are the Winston roles, named by config `board.statuses`; In Progress
-// and Done are GitHub's own, which the board's closing workflows point at.
+// and Done are GitHub's own columns. Done is reached when Winston moves released cards at
+// release (and, where enabled, the board's Item closed workflow).
 const COLUMNS = [
   { role: 0, name: 'New', color: 'BLUE', description: 'New issues, waiting to be looked at.' },
   { role: 1, name: 'Ready', color: 'GREEN', description: 'Looked at and approved. Ready to build.' },
@@ -984,7 +985,8 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
     const { owner, number } = config.board
     // A board init is about to create has none of this yet. Its own step gives it the
     // Status options and the Priority field, and GitHub turns "Item added to project" on
-    // in every new project.
+    // in every new project. "Item closed" is not assumed on: init's browser step sets it
+    // to Done on a new board as on an adopted one (#86).
     const fetched = planned?.newBoard ? { project: { id: null, fields: { nodes: [] }, views: { nodes: [] }, workflows: { nodes: [{ name: 'Item added to project', enabled: true }] } } } : fetchBoard(owner, number)
     const project = fetched.project
     const where = `${owner} project ${number}`
@@ -1176,6 +1178,19 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
         browser: true,
         hand: `open ${page}, choose "Item added to project", click Edit, under Set value choose Status: ${intake}, then click "Save and turn on workflow"`,
       })
+      // A closed issue's card moves to Done through the board's "Item closed" workflow
+      // (#86). A release moves its own cards to Done, so this only matters for issues
+      // closed outside one: a tip, never "needs you", and the API's word is taken as is.
+      const closedHand = `open ${page}, choose "Item closed", click Edit, under Set value choose Status: Done, then click "Save and turn on workflow"`
+      add(enabled('Item closed')
+        // On says nothing of the column it sets: the API does not show it (see above).
+        ? { name: 'Board moves closed issues to Done', state: 'ok', detail: `the board's "Item closed" workflow is on; GitHub does not show which column it sets, so check on ${page} that it sets Done`, board: true }
+        : {
+            name: 'Board moves closed issues to Done', required: false, state: 'off', tip: true, board: true, browser: true,
+            detail: `the board's "Item closed" workflow is ${listed('Item closed').length ? 'off' : 'not on this board'}, so a closed issue's card stays in its column`,
+            problem: `Tip: turn on the board's "Item closed" workflow so a closed issue's card moves to Done: ${closedHand}`,
+            hand: closedHand,
+          })
     }
   }
 
@@ -1522,8 +1537,14 @@ function printSteps(items) {
  * Browser checks doctor could not confirm either way (state `unknown`, e.g. no issues yet
  * to read a timeline from, #45): never required, never performed automatically, but still
  * worth the owner's or agent's knowledge that the step exists, in case it is genuinely off.
+ * Browser tips (#86) go first: recommended, never required, done by init's browser step.
  */
 function printMaybe(list) {
+  const tips = list.filter((c) => c.browser && c.tip && c.state !== 'ok' && c.state !== 'later')
+  if (tips.length) {
+    console.log('\nAlso in the browser, recommended (a tip: setup is complete without it):')
+    for (const c of tips) console.log(`  - ${c.name}: ${c.hand}`)
+  }
   const maybe = list.filter((c) => c.browser && c.state === 'unknown')
   if (!maybe.length) return
   console.log('\nCould not confirm (may already be on; optional, in the browser):')
@@ -1810,7 +1831,7 @@ function bootstrap(cwd, sit, opts) {
   const steps = []
   if (!sit.root) steps.push({ plan: `Start keeping versions of this folder with git (git init, on branch ${production})`, run: () => must(run('git', ['init', '-q', '-b', production, root]), 'git init') })
   // A new project's own workflows point at its default options: "Item added to project" at
-  // Todo, and the closing ones at Done. Each stock option is kept by id under the column
+  // Todo, and any closing ones at Done. Each stock option is kept by id under the column
   // that takes its place, so Todo becomes the intake column and that workflow sets it.
   const configureNewBoard = () => {
     const status = fetchBoard(ghOwner, config.board.number).project?.fields.nodes.find((f) => f?.name === 'Status')
