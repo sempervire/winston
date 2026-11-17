@@ -243,9 +243,9 @@ const boardJson = ({ options = ['New', 'Ready', 'In Progress', 'Verify', 'Verifi
 const KANBAN = [{ id: 'VIEW9', name: 'Pilot', layout: 'BOARD_LAYOUT', fields: { nodes: [{ id: 'TITLE1', name: 'Title' }, { id: 'LABELS1', name: 'Labels' }] }, groupByFields: { nodes: [] }, verticalGroupByFields: { nodes: [{ name: 'Status' }] } }];
 const KANBAN_NO_LABELS = [{ ...KANBAN[0], fields: { nodes: [{ id: 'TITLE1', name: 'Title' }] } }];
 const INTAKE = ['Auto-add to project', 'Item added to project'];
-// Recent issues with their project events: [number, [[type, actor, board owner, board number, createdAt?], ...]].
+// Recent issues with their project events: [number, [[type, actor, board owner, board number, createdAt?], ...], { createdAt?, closed? }?].
 const BOT = 'github-project-automation';
-const timelineJson = (issues) => JSON.stringify({ data: { repository: { issues: { nodes: issues.map(([number, events]) => ({ number, timelineItems: { nodes: events.map(([type, login, owner, n, at]) => ({ __typename: type === 'add' ? 'AddedToProjectV2Event' : 'ProjectV2ItemStatusChangedEvent', ...(at ? { createdAt: at } : {}), actor: { login }, project: { number: n, title: `Project ${n}`, owner: { login: owner } } })) } })) } } } });
+const timelineJson = (issues) => JSON.stringify({ data: { repository: { issues: { nodes: issues.map(([number, events, issue = {}]) => ({ number, ...issue, timelineItems: { nodes: events.map(([type, login, owner, n, at]) => ({ __typename: type === 'add' ? 'AddedToProjectV2Event' : 'ProjectV2ItemStatusChangedEvent', ...(at ? { createdAt: at } : {}), actor: { login }, project: { number: n, title: `Project ${n}`, owner: { login: owner } } })) } })) } } } });
 const linkedJson = (boards) => JSON.stringify({ data: { repository: { projectsV2: { nodes: boards.map(([login, number, title]) => ({ number, title, closed: false, owner: { login } })) } } } });
 
 // An existing repo: one commit holding AGENTS.md on main, pushed to a bare origin.
@@ -881,7 +881,7 @@ test('doctor counts the automation\'s events only when newer than the workflow\'
 
   // Ambiguous: an event without a time can't be placed against the switch-off. Uncertain,
   // never a confident "on", and not counted as a required step either.
-  const unsureRow = (row, wf, n) => new RegExp(`^could not check\\s+${row}\\s+— may be on: issue #${n}'s timeline shows the board's automation ran, but GitHub gave no time for that run or for the "${wf}" workflow's last change, so doctor cannot tell whether it ran before the workflow was switched off; check https://github\\.com/users/acme/projects/6/workflows$`, 'm');
+  const unsureRow = (row, wf, n) => new RegExp(`^could not check\\s+${row}\\s+— may be on: issue #${n}'s timeline shows the board's automation ran, but GitHub gave no time to compare it against, so doctor cannot tell whether the "${wf}" workflow was switched off since; check https://github\\.com/users/acme/projects/6/workflows$`, 'm');
   const untimed = doctor([[44, [['add', BOT, 'acme', 6], ['status', BOT, 'acme', 6]]]]);
   assert.match(untimed, unsureRow('Board adds new issues', 'Auto-add to project', 44));
   assert.match(untimed, unsureRow('Board puts new issues in New', 'Item added to project', 44));
@@ -895,6 +895,29 @@ test('doctor counts the automation\'s events only when newer than the workflow\'
   writeFileSync(join(s.tmp, 'board.json'), offBoard());
   const mixed = doctor([[43, [['add', BOT, 'acme', 6, AFTER]]], [44, [['add', BOT, 'acme', 6]]]]);
   assert.match(mixed, /^done\s+Board adds new issues\s+— on \(confirmed by issue #43's timeline\)$/m);
+
+  // Several Auto-add workflows, all off: the latest change bounds them all.
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: [
+    { name: 'Auto-add to project', enabled: false, updatedAt: '2026-09-01T00:00:00Z' },
+    { name: 'Auto-add to project (2)', enabled: false, updatedAt: OFF_AT },
+    { name: 'Item added to project', enabled: true },
+  ], views: KANBAN }));
+  assert.match(doctor([[44, [['add', BOT, 'acme', 6, BEFORE]]]]), staleRow('Board adds new issues', 'Auto-add to project', 44), 'after the older workflow changed but before the newer one: not proof');
+  assert.match(doctor([[44, [['add', BOT, 'acme', 6, AFTER]]]]), /^done\s+Board adds new issues\s+— on \(confirmed by issue #44's timeline\)$/m);
+
+  // A workflow missing from the listing (#45's shape, or deleted) has no switch to bound
+  // by: a newer open issue the automation did not take means intake stopped.
+  writeFileSync(join(s.tmp, 'board.json'), boardJson({ workflows: ['Item added to project'], views: KANBAN }));
+  const ran = ['add', BOT, 'acme', 6, BEFORE];
+  const stopped = doctor([[44, [ran], { createdAt: '2026-09-15T11:00:00Z' }], [45, [], { createdAt: OFF_AT }]]);
+  assert.match(stopped, /^needs you\s+Board adds new issues\s+— not on yet: the board's "Auto-add to project" workflow is off \(issue #44's timeline shows it ran, but newer issue #45 was not taken\)$/m);
+  assert.doesNotMatch(stopped, /confirmed by issue/);
+  // The untaken issue was closed at once, or is older than the run (filed before the board
+  // existed, or transferred in): neither says intake stopped.
+  assert.match(doctor([[44, [ran]], [45, [], { createdAt: OFF_AT, closed: true }]]), /^done\s+Board adds new issues\s+— on \(confirmed by issue #44's timeline\)$/m);
+  assert.match(doctor([[44, [ran]], [45, [], { createdAt: '2026-08-01T00:00:00Z' }]]), /^done\s+Board adds new issues\s+— on \(confirmed by issue #44's timeline\)$/m);
+  // The untaken issue has no time: uncertain, not "on".
+  assert.match(doctor([[44, [ran]], [45, []]]), unsureRow('Board adds new issues', 'Auto-add to project', 44));
 });
 
 test('doctor names another project that auto-adds the repo\'s issues, ahead of the board\'s own workflows (#45)', (t) => {
