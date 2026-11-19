@@ -74,6 +74,19 @@ Winston's own output uses the form for the app it runs in.
 
 Then `/winston` starts a session from the board's Ready column. See [Commands](#commands).
 
+### New-issue review gate
+
+Winston does not file a new GitHub issue until both Sheldon and Debbie have reviewed the same
+candidate draft and returned their feedback. The session waits for both responses, then carries
+their verbatim, contiguous feedback in the draft under `## Debbie and Sheldon`; only after that
+record exists may it file the issue. A missing response stops filing. A `DROP` ends the filing
+path, while proceeding over a `STOP`, `NARROW`, or a problem Sheldon identified requires the
+reason to be recorded too.
+
+This is a Winston skill/session guarantee. It does not control issues filed by people, agents
+that bypass the skill, or GitHub Actions and other workflows, so those paths are outside the
+gate's coverage.
+
 ## What you need
 
 **Software.** Claude Code (or Codex), [`git`](https://git-scm.com/downloads), the

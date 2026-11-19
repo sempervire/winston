@@ -97,6 +97,33 @@ test('install-codex-agents copies, keeps identical, and refuses a differing file
   assert.notEqual(readFileSync(target, 'utf8'), 'local edit');
 });
 
+test('new issue filing is gated on both advisor responses and recorded feedback (#94)', () => {
+  const winston = readFileSync(join(ROOT, 'skills/winston/SKILL.md'), 'utf8');
+  const verdict = readFileSync(join(ROOT, 'skills/verdict/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  const init = readFileSync(join(ROOT, 'skills/init/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  const readme = readFileSync(join(ROOT, 'README.md'), 'utf8').replace(/\s+/g, ' ');
+  const gate = winston.slice(winston.indexOf('### Issue-filing gate')).replace(/\s+/g, ' ');
+  const order = [
+    'Prepare the candidate issue draft',
+    'send that same draft, unchanged, to both Debbie and Sheldon',
+    'Wait for both synchronous responses',
+    'Record both advisors\' feedback verbatim and contiguously',
+    'Only after the two responses are recorded may Winston run the issue-filing action',
+  ].map((needle) => gate.indexOf(needle));
+  assert.ok(order.every((index) => index >= 0), 'the gate documents every required step');
+  assert.deepEqual(order, [...order].sort((a, b) => a - b), 'filing is last');
+  assert.match(gate, /If either advisor is unavailable, errors, or has not answered, do not file/);
+  assert.match(gate, /process issues and discoveries made during a session alike/);
+  assert.match(verdict, /required gate rather than an optional opinion/);
+  assert.match(verdict, /both complete blocks/);
+  assert.match(verdict, /If either response is missing, the caller must stop and must not file/);
+  assert.match(init, /complete the Winston issue-filing gate/);
+  assert.match(init, /only after both advisor responses are recorded/);
+  assert.match(readme, /New-issue review gate/);
+  assert.match(readme, /both Sheldon and Debbie have reviewed the same/);
+  assert.match(readme, /outside the gate's coverage/);
+});
+
 test('doctor on a repo with no config says it is not set up and points at init', (t) => {
   const s = sandbox(t);
   s.fake('claude', 'exit 0');

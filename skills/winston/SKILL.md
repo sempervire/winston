@@ -95,6 +95,27 @@ Never start the session until the user has reviewed (1) and (2) above and author
 
 Keep the orchestration session clean, always using subagents for all work and worktrees as necessary. Choose the models for the subagents effectively to optimize speed, quality and token consumption. Do not hesitate to use higher models if needed, otherwise use lower, faster models if they are adequate to the task.
 
+### Issue-filing gate
+
+Before Winston files **any new GitHub issue**, it must complete this gate. The gate applies to
+process issues and discoveries made during a session alike; it does not apply to picking up an
+issue that already exists.
+
+1. Prepare the candidate issue draft and send that same draft, unchanged, to both Debbie and
+   Sheldon through `/winston:verdict`.
+2. Wait for both synchronous responses. If either advisor is unavailable, errors, or has not
+   answered, do not file the issue.
+3. Record both advisors' feedback verbatim and contiguously in the draft under `## Debbie and
+   Sheldon`. Do not paraphrase, select favorable excerpts, or replace an advisor's response
+   with a verdict supplied by the caller.
+4. Only after the two responses are recorded may Winston run the issue-filing action. A `DROP`
+   ends the filing path; proceeding over a `STOP`, `NARROW`, or a problem Sheldon identified
+   requires a sentence in the record explaining why.
+
+This is a session/skill gate, not a GitHub server-side policy. Winston has no universal hook over
+issues filed by a human, another agent outside this skill, or an installed GitHub workflow; those
+paths are outside this guarantee and must not be described as covered by it.
+
 During development, if new issues/tasks arise, follow this process:
 
 - Evaluate the issue, consulting Debbie, Sheldon, and Codex, and determine if it's worth filing. Acceptable actions are to drop, narrow, or keep as suggested.
