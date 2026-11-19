@@ -180,7 +180,8 @@ It runs in five steps.
    - **When they say it is done,** run `winston doctor`: `Automatic triage keys` should
      read `done`. Then prove it yourself; this handles no secret. Once the workflow file is
      on the default branch: pick an open issue (`gh issue list --limit 1`), or, with none,
-     file one titled "Winston triage test" and say so; run
+     complete the Winston issue-filing gate in `skills/winston/SKILL.md` and file one titled
+     "Winston triage test" only after both advisor responses are recorded; say so; run
      `gh workflow run <workflow> -f issue=<number>`; watch `gh run list --workflow
      <workflow> --limit 1` until it completes; report "Automatic triage works" or the
      failure with what to do about it (a failed run: `gh run view <id> --log-failed`,

@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { join, main, open, readPidStart, turn } from '../../chattr.mjs';
-import { wakeSession } from '../../wake.mjs';
+import { wakeFailureNotice, wakeSession } from '../../wake.mjs';
 
 const CLI = fileURLToPath(new URL('../../chattr.mjs', import.meta.url));
 const PID_START = readPidStart(process.pid);
@@ -86,6 +86,12 @@ test('the CLI exits 4 for an unknown session and 2 without one', () => {
   const run = (...args) => spawnSync(process.execPath, [CLI, 'wake', ...args], { encoding: 'utf8', env: s.env });
   assert.equal(run('ghost').status, 4);
   assert.equal(run().status, 2);
+});
+
+test('wake failures explain that delivery is queued and give the recipient a recovery step', () => {
+  assert.match(wakeFailureNotice([{ id: 'R', woke: false, reason: 'endpoint_failed' }]), /message queued for R/);
+  assert.match(wakeFailureNotice([{ id: 'R', woke: false, reason: 'endpoint_failed' }]), /chattr inbox/);
+  assert.equal(wakeFailureNotice([{ id: 'R', woke: false, reason: 'coalesced' }]), null);
 });
 
 test("the sender's hook wakes an idle recipient of a never-injected message", async () => {

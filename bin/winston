@@ -4,6 +4,7 @@
  *
  *   winston config [--json]            merged config, and which layers loaded
  *   winston doctor [--copy]            the setup checklist, ending in one "Next step:" line;
+ *   winston doctor --projects         local-only capability checks for opt-in projects mode
  *                                      changes nothing. --copy puts that step's command on
  *                                      the clipboard (macOS)
  *   winston init                       plan the setup this folder needs (join, new or adopt,
@@ -1425,6 +1426,77 @@ export function checks(cwd, planned = null, forInit = false, choice = null) {
 
 const missing = (list) => list.filter((c) => c.required && c.state === 'missing')
 
+/**
+ * Phase 0 only: facts the local process can establish before an opt-in projects-mode run.
+ * Claude Projects and Remote Control intentionally stay out of this function: their state
+ * belongs to Claude's UI/account and is not locally verifiable.
+ */
+export function projectsChecks(cwd) {
+  const root = repoRoot(cwd)
+  const nodeMajor = Number.parseInt(process.versions.node.split('.')[0], 10)
+  const claude = onPath('claude')
+  const gh = onPath('gh')
+  return [
+    {
+      name: 'Project folder uses git',
+      state: root ? 'ok' : 'missing',
+      detail: root ? root : 'not inside a git repository',
+      fix: 'open the project folder and run this diagnostic again',
+    },
+    {
+      name: 'Node.js 24 or later',
+      state: nodeMajor >= 24 ? 'ok' : 'missing',
+      detail: `running ${process.versions.node}`,
+      fix: 'install Node.js 24 or later, then run this diagnostic again',
+    },
+    {
+      name: 'Claude Code CLI',
+      state: claude ? 'ok' : 'missing',
+      detail: claude ? 'on PATH' : 'not on PATH',
+      fix: 'install Claude Code or make its claude command available on PATH',
+    },
+    {
+      name: 'GitHub CLI',
+      state: gh ? 'ok' : 'missing',
+      detail: gh ? 'on PATH' : 'not on PATH',
+      fix: 'install the GitHub CLI or make its gh command available on PATH',
+    },
+    {
+      name: 'Claude Projects setup',
+      state: 'unknown',
+      detail: 'manual Claude UI step; not locally verifiable',
+      fix: 'in Claude, confirm the intended Project exists and is selected; Winston does not inspect or create it',
+    },
+    {
+      name: 'Remote Control availability and connection',
+      state: 'unknown',
+      detail: 'manual Claude UI step; not locally verifiable',
+      fix: 'in Claude, confirm Remote Control is available and connected if you intend to use it; Winston does not inspect or start it',
+    },
+  ]
+}
+
+function projectsDoctor(cwd) {
+  const list = projectsChecks(cwd)
+  console.log('Winston projects capability diagnostic. Local checks only; Claude Projects and Remote Control are not locally verifiable.\n')
+  for (const c of list) {
+    const status = c.state === 'ok' ? 'done' : c.state === 'unknown' ? 'could not check' : 'needs you'
+    console.log(`${status.padEnd(16)} ${c.name}  — ${c.detail}`)
+  }
+  const open = list.filter((c) => c.state === 'missing')
+  const blind = list.filter((c) => c.state === 'unknown')
+  if (open.length) {
+    console.log(`\nNeeds you (${open.length}):`)
+    for (const [i, c] of open.entries()) console.log(`\n${i + 1}. ${c.name}\n   Fix:\n     ${c.fix}`)
+    console.log(`\nNext step: ${open[0].name} – ${open[0].fix}. Then run winston doctor --projects again.`)
+    return 1
+  }
+  console.log('\nManual Claude UI checks (not locally verifiable):')
+  for (const c of blind) console.log(`  - ${c.name}: ${c.fix}`)
+  console.log('\nNext step: complete the manual Claude UI checks above if projects mode is needed; then run winston doctor --projects again.')
+  return 0
+}
+
 /** One sentence on why each check matters, by its name. */
 const WHY = [
   [/^Claude Code installed/, 'Winston runs inside Claude Code.'],
@@ -1590,7 +1662,8 @@ function versionCheck(cwd) {
  * apart from Winston's own state directory: the result is kept there for the
  * session-start nudge, and the version check keeps its answer there.
  */
-function doctor(cwd, copy = false) {
+function doctor(cwd, copy = false, projects = false) {
+  if (projects) return projectsDoctor(cwd)
   const list = checks(cwd)
   const version = versionCheck(cwd)
   const at = list.findIndex((c) => c.optional)
@@ -1598,6 +1671,7 @@ function doctor(cwd, copy = false) {
   const root = repoRoot(cwd)
   console.log(`Winston setup checklist${root ? ` for ${basename(root)}` : ''}. Safe to run again: it only reads.\n`)
   if (HARNESS_LEGEND) console.log(HARNESS_LEGEND)
+  console.log('Recommended workflow: do work on staging, check it there, and release approved changes to main. Winston keeps this path consistent for every project.\n')
   for (const c of list) console.log(`${statusOf(c).padEnd(16)} ${c.name}${c.detail ? `  — ${c.detail}` : ''}`)
 
   // A repo with no config has one thing to do; the rest follows from it.
@@ -2120,6 +2194,7 @@ function config(cwd, json) {
 const USAGE = `usage: winston <command>   (in Claude Code, type it in the chat with ! in front: !winston doctor)
 
   doctor [--copy]                  the setup checklist: what is done, what needs you, and the next step
+  doctor --projects                local-only capability checks for opt-in projects mode
   init [--mode join|new|adopt]     plan the setup this folder needs; changes nothing
   init --mode <mode> --yes         apply that plan
   permissions [--apply]            list, or add, the rules that stop routine permission prompts
@@ -2134,8 +2209,9 @@ function main(argv) {
     switch (cmd) {
       case 'config': return config(cwd, rest.includes('--json'))
       case 'doctor':
-        if (rest.some((a) => a !== '--copy')) throw new Error(`winston doctor: unknown argument ${rest.find((a) => a !== '--copy')}`)
-        return doctor(cwd, rest.includes('--copy'))
+        if (rest.some((a) => !['--copy', '--projects'].includes(a))) throw new Error(`winston doctor: unknown argument ${rest.find((a) => !['--copy', '--projects'].includes(a))}`)
+        if (rest.includes('--copy') && rest.includes('--projects')) throw new Error('winston doctor: --copy cannot be combined with --projects')
+        return doctor(cwd, rest.includes('--copy'), rest.includes('--projects'))
       case 'init': return init(cwd, initOptions(rest))
       case 'permissions': return permissions(cwd, permissionOptions(rest))
       case 'install-codex-agents': return installCodexAgents(rest.includes('--force'))

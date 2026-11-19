@@ -14,6 +14,16 @@ Sheldon judges whether its claims are true and whether the engineering is sound.
 definitions own their judgment and output format. This file owns how they are reached, what
 goes on the wire, and how the answers come back.
 
+## Issue-filing gate
+
+When this skill is invoked to qualify a new GitHub issue, it is a required gate rather than an
+optional opinion. Send the complete candidate draft to both advisors unchanged, wait for both
+synchronous responses, and return both complete blocks to the caller. The caller must keep the
+two blocks verbatim and contiguously under `## Debbie and Sheldon` in the issue draft before any
+GitHub issue-filing action. If either response is missing, the caller must stop and must not file.
+This rule covers Winston's session/skill paths only; it cannot govern human filing, another
+agent that bypasses this skill, or GitHub workflows.
+
 ## Config and profile
 
 Read the merged config with `winston config` (if unavailable, read `~/.winston/config.json`

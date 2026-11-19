@@ -74,6 +74,19 @@ Winston's own output uses the form for the app it runs in.
 
 Then `/winston` starts a session from the board's Ready column. See [Commands](#commands).
 
+### New-issue review gate
+
+Winston does not file a new GitHub issue until both Sheldon and Debbie have reviewed the same
+candidate draft and returned their feedback. The session waits for both responses, then carries
+their verbatim, contiguous feedback in the draft under `## Debbie and Sheldon`; only after that
+record exists may it file the issue. A missing response stops filing. A `DROP` ends the filing
+path, while proceeding over a `STOP`, `NARROW`, or a problem Sheldon identified requires the
+reason to be recorded too.
+
+This is a Winston skill/session guarantee. It does not control issues filed by people, agents
+that bypass the skill, or GitHub Actions and other workflows, so those paths are outside the
+gate's coverage.
+
 ## What you need
 
 **Software.** Claude Code (or Codex), [`git`](https://git-scm.com/downloads), the
@@ -101,10 +114,10 @@ still needs the Claude token.
 
 **Platform.** Winston is developed and used on macOS. These parts need it:
 
-- `/winston:handoff` opens the successor session in a new tab only from Claude Code on
-  macOS with [iTerm](https://iterm2.com/); in Codex, on another system, or when a
-  prerequisite it checks is missing, it prints the prompt for you to paste.
-- The `launchers/` scripts drive iTerm through AppleScript.
+- `/winston handoff` is a universal, prompt-only mode. It runs closeout, prints the full
+  successor prompt in chat, and copies it with `pbcopy` when available; the compatibility
+  alias `/winston:handoff` does the same. It never opens iTerm or starts a successor.
+- The public `launchers/` scripts remain available for now, but handoff does not invoke them.
 - `winston doctor --copy` uses the macOS clipboard.
 - Doctor's Gemini key check reads the macOS keychain. `/winston:gemini` itself also takes
   the key from the `GEMINI_API_KEY` environment variable, so doctor can show the key as
@@ -283,9 +296,10 @@ trust them once.
 | `/winston:verdict` | Debbie (is it worth doing?) and Sheldon (is it true and well engineered?), together. Called `/winston:consult` before 0.1.15. |
 | `/winston:rex` | Session therapist and usage reports, run on Codex. |
 | `/winston:closeout` | Can this session end without stranding work? |
-| `/winston:handoff` | Hand the work to a fresh session. |
+| `/winston handoff [focus]` | Run closeout and hand the work to a fresh session by printing the successor prompt and copying it where available; `/winston:handoff` is the compatibility alias. |
 | `/winston:codex`, `/winston:gemini` | Read-only second opinions from other model families. |
 | `/winston:doctor` | The setup checklist: each item `done`, `needs you`, `could not check`, `after setup` or `tip`, with why and how to fix each open one, a line when a newer Winston is out, and one closing **Next step:** line. Changes nothing in the repo or on GitHub. `winston doctor --copy` also puts that step's command on the clipboard when it is a single command (macOS). |
+| `winston doctor --projects` | Opt-in, read-only Phase 0 diagnostics for local projects-mode prerequisites. It checks only the local folder and command-line tools, and explicitly leaves Claude Projects and Remote Control as manual Claude UI checks; it does not inspect or create either capability. |
 | `/winston:init` | Join, create or adopt the setup. Picks the setup from the folder and says which, shows the plan, applies it only on your yes. `winston init --mode join` (or `new`, or `adopt`) plans a different one; `--yes` applies it. |
 | `winston permissions [--apply]` | List, or add to the project's settings, the allow rules Winston runs use. |
 

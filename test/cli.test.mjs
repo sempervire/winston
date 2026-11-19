@@ -97,6 +97,33 @@ test('install-codex-agents copies, keeps identical, and refuses a differing file
   assert.notEqual(readFileSync(target, 'utf8'), 'local edit');
 });
 
+test('new issue filing is gated on both advisor responses and recorded feedback (#94)', () => {
+  const winston = readFileSync(join(ROOT, 'skills/winston/SKILL.md'), 'utf8');
+  const verdict = readFileSync(join(ROOT, 'skills/verdict/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  const init = readFileSync(join(ROOT, 'skills/init/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  const readme = readFileSync(join(ROOT, 'README.md'), 'utf8').replace(/\s+/g, ' ');
+  const gate = winston.slice(winston.indexOf('### Issue-filing gate')).replace(/\s+/g, ' ');
+  const order = [
+    'Prepare the candidate issue draft',
+    'send that same draft, unchanged, to both Debbie and Sheldon',
+    'Wait for both synchronous responses',
+    'Record both advisors\' feedback verbatim and contiguously',
+    'Only after the two responses are recorded may Winston run the issue-filing action',
+  ].map((needle) => gate.indexOf(needle));
+  assert.ok(order.every((index) => index >= 0), 'the gate documents every required step');
+  assert.deepEqual(order, [...order].sort((a, b) => a - b), 'filing is last');
+  assert.match(gate, /If either advisor is unavailable, errors, or has not answered, do not file/);
+  assert.match(gate, /process issues and discoveries made during a session alike/);
+  assert.match(verdict, /required gate rather than an optional opinion/);
+  assert.match(verdict, /both complete blocks/);
+  assert.match(verdict, /If either response is missing, the caller must stop and must not file/);
+  assert.match(init, /complete the Winston issue-filing gate/);
+  assert.match(init, /only after both advisor responses are recorded/);
+  assert.match(readme, /New-issue review gate/);
+  assert.match(readme, /both Sheldon and Debbie have reviewed the same/);
+  assert.match(readme, /outside the gate's coverage/);
+});
+
 test('doctor on a repo with no config says it is not set up and points at init', (t) => {
   const s = sandbox(t);
   s.fake('claude', 'exit 0');
@@ -120,6 +147,37 @@ test('doctor on a repo with no config says it is not set up and points at init',
   // A repo with no config has one thing to do, and the last line names it.
   assert.match(doc.stdout, /Needs you \(1\):\n\n1\. Winston settings for this repo\n   Why: [^\n]+\n   Fix:\n     Type \/winston:init in this Claude Code chat\. It shows its plan and changes nothing until you say yes/);
   assert.match(doc.stdout, /\nNext step: Winston settings for this repo – type \/winston:init in this Claude Code chat\. Then run \/winston:doctor again\.\n$/);
+});
+
+test('doctor --projects reports local prerequisites and leaves Claude UI capabilities unresolved', (t) => {
+  const s = sandbox(t);
+  s.fake('claude', 'exit 0');
+  s.fake('gh', 'exit 0');
+  const doc = s.cli(['doctor', '--projects']);
+  assert.equal(doc.status, 0, doc.stdout + doc.stderr);
+  assert.match(doc.stdout, /^Winston projects capability diagnostic\. Local checks only; Claude Projects and Remote Control are not locally verifiable\./);
+  assert.match(doc.stdout, /^done\s+Project folder uses git/m);
+  assert.match(doc.stdout, /^done\s+Node\.js 24 or later/m);
+  assert.match(doc.stdout, /^done\s+Claude Code CLI/m);
+  assert.match(doc.stdout, /^done\s+GitHub CLI/m);
+  assert.match(doc.stdout, /^could not check\s+Claude Projects setup\s+— manual Claude UI step; not locally verifiable/m);
+  assert.match(doc.stdout, /^could not check\s+Remote Control availability and connection\s+— manual Claude UI step; not locally verifiable/m);
+  assert.match(doc.stdout, /Winston does not inspect or create it/);
+  assert.match(doc.stdout, /Winston does not inspect or start it/);
+  assert.match(doc.stdout, /Next step: complete the manual Claude UI checks above/);
+  assert.equal(s.cli(['doctor', '--projects', '--copy']).status, 1);
+});
+
+test('doctor --projects identifies missing local prerequisites without claiming UI support', (t) => {
+  const s = sandbox(t);
+  s.env.PATH = '/usr/bin:/bin';
+  const doc = s.cli(['doctor', '--projects']);
+  assert.equal(doc.status, 1);
+  assert.match(doc.stdout, /^needs you\s+Claude Code CLI\s+— not on PATH/m);
+  assert.match(doc.stdout, /^needs you\s+GitHub CLI\s+— not on PATH/m);
+  assert.match(doc.stdout, /Next step: Claude Code CLI/);
+  assert.doesNotMatch(doc.stdout, /Claude Projects setup.*done/);
+  assert.doesNotMatch(doc.stdout, /Remote Control availability and connection.*done/);
 });
 
 test('doctor finds a missing kanban view and starting milestone; init creates them', (t) => {
@@ -1622,7 +1680,7 @@ test('every stop on a missing prerequisite points at /winston:doctor', (t) => {
 
 test('skills with a closing report carry the no-bare-statement rule (#52)', () => {
   const flat = (f) => readFileSync(join(ROOT, 'skills', f, 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
-  for (const skill of ['init', 'doctor', 'handoff']) {
+  for (const skill of ['init', 'doctor', 'handoff', 'winston']) {
     const t = flat(skill);
     assert.ok(t.includes('Closing report') && t.includes('no item without an action') || t.includes('Closing report rule'), skill);
     assert.match(t, /already done/, skill);
@@ -1634,6 +1692,23 @@ test('skills with a closing report carry the no-bare-statement rule (#52)', () =
   assert.match(flat('init'), /gh pr merge <n> --merge/);
   assert.match(flat('init'), /production deploy/);
   assert.match(flat('doctor'), /read-only and performs no fix/);
+});
+
+test('handoff is a universal prompt-only Winston mode (#49)', () => {
+  const winston = readFileSync(join(ROOT, 'skills', 'winston', 'SKILL.md'), 'utf8');
+  const alias = readFileSync(join(ROOT, 'skills', 'handoff', 'SKILL.md'), 'utf8');
+  const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+  assert.match(winston, /`\/winston handoff \[focus\]`/);
+  assert.match(winston, /First load `\/winston:closeout` and run it as written/);
+  assert.match(winston, /authorization contract/);
+  assert.match(winston, /Print the complete successor prompt in chat/);
+  assert.match(winston, /`pbcopy`/);
+  assert.match(winston, /Do not invoke `osascript`, iTerm, `claude`, another Codex session/);
+  assert.match(alias, /compatibility alias/);
+  assert.match(alias, /prompt-only/);
+  assert.doesNotMatch(alias, /launch-iterm|osascript|Armed/);
+  assert.match(readme, /universal, prompt-only mode/);
+  assert.match(readme, /public `launchers\/` scripts remain available/);
 });
 
 test('the token link fills in what GitHub documents, by who owns the board', () => {

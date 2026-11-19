@@ -41,3 +41,7 @@ never a message body. Proven with Claude Code 2.1.274 and codex-cli 0.154.0 in h
 - Claude, any surface: `{"kind":"uds","path":"/tmp/cc-socks/<pid>.sock"}` from `$CLAUDE_CODE_MESSAGING_SOCKET`.
 - Codex TUI / desktop app: `{"kind":"codex-queue","thread":"<uuid>"}` (never by name).
 - Remote-only or unknown: `{"kind":"pull"}` (drained at the next turn boundary).
+
+When a sender hook cannot wake a recipient, it prints a short notice naming the recipient and
+the reason. The message remains queued and will arrive on the recipient's next prompt; if they
+are waiting now, ask them to run `chattr inbox`.

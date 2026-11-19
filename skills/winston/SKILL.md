@@ -62,6 +62,9 @@ standards, or the repo's process rules.
   (work a task list the owner gives in chat), **Review** (inspect and report, no write
   authority assumed), **Help** (run `winston doctor` and explain what is on and off).
 - `/winston plan <draft>`: **Plan mode** (below). It never implements.
+- `/winston handoff [focus]`: **Handoff mode** (below). It runs the closeout gate,
+  composes a successor prompt, and prints it for a new session; it never opens a tab or
+  starts another agent.
 - `/winston <instruction>`: follow the instruction, under everything in this file.
 
 Optional tools degrade, never silently. Without Codex, `/winston:codex` and Rex are off;
@@ -69,6 +72,17 @@ without a board, the work set comes from the owner in chat. chattr (claims, peer
 the shared-checkout guard) is part of Winston and always present; if `chattr state` fails,
 that is a setup fault to report with "Run /winston:doctor to see what is missing and how to
 fix it.", not a mode to run in.
+
+## Opt-in projects mode (Phase 0)
+
+Projects mode is opt-in: enter it only when the owner explicitly asks. Before doing so, run
+`winston doctor --projects`; this is a read-only, local-only capability diagnostic. It checks
+the project folder, Node.js, Claude Code, and the GitHub CLI. It cannot verify or create a
+Claude Project, Claude account state, Remote Control availability, or any other Claude UI
+step. Treat those lines as manual owner checks, never as evidence that the capability exists.
+If a required local check is missing, stay in plain CLI mode until it is fixed. This contract
+does not change the default `/winston` or `winston` CLI behavior and does not authorize UI,
+Remote Control, account, or external-service actions.
 
 ## The owner's prompt
 
@@ -94,6 +108,27 @@ Never start the session until the user has reviewed (1) and (2) above and author
 **WORKING**
 
 Keep the orchestration session clean, always using subagents for all work and worktrees as necessary. Choose the models for the subagents effectively to optimize speed, quality and token consumption. Do not hesitate to use higher models if needed, otherwise use lower, faster models if they are adequate to the task.
+
+### Issue-filing gate
+
+Before Winston files **any new GitHub issue**, it must complete this gate. The gate applies to
+process issues and discoveries made during a session alike; it does not apply to picking up an
+issue that already exists.
+
+1. Prepare the candidate issue draft and send that same draft, unchanged, to both Debbie and
+   Sheldon through `/winston:verdict`.
+2. Wait for both synchronous responses. If either advisor is unavailable, errors, or has not
+   answered, do not file the issue.
+3. Record both advisors' feedback verbatim and contiguously in the draft under `## Debbie and
+   Sheldon`. Do not paraphrase, select favorable excerpts, or replace an advisor's response
+   with a verdict supplied by the caller.
+4. Only after the two responses are recorded may Winston run the issue-filing action. A `DROP`
+   ends the filing path; proceeding over a `STOP`, `NARROW`, or a problem Sheldon identified
+   requires a sentence in the record explaining why.
+
+This is a session/skill gate, not a GitHub server-side policy. Winston has no universal hook over
+issues filed by a human, another agent outside this skill, or an installed GitHub workflow; those
+paths are outside this guarantee and must not be described as covered by it.
 
 During development, if new issues/tasks arise, follow this process:
 
@@ -338,6 +373,56 @@ advance, which is preferable.
 - Anything the repo's process docs or the profile reserve to the owner.
 - A gate not in the gate ledger is a planning error: ask it at once and add it to the ledger.
   So is a gate named in a verification plan that setup did not ask.
+
+## Handoff mode — `/winston handoff [focus]`
+
+Handoff mode is the universal, prompt-only way to continue work in a fresh session. The
+older `/winston:handoff` skill is a compatibility alias for this mode.
+
+Treat `[focus]` as natural-language direction. With no focus, continue the current work. If
+the intended work is unclear, ask one concise question and recommend the most likely focus.
+Use the current session's absolute working directory. A different repository is outside this
+workflow. For a different focus in the same repository, tell the successor which base ref to
+branch from and which project naming and claim rules to follow after it starts.
+
+First load `/winston:closeout` and run it as written. Closeout reports only; it performs no
+repair. If it reports `Blocked:` or `Uncertain:`, settle the named items within the existing
+authorization and rerun it. If an item needs new permission, ask for that preserving action.
+Do not continue until closeout reports `No blockers.` Preserve important work as closeout
+requires; do not push merely for handoff.
+
+Then compose the successor's first prompt. Reference issues, commits, branches, specs and
+durable files instead of copying them. Name skills the successor should load and redact
+secrets and personally identifiable information. Include:
+
+- the focus and next concrete action;
+- completed and outstanding work;
+- the current absolute directory, branch, base ref, and relevant issue or PR;
+- the predecessor's `$CLAUDE_CODE_SESSION_ID` when Claude provided one;
+- project-specific branching and claim instructions needed for a different focus;
+- unresolved questions and pending approvals;
+- that the session title is already set and should change only when the task genuinely changes;
+- the authorization contract below.
+
+The authorization contract records what the user authorized for the unfinished task, its exact
+scope, explicit restrictions and pending approvals. Quote the relevant user instruction when
+practical, and distinguish confirmed authorization from inference. Authorization belongs to
+the bounded task and survives the handoff. Approved implementation continues without
+reapproval solely because the session changed. Planning-only and read-only tasks remain so,
+including in a successor running with permissive CLI settings. A changed focus does not
+inherit unrelated permissions. CLI permission mode is not user authorization, and cached
+tool approvals do not transfer.
+
+Print the complete successor prompt in chat. On macOS, also put that same prompt on the
+clipboard with `pbcopy` when available and say whether copying succeeded; if copying is not
+available, say so and leave the chat prompt as the source. The user starts the successor in
+the app or terminal of their choice and pastes the prompt. Do not invoke `osascript`, iTerm, `claude`, another Codex session, a launcher, or a wait-for-predecessor process. Do not release
+claims as a transfer: the successor claims normally when it starts, and `owner_gone`
+reconciliation remains the fallback.
+
+Closing report rule: every pending item is already done, a concrete command
+(put on the clipboard when it is one command on macOS), or a question-box choice with the
+recommended option first. Never end on a bare statement.
 
 ## Plan mode — `/winston plan <draft>`
 
