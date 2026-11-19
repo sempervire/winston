@@ -62,6 +62,15 @@ export async function wakeRecipients(db, senderId, env = process.env) {
   return results;
 }
 
+/** A short, human-facing explanation for a wake that could not be delivered. */
+export function wakeFailureNotice(results) {
+  const failed = results.filter((r) => !r.woke && !['coalesced', 'status_working'].includes(r.reason));
+  if (!failed.length) return null;
+  const names = failed.map((r) => r.id).join(', ');
+  const reasons = [...new Set(failed.map((r) => r.reason).filter(Boolean))].join(', ');
+  return `chattr: message queued for ${names}; automatic wake was unavailable (${reasons}). It will be delivered on their next prompt. If they are waiting now, ask them to run \`chattr inbox\`.`;
+}
+
 export default async function wake(args, env = process.env) {
   const id = args.find((arg) => !arg.startsWith('--'));
   if (!id) {

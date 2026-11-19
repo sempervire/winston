@@ -9,7 +9,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { join, markContinued, open, readPidStart, turn } from '../chattr.mjs';
-import { wakeRecipients } from '../wake.mjs';
+import { wakeFailureNotice, wakeRecipients } from '../wake.mjs';
 import { standDownReason } from './standdown.mjs';
 
 const CAP = 2;
@@ -124,7 +124,11 @@ export async function compose(db, n, { kind, adapter, env }) {
     if (n.event === 'blocked' || n.event === 'stop_failure') result.notify = attention;
   }
   save();
-  if (n.event === 'tool' || n.event === 'stop') await wakeRecipients(db, n.id, env);
+  if (n.event === 'tool' || n.event === 'stop') {
+    const wakeResults = await wakeRecipients(db, n.id, env);
+    const notice = wakeFailureNotice(wakeResults);
+    if (notice) console.error(notice);
+  }
   return result;
 }
 
