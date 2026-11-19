@@ -34,4 +34,3 @@ jobs:
           GITHUB_EVENT_PATH: ${{ github.event_path }}
           BASELINE_SHA: ${{ inputs.baseline_sha }}
         run: node workspace/winston/lib/lifecycle/production.mjs close workspace/target workspace/target/.winston/config.json "$GITHUB_EVENT_PATH" "$BASELINE_SHA"
-

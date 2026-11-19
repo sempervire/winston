@@ -9,7 +9,6 @@ test('production markers and first-run ranges are strict', () => {
   assert.equal(validateBaseline({ baseline: 'a'.repeat(40), current: 'b'.repeat(40), isAncestor: true }).ok, true)
   assert.equal(productionRange({ baselineSha: 'a'.repeat(40), currentSha: 'b'.repeat(40), isAncestor: true }).firstRun, true)
 })
-
 test('promotion gate blocks every in-range issue not Verified', () => {
   const result = planPromotionGate({ issueRefs: [1, 2, 3], issues: [{ number: 1, item: { id: 'a' }, status: 'Verified' }, { number: 2, item: { id: 'b' }, status: 'Verify' }] })
   assert.equal(result.ok, false)
