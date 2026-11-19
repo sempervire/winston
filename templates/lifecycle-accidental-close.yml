@@ -1,0 +1,32 @@
+name: Winston accidental-close protection
+
+on:
+  issues:
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  protect-close:
+    if: github.event.issue.state_reason != 'not_planned'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          path: workspace/target
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: sempervire/winston
+          ref: faf74ed913f72bf7ee9f6969e55af45085321e84
+          path: workspace/winston
+          persist-credentials: false
+      - name: Protect accidental close
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: node workspace/winston/lib/lifecycle/accidental-close.mjs workspace/target workspace/target/.winston/config.json "$GITHUB_EVENT_PATH"
+
