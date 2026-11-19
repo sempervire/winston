@@ -16,7 +16,6 @@ test('unproven close gets one stable comment and reopen', () => {
   assert.equal(plan.action, 'comment-and-reopen')
   assert.match(plan.comment, /accidental-close:issue-42/)
 })
-
 test('retries repair reopen without duplicating the comment', () => {
   const plan = planAccidentalClose({ issue: { number: 42, open: false }, comments: ['accidental-close:issue-42'] })
   assert.equal(plan.action, 'reopen')
