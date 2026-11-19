@@ -14,7 +14,6 @@ test('promotion gate blocks every in-range issue not Verified', () => {
   assert.equal(result.ok, false)
   assert.deepEqual(result.blockers.map((x) => x.number), [2, 3])
 })
-
 test('production reconciliation is preflighted and idempotent', () => {
   const result = planProductionReconciliation({ issueRefs: [1, 2, 3], issues: [{ number: 1, open: true, status: 'Verified', item: { id: 'a' } }, { number: 2, open: false, status: 'Verified', item: { id: 'b' } }, { number: 3, open: true, status: 'Done', item: { id: 'c' } }] })
   assert.equal(result.ok, true)
