@@ -299,6 +299,7 @@ trust them once.
 | `/winston handoff [focus]` | Run closeout and hand the work to a fresh session by printing the successor prompt and copying it where available; `/winston:handoff` is the compatibility alias. |
 | `/winston:codex`, `/winston:gemini` | Read-only second opinions from other model families. |
 | `/winston:doctor` | The setup checklist: each item `done`, `needs you`, `could not check`, `after setup` or `tip`, with why and how to fix each open one, a line when a newer Winston is out, and one closing **Next step:** line. Changes nothing in the repo or on GitHub. `winston doctor --copy` also puts that step's command on the clipboard when it is a single command (macOS). |
+| `winston doctor --projects` | Opt-in, read-only Phase 0 diagnostics for local projects-mode prerequisites. It checks only the local folder and command-line tools, and explicitly leaves Claude Projects and Remote Control as manual Claude UI checks; it does not inspect or create either capability. |
 | `/winston:init` | Join, create or adopt the setup. Picks the setup from the folder and says which, shows the plan, applies it only on your yes. `winston init --mode join` (or `new`, or `adopt`) plans a different one; `--yes` applies it. |
 | `winston permissions [--apply]` | List, or add to the project's settings, the allow rules Winston runs use. |
 

@@ -73,6 +73,17 @@ the shared-checkout guard) is part of Winston and always present; if `chattr sta
 that is a setup fault to report with "Run /winston:doctor to see what is missing and how to
 fix it.", not a mode to run in.
 
+## Opt-in projects mode (Phase 0)
+
+Projects mode is opt-in: enter it only when the owner explicitly asks. Before doing so, run
+`winston doctor --projects`; this is a read-only, local-only capability diagnostic. It checks
+the project folder, Node.js, Claude Code, and the GitHub CLI. It cannot verify or create a
+Claude Project, Claude account state, Remote Control availability, or any other Claude UI
+step. Treat those lines as manual owner checks, never as evidence that the capability exists.
+If a required local check is missing, stay in plain CLI mode until it is fixed. This contract
+does not change the default `/winston` or `winston` CLI behavior and does not authorize UI,
+Remote Control, account, or external-service actions.
+
 ## The owner's prompt
 
 Kept in the author's words; only spelling, formatting and the owner's name are changed.

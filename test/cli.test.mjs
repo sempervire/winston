@@ -149,6 +149,37 @@ test('doctor on a repo with no config says it is not set up and points at init',
   assert.match(doc.stdout, /\nNext step: Winston settings for this repo – type \/winston:init in this Claude Code chat\. Then run \/winston:doctor again\.\n$/);
 });
 
+test('doctor --projects reports local prerequisites and leaves Claude UI capabilities unresolved', (t) => {
+  const s = sandbox(t);
+  s.fake('claude', 'exit 0');
+  s.fake('gh', 'exit 0');
+  const doc = s.cli(['doctor', '--projects']);
+  assert.equal(doc.status, 0, doc.stdout + doc.stderr);
+  assert.match(doc.stdout, /^Winston projects capability diagnostic\. Local checks only; Claude Projects and Remote Control are not locally verifiable\./);
+  assert.match(doc.stdout, /^done\s+Project folder uses git/m);
+  assert.match(doc.stdout, /^done\s+Node\.js 24 or later/m);
+  assert.match(doc.stdout, /^done\s+Claude Code CLI/m);
+  assert.match(doc.stdout, /^done\s+GitHub CLI/m);
+  assert.match(doc.stdout, /^could not check\s+Claude Projects setup\s+— manual Claude UI step; not locally verifiable/m);
+  assert.match(doc.stdout, /^could not check\s+Remote Control availability and connection\s+— manual Claude UI step; not locally verifiable/m);
+  assert.match(doc.stdout, /Winston does not inspect or create it/);
+  assert.match(doc.stdout, /Winston does not inspect or start it/);
+  assert.match(doc.stdout, /Next step: complete the manual Claude UI checks above/);
+  assert.equal(s.cli(['doctor', '--projects', '--copy']).status, 1);
+});
+
+test('doctor --projects identifies missing local prerequisites without claiming UI support', (t) => {
+  const s = sandbox(t);
+  s.env.PATH = '/usr/bin:/bin';
+  const doc = s.cli(['doctor', '--projects']);
+  assert.equal(doc.status, 1);
+  assert.match(doc.stdout, /^needs you\s+Claude Code CLI\s+— not on PATH/m);
+  assert.match(doc.stdout, /^needs you\s+GitHub CLI\s+— not on PATH/m);
+  assert.match(doc.stdout, /Next step: Claude Code CLI/);
+  assert.doesNotMatch(doc.stdout, /Claude Projects setup.*done/);
+  assert.doesNotMatch(doc.stdout, /Remote Control availability and connection.*done/);
+});
+
 test('doctor finds a missing kanban view and starting milestone; init creates them', (t) => {
   const s = sandbox(t);
   mkdirSync(join(s.repo, '.winston'));
