@@ -16,9 +16,16 @@ test('promotion gate blocks every in-range issue not Verified', () => {
 })
 
 test('production reconciliation is preflighted and idempotent', () => {
-  const result = planProductionReconciliation({ issueRefs: [1, 2, 3], issues: [{ number: 1, open: true, status: 'Verified', item: { id: 'a' } }, { number: 2, open: false, status: 'Verified', item: { id: 'b' } }, { number: 3, open: true, status: 'Verify', item: { id: 'c' } }] })
+  const result = planProductionReconciliation({ issueRefs: [1, 2, 3], issues: [{ number: 1, open: true, status: 'Verified', item: { id: 'a' } }, { number: 2, open: false, status: 'Verified', item: { id: 'b' } }, { number: 3, open: true, status: 'Done', item: { id: 'c' } }] })
   assert.equal(result.ok, true)
   assert.deepEqual(result.writes.map((x) => [x.number, x.action]), [[1, 'close'], [2, 'move']])
+})
+
+test('production reconciliation blocks an unverified reference instead of checkpointing it', () => {
+  const result = planProductionReconciliation({ issueRefs: [7], issues: [{ number: 7, open: true, status: 'Verify', item: { id: 'x' } }] })
+  assert.equal(result.ok, false)
+  assert.match(result.errors[0], /#7 is not Verified/)
+  assert.deepEqual(result.writes, [])
 })
 
 test('production mutation failure leaves marker creation off', async () => {
