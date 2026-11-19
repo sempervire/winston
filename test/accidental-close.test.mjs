@@ -25,13 +25,12 @@ test('retries repair reopen without duplicating the comment', () => {
     assert.deepEqual(calls, ['reopen'])
   })
 })
-
 test('open, exempt, and production-proven issues are left alone', () => {
   for (const input of [{ issue: { number: 1, open: true } }, { issue: { number: 2, open: false }, labels: ['wontfix'] }, { issue: { number: 3, open: false }, inProductionRange: true }]) {
     assert.equal(planAccidentalClose(input).action, 'noop')
   }
 })
-
+// End of contract tests.
 test('workflow uses separate checkouts and the event issue trigger', () => {
   const workflow = readFileSync(join(import.meta.dirname, '..', 'templates/lifecycle-accidental-close.yml'), 'utf8')
   assert.match(workflow, /types: \[closed\]/)
@@ -39,4 +38,3 @@ test('workflow uses separate checkouts and the event issue trigger', () => {
   assert.match(workflow, /repository: sempervire\/winston[\s\S]*ref: [0-9a-f]{40}/)
   assert.match(workflow, /workspace\/target\/\.winston\/config\.json/)
 })
-
