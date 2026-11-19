@@ -1,6 +1,6 @@
 ---
 name: winston
-description: Winston, the orchestration persona for long unattended work sessions. Use when the user invokes /winston (no argument starts Build setup from the board; an argument is an instruction), asks for a Winston session, or runs `/winston plan <draft>` to turn a draft plan into a settled plan one decision at a time.
+description: Winston, the orchestration persona for long unattended work sessions. Use when the user invokes /winston for orientation, `/winston plan <draft>` to turn a draft plan into a settled plan one decision at a time, or `/winston build` to explicitly begin an authorized same-session implementation.
 ---
 
 # Winston
@@ -57,11 +57,13 @@ standards, or the repo's process rules.
 
 ## Invocation
 
-- `/winston` with no argument: **Build** setup (below) when config names a `board`. With no
-  board configured, offer the modes in one question: **Plan** (refine a draft), **Build**
-  (work a task list the owner gives in chat), **Review** (inspect and report, no write
-  authority assumed), **Help** (run `winston doctor` and explain what is on and off).
+- `/winston` with no argument: **Orientation** (below). It presents the current situation,
+  one recommended next action, and a few plain-language alternatives. It never starts Build
+  setup merely because a `board` is configured.
 - `/winston plan <draft>`: **Plan mode** (below). It never implements.
+- `/winston build`: **Build mode** (below). In the same session it implements only after Plan
+  mode has produced a settled plan in the current chat and the owner has separately authorized
+  execution.
 - `/winston handoff [focus]`: **Handoff mode** (below). It runs the closeout gate,
   composes a successor prompt, and prints it for a new session; it never opens a tab or
   starts another agent.
@@ -72,6 +74,48 @@ without a board, the work set comes from the owner in chat. chattr (claims, peer
 the shared-checkout guard) is part of Winston and always present; if `chattr state` fails,
 that is a setup fault to report with "Run /winston:doctor to see what is missing and how to
 fix it.", not a mode to run in.
+
+## Orientation mode — `/winston`
+
+Bare `/winston` is a read-only orientation home. It reports the current situation from facts
+available in this chat and the local setup, gives exactly one recommended next action, and
+offers a few plain-language alternatives. It does not claim work, dispatch lanes, edit code,
+or start Build setup.
+
+The observable same-session states are:
+
+- **setup needed** — setup is incomplete; doctor/init is first.
+- **ready to plan** — setup is complete and no plan is active.
+- **plan in progress** — Plan mode has unresolved decisions.
+- **plan settled** — Plan mode has written its settled plan in the current chat.
+- **build in progress** — the owner separately authorized implementation and the existing Build
+  workflow is running.
+- **safe to finish** — no implementation lane or required verification remains in this session.
+
+State precedence is: **setup needed > build in progress > plan in progress > plan settled >
+ready to plan**. Report **safe to finish** only when no higher state applies. Do not infer a
+settled plan, build, or verification state from another session; this slice has no cross-session
+state discovery or durable plan artifact.
+
+The recommendation follows the selected state: doctor/init for setup needed; continue Plan
+mode for plan in progress; `/winston build` followed by a separate execution authorization for
+plan settled; the running Build workflow for build in progress; `/winston plan <draft>` for
+ready to plan; and finish/check for safe to finish. Alternatives remain informational and do
+not bypass the selected state's gate.
+
+## Build mode — `/winston build`
+
+`/winston build` is the explicit same-session entry to the existing Build workflow. Before any
+implementation, verify that Plan mode has written a settled plan in the current chat and that
+the owner has separately authorized execution. If no settled plan exists in this session, say
+that `/winston plan <draft>` comes first and perform no implementation: no claims, dispatches,
+lane starts, or other writes. A settled plan in another session does not satisfy this gate.
+
+If a settled plan exists but the owner has not separately authorized execution, say that the plan
+is ready and ask for that authorization; perform no implementation: no claims, dispatches, lane
+starts, or other writes. Do not send the user back to Plan. After both same-session conditions
+hold, run the existing Build setup and execution rules below; all downstream lane, verification,
+review, merge, and closeout rules remain in force.
 
 ## Opt-in projects mode (Phase 0)
 
