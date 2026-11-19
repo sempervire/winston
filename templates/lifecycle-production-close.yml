@@ -1,0 +1,37 @@
+name: Winston production close
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      baseline_sha:
+        description: Required on the first run, the known ancestor of production
+        required: false
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  close-production:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          path: workspace/target
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: sempervire/winston
+          ref: bc520c0498a82ed65ac445aef88446ac50ba4d72
+          path: workspace/winston
+          persist-credentials: false
+      - name: Reconcile production
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          BASELINE_SHA: ${{ inputs.baseline_sha }}
+        run: node workspace/winston/lib/lifecycle/production.mjs close workspace/target workspace/target/.winston/config.json "$GITHUB_EVENT_PATH" "$BASELINE_SHA"
+
