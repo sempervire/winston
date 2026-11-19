@@ -1649,7 +1649,7 @@ test('every stop on a missing prerequisite points at /winston:doctor', (t) => {
 
 test('skills with a closing report carry the no-bare-statement rule (#52)', () => {
   const flat = (f) => readFileSync(join(ROOT, 'skills', f, 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
-  for (const skill of ['init', 'doctor', 'handoff']) {
+  for (const skill of ['init', 'doctor', 'handoff', 'winston']) {
     const t = flat(skill);
     assert.ok(t.includes('Closing report') && t.includes('no item without an action') || t.includes('Closing report rule'), skill);
     assert.match(t, /already done/, skill);
@@ -1661,6 +1661,23 @@ test('skills with a closing report carry the no-bare-statement rule (#52)', () =
   assert.match(flat('init'), /gh pr merge <n> --merge/);
   assert.match(flat('init'), /production deploy/);
   assert.match(flat('doctor'), /read-only and performs no fix/);
+});
+
+test('handoff is a universal prompt-only Winston mode (#49)', () => {
+  const winston = readFileSync(join(ROOT, 'skills', 'winston', 'SKILL.md'), 'utf8');
+  const alias = readFileSync(join(ROOT, 'skills', 'handoff', 'SKILL.md'), 'utf8');
+  const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+  assert.match(winston, /`\/winston handoff \[focus\]`/);
+  assert.match(winston, /First load `\/winston:closeout` and run it as written/);
+  assert.match(winston, /authorization contract/);
+  assert.match(winston, /Print the complete successor prompt in chat/);
+  assert.match(winston, /`pbcopy`/);
+  assert.match(winston, /Do not invoke `osascript`, iTerm, `claude`, another Codex session/);
+  assert.match(alias, /compatibility alias/);
+  assert.match(alias, /prompt-only/);
+  assert.doesNotMatch(alias, /launch-iterm|osascript|Armed/);
+  assert.match(readme, /universal, prompt-only mode/);
+  assert.match(readme, /public `launchers\/` scripts remain available/);
 });
 
 test('the token link fills in what GitHub documents, by who owns the board', () => {
