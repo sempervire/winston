@@ -1,5 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { closingKeywordIssues, explicitIssueReferences, integrationIssueNumbers } from '../lib/lifecycle/resolvers.mjs'
 import { applyIntegrationPlan, planIntegrationPush, validateBranches } from '../lib/lifecycle/integration.mjs'
 
@@ -19,7 +21,7 @@ test('integration planning preflights all issue and board state', () => {
     config: { branches: { integration: 'staging', production: 'main' }, statuses: { ready: 'Ready', intake: 'New', verify: 'Verify', verified: 'Verified', done: 'Done' }, integrationExists: true, productionExists: true, defaultBranch: 'main' },
     event: { before: 'abc', after: 'def' },
     rangeIssues: [1, 2, 3],
-    issues: [{ number: 1, open: true }, { number: 2, open: true }, { number: 3, open: false }],
+    issues: [{ number: 1, open: true }, { number: 2, open: true }, { number: 3, open: true }],
     boardItems: [{ number: 1, id: 'a', status: 'Ready' }, { number: 2, id: 'b', status: 'Verified' }],
   })
   assert.equal(plan.ok, false)
@@ -45,4 +47,13 @@ test('mutation failures report per-item results and retain successful moves', as
   assert.equal(result.ok, false)
   assert.deepEqual(result.results.map((x) => x.ok), [true, false])
   assert.match(result.results[1].error, /API unavailable/)
+})
+
+test('integration workflow uses separate full-history target and pinned Winston checkouts', () => {
+  const workflow = readFileSync(join(import.meta.dirname, '..', 'templates/lifecycle-integration.yml'), 'utf8')
+  assert.match(workflow, /branches:\s*\n\s+- '\*\*'/)
+  assert.match(workflow, /path: workspace\/target[\s\S]*fetch-depth: 0/)
+  assert.match(workflow, /repository: sempervire\/winston[\s\S]*ref: [0-9a-f]{40}[\s\S]*path: workspace\/winston/)
+  assert.match(workflow, /GH_TOKEN: \$\{\{ secrets\.GH_PAT \}\}/)
+  assert.match(workflow, /workspace\/target\/\.winston\/config\.json/)
 })
