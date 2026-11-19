@@ -293,7 +293,7 @@ trust them once.
 |---|---|
 | `/winston` | Orientation home. Reports the current same-session situation, one recommended next action, and plain-language alternatives; it never implicitly starts Build. |
 | `/winston plan <draft>` | Turn a draft plan into a settled one, one decision at a time. Never implements. |
-| `/winston build` | Explicitly enter Build after Plan has settled a plan in the current chat and the owner separately authorizes execution; otherwise gives a no-write Plan-first redirect. |
+| `/winston build` | Explicitly enter Build after Plan has settled a plan in the current chat and the owner separately authorizes execution; with no plan it gives a no-write Plan-first redirect, and with no authorization it asks for authorization without writing. |
 | `/winston:triage` | Whole-board triage pass under the repo's own policy (`TRIAGE.md`). |
 | `/winston:radar` | What to work on next, batched into the time you have. |
 | `/winston:verdict` | Debbie (is it worth doing?) and Sheldon (is it true and well engineered?), together. Called `/winston:consult` before 0.1.15. |

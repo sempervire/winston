@@ -145,11 +145,13 @@ test('root Winston is orientation and Build is same-session Plan-first gated (#9
   assert.match(build, /owner has separately authorized execution/);
   assert.match(build, /`\/winston plan <draft>` comes first/);
   assert.match(build, /no claims, dispatches, lane starts, or other writes/);
+  assert.match(build, /If a settled plan exists but the owner has not separately authorized execution/);
+  assert.match(build, /Do not send the user back to Plan/);
   assert.match(build, /After both same-session conditions hold, run the existing Build setup and execution rules below/);
 
   assert.match(readmeFlat, /Winston → Plan → Build → Check → Finish/);
   assert.match(readmeFlat, /`\/winston`.*never implicitly starts Build/);
-  assert.match(readmeFlat, /`\/winston build`.*no-write Plan-first redirect/);
+  assert.match(readmeFlat, /`\/winston build`.*no-write Plan-first redirect.*no authorization.*without writing/);
 });
 
 test('doctor on a repo with no config says it is not set up and points at init', (t) => {

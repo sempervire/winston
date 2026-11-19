@@ -111,8 +111,11 @@ the owner has separately authorized execution. If no settled plan exists in this
 that `/winston plan <draft>` comes first and perform no implementation: no claims, dispatches,
 lane starts, or other writes. A settled plan in another session does not satisfy this gate.
 
-After both same-session conditions hold, run the existing Build setup and execution rules below;
-all downstream lane, verification, review, merge, and closeout rules remain in force.
+If a settled plan exists but the owner has not separately authorized execution, say that the plan
+is ready and ask for that authorization; perform no implementation: no claims, dispatches, lane
+starts, or other writes. Do not send the user back to Plan. After both same-session conditions
+hold, run the existing Build setup and execution rules below; all downstream lane, verification,
+review, merge, and closeout rules remain in force.
 
 ## Opt-in projects mode (Phase 0)
 
