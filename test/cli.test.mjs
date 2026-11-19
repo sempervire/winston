@@ -124,6 +124,34 @@ test('new issue filing is gated on both advisor responses and recorded feedback 
   assert.match(readme, /outside the gate's coverage/);
 });
 
+test('root Winston is orientation and Build is same-session Plan-first gated (#99)', () => {
+  const winston = readFileSync(join(ROOT, 'skills/winston/SKILL.md'), 'utf8');
+  const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+  const flat = winston.replace(/\s+/g, ' ');
+  const readmeFlat = readme.replace(/\s+/g, ' ');
+  assert.match(flat, /Bare `\/winston` is a read-only orientation home/);
+  assert.match(flat, /It does not claim work, dispatch lanes, edit code, or start Build setup/);
+  for (const state of ['setup needed', 'ready to plan', 'plan in progress', 'plan settled', 'build in progress', 'safe to finish']) {
+    assert.match(flat, new RegExp(`\\*\\*${state}\\*\\*`), `orientation names ${state}`);
+  }
+  const precedence = 'setup needed > build in progress > plan in progress > plan settled > ready to plan';
+  assert.ok(flat.includes(precedence), 'orientation defines the required precedence');
+  assert.match(flat, /Report \*\*safe to finish\*\* only when no higher state applies/);
+  assert.match(flat, /Do not infer a settled plan, build, or verification state from another session/);
+
+  const build = flat.slice(flat.indexOf('## Build mode'));
+  assert.match(build, /`\/winston build` is the explicit same-session entry/);
+  assert.match(build, /Plan mode has written a settled plan in the current chat/);
+  assert.match(build, /owner has separately authorized execution/);
+  assert.match(build, /`\/winston plan <draft>` comes first/);
+  assert.match(build, /no claims, dispatches, lane starts, or other writes/);
+  assert.match(build, /After both same-session conditions hold, run the existing Build setup and execution rules below/);
+
+  assert.match(readmeFlat, /Winston → Plan → Build → Check → Finish/);
+  assert.match(readmeFlat, /`\/winston`.*never implicitly starts Build/);
+  assert.match(readmeFlat, /`\/winston build`.*no-write Plan-first redirect/);
+});
+
 test('doctor on a repo with no config says it is not set up and points at init', (t) => {
   const s = sandbox(t);
   s.fake('claude', 'exit 0');

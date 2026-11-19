@@ -72,7 +72,9 @@ parallel worktree lanes, merge one PR at a time, verify, and report.
 Codex, ask Codex to run `winston ...`, and to use a skill such as `winston:init` by name;
 Winston's own output uses the form for the app it runs in.
 
-Then `/winston` starts a session from the board's Ready column. See [Commands](#commands).
+Then `/winston` orients you in the current session. The intended flow is **Winston → Plan →
+Build → Check → Finish**: use `/winston plan <draft>` to settle a plan in this chat, then use
+`/winston build` and separately authorize execution. See [Commands](#commands).
 
 ### New-issue review gate
 
@@ -289,8 +291,9 @@ trust them once.
 
 | Command | What it does |
 |---|---|
-| `/winston` | Orchestrator. No argument: set up a session from the board's Ready column. An argument is an instruction. |
+| `/winston` | Orientation home. Reports the current same-session situation, one recommended next action, and plain-language alternatives; it never implicitly starts Build. |
 | `/winston plan <draft>` | Turn a draft plan into a settled one, one decision at a time. Never implements. |
+| `/winston build` | Explicitly enter Build after Plan has settled a plan in the current chat and the owner separately authorizes execution; otherwise gives a no-write Plan-first redirect. |
 | `/winston:triage` | Whole-board triage pass under the repo's own policy (`TRIAGE.md`). |
 | `/winston:radar` | What to work on next, batched into the time you have. |
 | `/winston:verdict` | Debbie (is it worth doing?) and Sheldon (is it true and well engineered?), together. Called `/winston:consult` before 0.1.15. |
