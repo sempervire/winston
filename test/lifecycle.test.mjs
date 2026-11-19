@@ -46,4 +46,3 @@ test('mutation failures report per-item results and retain successful moves', as
   assert.deepEqual(result.results.map((x) => x.ok), [true, false])
   assert.match(result.results[1].error, /API unavailable/)
 })
-
