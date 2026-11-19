@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: sempervire/winston
-          ref: bc520c0498a82ed65ac445aef88446ac50ba4d72
+          ref: 84ea15911e192388e41f3e91b0de057824cb0ce4
           path: workspace/winston
           persist-credentials: false
       - name: Reconcile production
