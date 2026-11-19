@@ -29,4 +29,3 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_PAT }}
           GITHUB_EVENT_PATH: ${{ github.event_path }}
         run: node workspace/winston/lib/lifecycle/accidental-close.mjs workspace/target workspace/target/.winston/config.json "$GITHUB_EVENT_PATH"
-

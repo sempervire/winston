@@ -11,7 +11,6 @@ test('exemptions and production evidence are explicit', () => {
   assert.equal(productionEvidence({ inProductionRange: true }), true)
   assert.equal(accidentalCloseMarker(42), 'accidental-close:issue-42')
 })
-
 test('unproven close gets one stable comment and reopen', () => {
   const plan = planAccidentalClose({ issue: { number: 42, open: false } })
   assert.equal(plan.action, 'comment-and-reopen')
