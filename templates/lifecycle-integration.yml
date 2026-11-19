@@ -1,0 +1,35 @@
+name: Winston integration verification
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-integration-push:
+    if: github.ref_name != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the target repository out at the event commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: workspace/target
+          persist-credentials: false
+      - name: Check the pinned Winston implementation out
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: sempervire/winston
+          ref: 3e2b2c045e8d0d1748aacf656fab76dbaaf12710
+          path: workspace/winston
+          persist-credentials: false
+      - name: Run the integration verifier
+        env:
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: node workspace/winston/lib/lifecycle/integration.mjs workspace/target workspace/target/.winston/config.json "$GITHUB_EVENT_PATH"
+
