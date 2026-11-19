@@ -8,7 +8,6 @@ test('lifecycle resolvers collect closing keywords and explicit declarations onc
   assert.deepEqual(explicitIssueReferences('Refs #14 and issue: #15'), [14, 15])
   assert.deepEqual(integrationIssueNumbers({ rangeIssues: [15], text: 'Fixes #12\nRefs #15' }), [12, 15])
 })
-
 test('branch validation fails closed before any write', () => {
   assert.deepEqual(validateBranches({ integration: 'staging', production: 'main', defaultBranch: 'staging', integrationExists: true, productionExists: true }), {
     ok: false, errors: ['the repository default branch must not be the integration branch'],

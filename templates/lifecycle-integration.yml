@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: sempervire/winston
-          ref: ed0b2b8dd57c67ab5a40035f01c188e3b65c607f
+          ref: d624325738ef9a116d17f216c1b8c69ac3426bc4
           path: workspace/winston
           persist-credentials: false
       - name: Run the integration verifier
@@ -35,4 +35,3 @@ jobs:
           GITHUB_EVENT_PATH: ${{ github.event_path }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: node workspace/winston/lib/lifecycle/integration.mjs workspace/target workspace/target/.winston/config.json "$GITHUB_EVENT_PATH"
-
