@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: sempervire/winston
-          ref: 5135ed5d5776b0a87b3e71d61c076fcf6211c96e
+          ref: ed1e0d0d7b0bfac014fc52f857408c3fa58aa22d
           path: workspace/winston
           persist-credentials: false
       - name: Protect accidental close
