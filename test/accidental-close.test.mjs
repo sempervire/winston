@@ -25,6 +25,23 @@ test('retries repair reopen without duplicating the comment', () => {
     assert.deepEqual(calls, ['reopen'])
   })
 })
+test('reopens even when the explanatory comment fails', async () => {
+  const calls = []
+  await assert.rejects(
+    applyAccidentalClosePlan(
+      { action: 'comment-and-reopen', comment: 'explain' },
+      {
+        comment: async () => {
+          calls.push('comment')
+          throw new Error('comment failed')
+        },
+        reopen: async () => calls.push('reopen'),
+      },
+    ),
+    /comment failed/,
+  )
+  assert.deepEqual(calls, ['comment', 'reopen'])
+})
 test('open, exempt, and production-proven issues are left alone', () => {
   for (const input of [{ issue: { number: 1, open: true } }, { issue: { number: 2, open: false }, labels: ['wontfix'] }, { issue: { number: 3, open: false }, inProductionRange: true }]) {
     assert.equal(planAccidentalClose(input).action, 'noop')
