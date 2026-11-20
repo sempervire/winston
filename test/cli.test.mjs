@@ -154,6 +154,39 @@ test('root Winston is orientation and Build is same-session Plan-first gated (#9
   assert.match(readmeFlat, /`\/winston build`.*no-write Plan-first redirect.*no authorization.*without writing/);
 });
 
+test('Plan documents the no-naked-question contract (#108)', () => {
+  const winston = readFileSync(join(ROOT, 'skills', 'winston', 'SKILL.md'), 'utf8');
+  const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+  const phase2 = winston.slice(winston.indexOf('## Plan mode'), winston.indexOf('### Done'));
+  const phase2Flat = phase2.replace(/\s+/g, ' ');
+  const orderedLabels = ['**Meaning**', '**Recommendation**', '**Choices**', '**Help**'];
+  let previous = -1;
+  for (const label of orderedLabels) {
+    const position = phase2.indexOf(label);
+    assert.ok(position > previous, `${label} appears in Phase 2 order`);
+    previous = position;
+  }
+  for (const phrase of [
+    'at most 100 words',
+    'plain English',
+    'only selectable decision',
+    '`Explain this`',
+    '`I don\'t know`',
+    'same order and queue position',
+    'Neither help action settles or advances',
+    '`No safe recommendation yet`',
+    'silence or empty input does not settle or advance',
+    'fallback Help text is emitted only in the next available chat turn',
+    'Static documentation cannot prove model behavior',
+  ]) assert.ok(phase2Flat.includes(phrase), `Phase 2 documents ${phrase}`);
+  for (const field of ['User draft:', 'Meaning:', 'Recommendation:', 'Choices:', 'Help:']) {
+    assert.ok(phase2.includes(field), `Phase 2 example includes ${field}`);
+    assert.ok(readme.includes(field), `README example includes ${field}`);
+  }
+  assert.ok(readme.includes('Help is text guidance, not an extra decision option'));
+  assert.ok(readme.includes('If there is no safe recommendation, Winston says so'));
+});
+
 test('doctor on a repo with no config says it is not set up and points at init', (t) => {
   const s = sandbox(t);
   s.fake('claude', 'exit 0');

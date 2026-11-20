@@ -76,6 +76,24 @@ Then `/winston` orients you in the current session. The intended flow is **Winst
 Build → Check → Finish**: use `/winston plan <draft>` to settle a plan in this chat, then use
 `/winston build` and separately authorize execution. See [Commands](#commands).
 
+Plan uses a no-naked-question format for each decision: **Meaning** translates the technical
+choice into plain English, **Recommendation** gives Winston's suggested choice and reason,
+**Choices** lists only that decision's alternatives, and **Help** says how to get unstuck. Reply
+`Explain this` to get an unfamiliar term explained, or `I don't know` to hear Winston's
+recommendation again. Help is text guidance, not an extra decision option, and Plan still asks one
+decision at a time. If there is no safe recommendation, Winston says so and silence does not
+advance the plan.
+
+Example:
+
+```text
+User draft: “I'm adding profile photo uploads.”
+Meaning: “Where should uploaded photos live?”
+Recommendation: “Use local storage for the first version because this is a local prototype and easy to replace.”
+Choices: “Local disk” or “Object storage”
+Help: “Reply Explain this for a plain-language explanation, or I don't know to hear the recommendation again.”
+```
+
 ### New-issue review gate
 
 Winston does not file a new GitHub issue until both Sheldon and Debbie have reviewed the same
