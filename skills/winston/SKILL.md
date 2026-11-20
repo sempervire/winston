@@ -480,6 +480,41 @@ communication rules prefer batching questions. Each answer can change the remain
 queue; redraft only the turns it affects before posting the next one. All other project rules
 still apply.
 
+Every Phase 2 turn follows the same no-naked-question contract. Keep the existing explanation
+prose first, at most 100 words, and end it with a recommendation and reason when a safe
+recommendation exists. Then show one question box for that same decision. Its prompt text has
+these labels, in this order: **Meaning**, **Recommendation**, **Choices**, **Help**. Meaning
+translates the decision into plain English. Recommendation names one choice and gives one short
+reason. Choices contain only alternatives for this decision and are the only selectable decision
+options in a native question box.
+
+Help is instructional text, not an additional decision option. It tells the user to reply exactly
+`Explain this` for a short explanation or `I don't know` to hear the recommendation again. If a
+harness cannot accept that free-form help reply while its native box is open, present the same
+Help text in the next available chat turn before treating the decision as settled. This contract
+does not require a particular renderer or nested controls. `Explain this` produces a short
+plain-language explanation and then repeats the same decision's Meaning, Recommendation, Choices,
+and Help in the same order and queue position. `I don't know` repeats the same decision with the
+recommendation and reason restated. Neither help action settles or advances the decision.
+
+When no safe recommendation exists, Meaning says what is unknown, Recommendation says exactly
+`No safe recommendation yet` and why, and Choices name the smallest decision needed to unblock.
+The usual silence rule applies only when a safe recommendation exists: silence accepts that
+recommendation. On a no-safe-recommendation turn, silence or empty input does not settle or
+advance. After the question box, the normal Plan turn adds no prose; fallback Help text is emitted
+only in the next available chat turn. Static documentation cannot prove model behavior, queue
+preservation, or renderer behavior.
+
+For example:
+
+```text
+User draft: “I'm adding profile photo uploads.”
+Meaning: “Where should uploaded photos live?”
+Recommendation: “Use local storage for the first version because this is a local prototype and easy to replace.”
+Choices: “Local disk” or “Object storage”
+Help: “Reply Explain this for a plain-language explanation, or I don't know to hear the recommendation again.”
+```
+
 ### Phase 0 - get the draft
 
 The draft is whatever the argument points at: pasted text, a file path, a GitHub issue or PR
