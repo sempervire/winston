@@ -83,14 +83,17 @@ from a handoff brief never goes to Plan and raises a contradiction between the b
 issues as an inline question instead. See [Commands](#commands).
 
 Plan uses a no-naked-question format for each decision. Each turn is the question box alone, with
-no prose above it. Its text has three labels, in order: **Decision Point** states the decision in
+no prose above it. The one exception is a single opening line when your last answer changed the
+remaining decisions (plus the explanation the Explain option below gives when you choose it). Its text has three labels, in order: **Decision Point** states the decision in
 plain English, **Explanation** gives the decision and its context in 50 words or fewer, and
 **Recommendation** names Winston's suggested choice and reason. The box offers at most three real
 choices, the recommended one first, then **Explain this further and help me decide** as the last
 option before the box's own free-text entry. Choosing it gets a short plain-language explanation
 and the same question again; it never settles the decision and never counts as an approval. Plan
-still asks one decision at a time. If there is no safe recommendation, Winston says so and silence
-does not advance the plan.
+still asks one decision at a time. Saying nothing takes the recommended option. If there is no
+safe recommendation, Winston says so and silence does not advance the plan. This holds for Plan
+decisions only: in Build setup, silence is never an answer or an approval, and nothing starts
+without the setup's authorization to start.
 
 Example:
 
