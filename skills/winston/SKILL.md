@@ -380,8 +380,14 @@ In order:
    rule is reached, so an allow rule never clears a `permissions.ask`/`permissions.deny` rule,
    a hook, production approval, a secret grant, or any other gate below — those stay explicit.
 9. Ask every independent setup decision in a question box, including the permission-rules
-   step from step 8 where rules are to be added. Give each its own question, explain the tradeoff,
-   recommend an answer and say why. Batch the questions in one setup round where the interface
+   step from step 8 where rules are to be added. Give each its own question in Plan mode's question
+   format: **Decision Point**, an **Explanation** of the tradeoff in 50 words or fewer, and a
+   **Recommendation** with its reason; at most three real options, the recommended one first and labelled
+   `(Recommended)`, then `Explain this further and help me decide` last, before the box's
+   automatic "Other" entry. When no safe recommendation exists, Recommendation reads exactly
+   `No safe recommendation yet` plus the reason and no option is labelled `(Recommended)`. Selecting that Explain option gives a short
+   plain-language explanation and re-asks the same question; it is never an answer or an
+   approval, so it cannot satisfy a gate-ledger entry, a pre-approval, or any gated action. Batch the questions in one setup round where the interface
    permits; ask dependent questions after their prerequisites are answered. This skill requires
    question boxes as its standing setup behavior, even where the repository's general chat
    rules open them only on request. If question boxes are unavailable, ask the same numbered
@@ -391,7 +397,7 @@ In order:
    amendment does not cover, and moves to `Verified`;
    get explicit approval for each that applies. Ask each gate-ledger entry (step 5) here as a
    conditional pre-approval. Record each approval verbatim (the selected option's text); lane prompts that rely on one
-   quote it verbatim, since the classifier discounts paraphrase. An owner's question-box selection is the approval, final: Winston never asks the owner to retype or re-confirm an approval in chat. If the harness still blocks an approved action, Winston reports it to the owner as a blocker and does not route the action through another session or agent.
+   quote it verbatim, since the classifier discounts paraphrase. An owner's question-box selection of a real option (never the Explain option) is the approval, final: Winston never asks the owner to retype or re-confirm an approval in chat. If the harness still blocks an approved action, Winston reports it to the owner as a blocker and does not route the action through another session or agent.
 10. Confirm that the setup actions are complete and every decision and gate is answered.
    Show the resulting work set and plan, then ask for a separate authorization to start the
    session. If an answer changes the plan, update the decision list and resolve any new
@@ -480,39 +486,42 @@ communication rules prefer batching questions. Each answer can change the remain
 queue; redraft only the turns it affects before posting the next one. All other project rules
 still apply.
 
-Every Phase 2 turn follows the same no-naked-question contract. Keep the existing explanation
-prose first, at most 100 words, and end it with a recommendation and reason when a safe
-recommendation exists. Then show one question box for that same decision. Its prompt text has
-these labels, in this order: **Meaning**, **Recommendation**, **Choices**, **Help**. Meaning
-translates the decision into plain English. Recommendation names one choice and gives one short
-reason. Choices contain only alternatives for this decision and are the only selectable decision
-options in a native question box.
+Every Phase 2 turn follows the same no-naked-question contract. The turn is the question box
+alone: no prose paragraph above it and none after it, except the single opening line that says an
+answer changed the queue (see Phase 2). The box's question text has these labels, in this order:
+**Decision Point**, **Explanation**, **Recommendation**. Decision Point states the decision in
+plain English. Explanation gives the decision and its context in 50 words or fewer; count the
+words. Recommendation names one option and gives one short reason. There are no Choices or Help
+sections.
 
-Help is instructional text, not an additional decision option. It tells the user to reply exactly
-`Explain this` for a short explanation or `I don't know` to hear the recommendation again. If a
-harness cannot accept that free-form help reply while its native box is open, present the same
-Help text in the next available chat turn before treating the decision as settled. This contract
-does not require a particular renderer or nested controls. `Explain this` produces a short
-plain-language explanation and then repeats the same decision's Meaning, Recommendation, Choices,
-and Help in the same order and queue position. `I don't know` repeats the same decision with the
-recommendation and reason restated. Neither help action settles or advances the decision.
+The box's options are the real choices for this decision, the recommended option first and
+labelled `(Recommended)`, then, as the last option before the box's automatic "Other" free-text
+entry, exactly `Explain this further and help me decide`. The box holds four options, so a
+decision has at most three real choices; split a larger decision into several. Selecting the
+Explain option produces a short plain-language explanation that helps the user decide, then
+re-asks the same decision with the same Decision Point, Explanation, Recommendation and options,
+in the same queue position. It never settles or advances the decision and never counts as an
+answer or an approval. If a harness has no native question box, ask the same labels and numbered
+options in chat, with the Explain option last.
 
-When no safe recommendation exists, Meaning says what is unknown, Recommendation says exactly
-`No safe recommendation yet` and why, and Choices name the smallest decision needed to unblock.
-The usual silence rule applies only when a safe recommendation exists: silence accepts that
-recommendation. On a no-safe-recommendation turn, silence or empty input does not settle or
-advance. After the question box, the normal Plan turn adds no prose; fallback Help text is emitted
-only in the next available chat turn. Static documentation cannot prove model behavior, queue
+When no safe recommendation exists, Decision Point says what is unknown, Recommendation reads
+exactly `No safe recommendation yet` plus the reason, no option is labelled `(Recommended)`, and
+the real options name the smallest decision needed to unblock. Silence accepts the recommended
+option only when a safe recommendation exists; on a no-safe-recommendation turn, silence or empty
+input does not settle or advance. Static documentation cannot prove model behavior, queue
 preservation, or renderer behavior.
 
 For example:
 
 ```text
 User draft: “I'm adding profile photo uploads.”
-Meaning: “Where should uploaded photos live?”
-Recommendation: “Use local storage for the first version because this is a local prototype and easy to replace.”
-Choices: “Local disk” or “Object storage”
-Help: “Reply Explain this for a plain-language explanation, or I don't know to hear the recommendation again.”
+Decision Point: “Where should uploaded photos live?”
+Explanation: “Photos need a home. Local disk is simple and free but is lost if the server is replaced. Object storage (such as S3) survives server changes and scales, but adds an account, cost and setup.”
+Recommendation: “Local disk, because this is a local prototype and storage is easy to swap later.”
+Options:
+1. Local disk (Recommended)
+2. Object storage
+3. Explain this further and help me decide
 ```
 
 ### Phase 0 - get the draft
@@ -537,25 +546,27 @@ Then post one short report - under 300 words, no preamble:
   that nothing depends on a decision below it.
 
 That list is the queue for Phase 2. Before posting the report, draft every decision's turn
-(explanation, options, recommendation) and finish the lookups they need. Do not ask any of it
+(Decision Point, Explanation, Recommendation, options) and finish the lookups they need. Do not ask any of it
 yet.
 
 ### Phase 2 - one decision at a time
 
 Work the queue from the top. Each turn posts one decision and nothing else:
 
-1. **An explanation of at most 100 words**, ending in your recommendation and why. Enough
-   context to decide without scrolling back. Count the words.
-2. **The decision itself in a question box**, recommended option first, labelled
-   `(Recommended)`. That option is also what the run takes if the user says nothing, so
-   silence is a valid reply.
+1. **The decision in a question box, with no prose above it.** Its text is Decision Point,
+   Explanation (50 words or fewer; count them) and Recommendation, giving enough context to
+   decide without scrolling back.
+2. **Its options:** at most three real choices, the recommended one first and labelled
+   `(Recommended)`, then `Explain this further and help me decide` last. The recommended option
+   is also what the run takes if the user says nothing, so silence is a valid reply when a safe
+   recommendation exists.
 
-One decision per turn, and no further prose after the box. Never ask the next question before
+One decision per turn, and no prose before or after the box. Never ask the next question before
 the current one is answered.
 
 After each answer, fold it into the plan and recompute the queue. An answer can settle a later
 decision, contradict an earlier one, or open one that did not exist - when it does, say so in
-the single line that opens the next turn, ahead of that turn's explanation. Do not re-litigate
+the single line that opens the next turn, ahead of that turn's question box. Do not re-litigate
 a decision the user has already made.
 
 Facts stay your job, but gather them in Phase 1. After an answer, post the next prepared turn.
