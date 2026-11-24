@@ -204,37 +204,81 @@ test('root Winston orients to ready to build, and Build takes any of three plan 
   assert.doesNotMatch(readmeFlat, /`\/winston build` and separately authorize execution/);
 });
 
-test('Plan documents the no-naked-question contract (#108)', () => {
+test('Plan and Setup use the Decision Point question format (#113)', () => {
   const winston = readFileSync(join(ROOT, 'skills', 'winston', 'SKILL.md'), 'utf8');
   const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
-  const phase2 = winston.slice(winston.indexOf('## Plan mode'), winston.indexOf('### Done'));
-  const phase2Flat = phase2.replace(/\s+/g, ' ');
-  const orderedLabels = ['**Meaning**', '**Recommendation**', '**Choices**', '**Help**'];
+  const flat = (text) => text.replace(/\s+/g, ' ');
+  const explain = 'Explain this further and help me decide';
+  const plan = winston.slice(winston.indexOf('## Plan mode'), winston.indexOf('### Done'));
+  const planFlat = flat(plan);
+  const orderedLabels = ['**Decision Point**', '**Explanation**', '**Recommendation**'];
   let previous = -1;
   for (const label of orderedLabels) {
-    const position = phase2.indexOf(label);
-    assert.ok(position > previous, `${label} appears in Phase 2 order`);
+    const position = plan.indexOf(label);
+    assert.ok(position > previous, `${label} appears in Plan order`);
     previous = position;
   }
   for (const phrase of [
-    'at most 100 words',
+    'The turn is the question box alone: no prose paragraph above it',
+    'single opening line that says an answer changed the queue',
     'plain English',
-    'only selectable decision',
-    '`Explain this`',
-    '`I don\'t know`',
-    'same order and queue position',
-    'Neither help action settles or advances',
-    '`No safe recommendation yet`',
+    '50 words or fewer',
+    'There are no Choices or Help sections.',
+    `exactly \`${explain}\``,
+    'at most three real choices',
+    're-asks the same decision with the same Decision Point, Explanation, Recommendation and options',
+    'never settles or advances the decision and never counts as an answer or an approval',
+    'exactly `No safe recommendation yet` plus the reason',
+    'the smallest decision needed to unblock',
     'silence or empty input does not settle or advance',
-    'fallback Help text is emitted only in the next available chat turn',
-    'Static documentation cannot prove model behavior',
-  ]) assert.ok(phase2Flat.includes(phrase), `Phase 2 documents ${phrase}`);
-  for (const field of ['User draft:', 'Meaning:', 'Recommendation:', 'Choices:', 'Help:']) {
-    assert.ok(phase2.includes(field), `Phase 2 example includes ${field}`);
-    assert.ok(readme.includes(field), `README example includes ${field}`);
+    'labelled `(Recommended)`',
+  ]) assert.ok(planFlat.includes(phrase), `Plan documents ${phrase}`);
+  // #108's contract is gone on purpose.
+  for (const gone of ['**Meaning**', '**Choices**', '**Help**', 'Explain this`', "I don't know", 'at most 100 words'])
+    assert.ok(!plan.includes(gone), `Plan no longer documents ${gone}`);
+  for (const text of [winston, readme])
+    assert.ok(!/`Explain this`|`I don't know`|Meaning:|Choices:|Help:/.test(text), 'old reply words and labels are gone');
+
+  // The example: labels in order, Explain option last among the options.
+  for (const [name, text] of [['SKILL.md', plan], ['README', readme]]) {
+    const fields = ['User draft:', 'Decision Point:', 'Explanation:', 'Recommendation:', 'Options:', '(Recommended)', `3. ${explain}`];
+    let at = -1;
+    for (const field of fields) {
+      const position = text.indexOf(field, at + 1);
+      assert.ok(position > at, `${name} example has ${field} in order`);
+      at = position;
+    }
+    const explanation = text.match(/^Explanation: “([^”]*)”$/m);
+    assert.ok(explanation, `${name} example has an Explanation line`);
+    assert.ok(explanation[1].split(/\s+/).length <= 50, `${name} example Explanation is 50 words or fewer`);
   }
-  assert.ok(readme.includes('Help is text guidance, not an extra decision option'));
-  assert.ok(readme.includes('If there is no safe recommendation, Winston says so'));
+
+  // Setup step 9 uses the same format, and the Explain option is never an approval.
+  const step9 = flat(winston.slice(winston.indexOf('9. Ask every independent setup decision'), winston.indexOf('10. Confirm that the setup actions')));
+  for (const phrase of [
+    "Plan mode's question format",
+    '**Decision Point**',
+    '50 words or fewer',
+    '**Recommendation**',
+    'at most three real options',
+    'the recommended one first and labelled `(Recommended)`',
+    `\`${explain}\` last, before the box's automatic "Other" entry`,
+    'Recommendation reads exactly `No safe recommendation yet` plus the reason and no option is labelled `(Recommended)`',
+    'silence, or a general go-ahead is not an answer',
+    'it is never an answer or an approval, so it cannot satisfy a gate-ledger entry, a pre-approval, or any gated action',
+    'selection of a real option (never the Explain option) is the approval',
+  ]) assert.ok(step9.includes(phrase), `Setup step 9 documents ${phrase}`);
+
+  const readmeFlat = flat(readme);
+  for (const phrase of [
+    'Each turn is the question box alone, with no prose above it.',
+    '**Decision Point**', '**Explanation**', '**Recommendation**',
+    '50 words or fewer',
+    'at most three real choices',
+    `**${explain}** as the last option`,
+    'never counts as an approval',
+    'If there is no safe recommendation, Winston says so',
+  ]) assert.ok(readmeFlat.includes(phrase), `README documents ${phrase}`);
 });
 
 test('doctor on a repo with no config says it is not set up and points at init', (t) => {

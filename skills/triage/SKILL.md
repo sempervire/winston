@@ -54,7 +54,8 @@ Otherwise do the read yourself with `gh api graphql`, to the same contract:
    items from this repository and their Status (and Priority, from `board.priorityField`).
    Pass `includeArchived`-style options explicitly where the API offers them: an issue closed,
    archived off the board and later reopened is open work. Apply the policy's scope (statuses,
-   milestones, excluded labels) to that list.
+   milestones, excluded labels) to that list. Any other board read in this pass follows
+   `../winston/board-read.md`.
 2. **Content**: for every in-scope issue, title, body, labels, milestone, and **every
    comment**, in aliased batches rather than one call per issue. Page any comment connection
    whose `totalCount` exceeds what came back.
@@ -78,9 +79,10 @@ truncated or unreadable, the diff would lie, **stop** rather than reading silenc
 board.
 
 Otherwise compare the two complete lists yourself: every open issue in the repository
-(`gh issue list --state open --limit <N> --json number`, where a result at the limit is
-truncated — widen it or stop) against every open issue the board returned. Guard both sides
-before diffing; a truncated side is exit 2.
+(the open-issue list in `../winston/board-read.md`, relative to this skill's directory, where a
+result at the limit is truncated — widen it or stop) against every open issue the board
+returned. Guard both sides
+before diffing; a truncated side is exit 1, the shared command's own exit code.
 
 **A left-only number is an open issue no board-scoped query returns.** Name every one of
 them at the top of the report, and **do not describe the pass as covering the board** while
