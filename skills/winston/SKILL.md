@@ -132,10 +132,12 @@ decision inline, one at a time, then run Setup (below).
 **Work set.** With no issues named and no brief, the work set defaults to every free `Ready`
 issue (Setup step 3), shown in Setup's issue list for the owner to trim. Ask a question only when
 `Ready` is empty or every `Ready` issue is claimed. A Build run from a plan settled in this chat,
-or a session started from a handoff brief, whose work set comes out empty (for example, it names no issues and no free `Ready`
-issue exists) also asks what to build, in a question box with clear options (for example, issues
-the owner names, or drafting a plan with `/winston plan`), and does not redirect to Plan. Setup
-continues only once the owner has named work.
+or a session started from a handoff brief, whose work set comes out empty (for example, it names
+no issues and no free `Ready` issue exists) also asks what to build, in a question box with clear
+options, and does not redirect to Plan on its own. The options can be issues or work for the owner
+to name, or, if the owner chooses it, stopping Build to draft a plan with `/winston plan`, in which
+case nothing starts. Once the owner names work, Setup continues with it as the work set; that
+answer is not the start authorization, and step 10 still follows.
 
 **One authorization.** `/winston build` begins Setup preparation: resource claims (the
 orchestrator, step 1, and any resource a plan lane's probe touches, step 5), verification
@@ -158,10 +160,8 @@ until the owner gives it; only step 5's read-only verification-plan lanes run be
 Because a handoff brief naming issues is itself a plan source, the first two cannot arise in a
 session started from one, and that session raises a contradiction as an inline decision (the
 decline path below) instead of redirecting. A session started from a handoff brief that names no
-issues does not redirect either: its work set is the free `Ready` issues (Setup step 3), and it
-raises any unplanned one as an inline decision instead of redirecting, taking the decline path
-below (drop it and continue with the rest) unless the owner names a plan for it; if the work set
-is left empty, it asks what to build (Work set, above).
+issues does not redirect either. Its work set is every free `Ready` issue (Setup step 3); it drops
+any unplanned one from the work set, says so, and continues Setup with the rest.
 
 The redirect names the exact command to run, such as `/winston plan #44` for the unplanned issue
 or `/winston plan <draft>` with the draft filled in, puts that command on the clipboard

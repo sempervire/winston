@@ -83,7 +83,8 @@ from a handoff brief never goes to Plan and raises a contradiction between the b
 issues as an inline question instead. See [Commands](#commands).
 
 Plan uses a no-naked-question format for each decision. Each turn is the question box alone, with
-no prose above it. Its text has three labels, in order: **Decision Point** states the decision in
+no prose above it. The one exception is a single opening line when your last answer changed the
+remaining decisions (plus the explanation the Explain option below gives when you choose it). Its text has three labels, in order: **Decision Point** states the decision in
 plain English, **Explanation** gives the decision and its context in 50 words or fewer, and
 **Recommendation** names Winston's suggested choice and reason. The box offers at most three real
 choices, the recommended one first, then **Explain this further and help me decide** as the last
