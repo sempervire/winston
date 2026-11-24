@@ -167,7 +167,8 @@ test('root Winston orients to ready to build, and Build takes any of three plan 
   assert.match(flat, /a settled plan becomes work only through Build, once the owner gives Setup step 10's single authorization to start/);
   assert.match(readmeFlat, /a session started from a handoff brief never goes to Plan and raises a contradiction between the brief and its issues as an inline question instead/);
   assert.match(readmeFlat, /A session started from a handoff brief never goes to Plan: it raises a contradiction as an inline question instead/);
-  assert.match(build, /only execution authorization is Setup step 10's separate authorization to start the session; Build asks for no earlier one/);
+  // #117: pin the load-bearing sentences, not phrase counts. Step 10 is the run's only start authorization, Build asks for no earlier one, and a handoff does not skip it.
+  assert.match(build, /Setup step 10's separate authorization to start the session is the only authorization to start the run; Build asks for no earlier one, and every Build run asks it once, including a run started from a handoff brief/);
   assert.match(build, /No implementation lane starts and nothing is built or merged until the owner gives it; only step 5's read-only verification-plan lanes run before it/);
   assert.match(build, /Build redirects to Plan only for a concrete blocker it cannot build from/);
   assert.match(build, /unplanned issues outside the work set block nothing/);
@@ -189,7 +190,7 @@ test('root Winston orients to ready to build, and Build takes any of three plan 
 
   const setup = flat.slice(flat.indexOf('## Setup'), flat.indexOf('### Known possible stops'));
   assert.match(setup, /Nothing but step 5's plan lanes starts until the owner authorizes this final plan/);
-  assert.match(setup, /This is the run's only execution authorization \(Build mode\)/);
+  assert.match(setup, /This is the only authorization to start the run \(Build mode\), and every Build run asks it once, including a run started from a handoff brief/);
   assert.match(setup, /Where Build mode's plan source names issues \(a settled plan or a handoff brief\), those are the work set instead, still checked against other sessions' claims, branches and open PRs/);
   assert.match(flat, /description: .*`\/winston build` to start Build from a settled plan, planned Ready issues or a handoff brief/);
   assert.match(setup, /one-line reminder that `\/winston plan` is available any time to firm up the plan/);
