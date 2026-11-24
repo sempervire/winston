@@ -130,8 +130,10 @@ decision inline, one at a time, then run Setup (below).
 issue (Setup step 3), shown in Setup's issue list for the owner to trim. Ask a question only when
 `Ready` is empty or every `Ready` issue is claimed.
 
-**One authorization.** `/winston build` begins Setup preparation: claims, verification plans,
-permissions and the gate ledger (Setup steps 1-9). None of it implements anything. The run's
+**One authorization.** `/winston build` begins Setup preparation: resource claims (the
+orchestrator, step 1, and any resource a plan lane's probe touches, step 5), verification
+plans, permissions and the gate ledger (Setup steps 1-9). None of it implements anything.
+Issue claims wait for step 11, after step 10's authorization. The run's
 only execution authorization is Setup step 10's separate authorization to start the session;
 Build asks for no earlier one. No implementation lane starts and nothing is built or merged
 until the owner gives it; only step 5's read-only verification-plan lanes run before it.
@@ -520,8 +522,8 @@ recommended option first. Never end on a bare statement.
 
 Take a draft plan and refine it into one the user is ready to execute:
 `/winston plan #44`. Two phases: evaluate once, then iterate one decision at a time. Plan mode
-never claims, dispatches build lanes, or edits code; a settled plan becomes work only through a
-separately authorized Build session.
+never claims, dispatches build lanes, or edits code; a settled plan becomes work only through
+Build, once the owner gives Setup step 10's single authorization to start.
 
 During Phase 2, ask one decision per turn even when the current project's general
 communication rules prefer batching questions. Each answer can change the remaining decision

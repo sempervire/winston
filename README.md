@@ -78,7 +78,9 @@ starts from any one of a plan settled in this chat, free `Ready` issues with tri
 comments, or a handoff brief naming issues. When free planned `Ready` issues exist, `/winston`
 reports **ready to build** and recommends `/winston build`. Build checks the work inline,
 prepares setup without building anything, and asks once, at the end of setup, for the
-authorization to start. See [Commands](#commands).
+authorization to start. It sends you to Plan only for a concrete blocker; a session started
+from a handoff brief never goes to Plan and raises a contradiction between the brief and its
+issues as an inline question instead. See [Commands](#commands).
 
 Plan uses a no-naked-question format for each decision: **Meaning** translates the technical
 choice into plain English, **Recommendation** gives Winston's suggested choice and reason,
@@ -315,7 +317,7 @@ trust them once.
 |---|---|
 | `/winston` | Orientation home. Reports the current same-session situation, one recommended next action, and plain-language alternatives; it never implicitly starts Build. With free `Ready` issues that have plans it reports **ready to build** and recommends `/winston build`, with Plan as an alternative. |
 | `/winston plan <draft>` | Turn a draft plan into a settled one, one decision at a time. Never implements. |
-| `/winston build` | Explicitly enter Build. Any one of a plan settled in this chat, free `Ready` issues with plans, or a handoff brief naming issues is enough; with none named it takes every free `Ready` issue. It evaluates inline, prepares setup without implementing, and asks for one authorization, at the end of setup, before anything is built. It sends you to Plan only for a concrete blocker (no issues at all, a `Ready` issue with no plan, or a brief that contradicts its issues), with the exact `/winston plan` command on the clipboard and what it does if you decline. |
+| `/winston build` | Explicitly enter Build. Any one of a plan settled in this chat, free `Ready` issues with plans, or a handoff brief naming issues is enough; with none named it takes every free `Ready` issue. It evaluates inline, prepares setup without implementing, and asks for one authorization, at the end of setup, before anything is built. It sends you to Plan only for a concrete blocker (no issues at all, a `Ready` issue with no plan, or a brief that contradicts its issues), with the exact `/winston plan` command on the clipboard and what it does if you decline. A session started from a handoff brief never goes to Plan: it raises a contradiction as an inline question instead. |
 | `/winston:triage` | Whole-board triage pass under the repo's own policy (`TRIAGE.md`). |
 | `/winston:radar` | What to work on next, batched into the time you have. |
 | `/winston:verdict` | Debbie (is it worth doing?) and Sheldon (is it true and well engineered?), together. Called `/winston:consult` before 0.1.15. |

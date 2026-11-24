@@ -160,6 +160,13 @@ test('root Winston orients to ready to build, and Build takes any of three plan 
   assert.match(build, /the work set defaults to every free `Ready` issue \(Setup step 3\)/);
   assert.match(build, /Ask a question only when `Ready` is empty or every `Ready` issue is claimed/);
   assert.match(build, /None of it implements anything/);
+  assert.match(build, /Setup preparation: resource claims \(the orchestrator, step 1, and any resource a plan lane's probe touches, step 5\)/);
+  assert.match(build, /Issue claims wait for step 11, after step 10's authorization/);
+  assert.doesNotMatch(build, /Setup preparation: claims,/);
+  assert.match(flat, /On authorization: claim each approved issue/);
+  assert.match(flat, /a settled plan becomes work only through Build, once the owner gives Setup step 10's single authorization to start/);
+  assert.match(readmeFlat, /a session started from a handoff brief never goes to Plan and raises a contradiction between the brief and its issues as an inline question instead/);
+  assert.match(readmeFlat, /A session started from a handoff brief never goes to Plan: it raises a contradiction as an inline question instead/);
   assert.match(build, /only execution authorization is Setup step 10's separate authorization to start the session; Build asks for no earlier one/);
   assert.match(build, /No implementation lane starts and nothing is built or merged until the owner gives it; only step 5's read-only verification-plan lanes run before it/);
   assert.match(build, /Build redirects to Plan only for a concrete blocker it cannot build from/);
