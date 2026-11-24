@@ -124,34 +124,84 @@ test('new issue filing is gated on both advisor responses and recorded feedback 
   assert.match(readme, /outside the gate's coverage/);
 });
 
-test('root Winston is orientation and Build is same-session Plan-first gated (#99)', () => {
+test('root Winston orients to ready to build, and Build takes any of three plan sources with one authorization (#111, #112, #103)', () => {
   const winston = readFileSync(join(ROOT, 'skills/winston/SKILL.md'), 'utf8');
   const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
   const flat = winston.replace(/\s+/g, ' ');
   const readmeFlat = readme.replace(/\s+/g, ' ');
   assert.match(flat, /Bare `\/winston` is a read-only orientation home/);
   assert.match(flat, /It does not claim work, dispatch lanes, edit code, or start Build setup/);
-  for (const state of ['setup needed', 'ready to plan', 'plan in progress', 'plan settled', 'build in progress', 'safe to finish']) {
+  for (const state of ['setup needed', 'ready to build', 'ready to plan', 'plan in progress', 'plan settled', 'build in progress', 'safe to finish']) {
     assert.match(flat, new RegExp(`\\*\\*${state}\\*\\*`), `orientation names ${state}`);
   }
-  const precedence = 'setup needed > build in progress > plan in progress > plan settled > ready to plan';
+  const precedence = 'setup needed > build in progress > plan in progress > plan settled > ready to build > ready to plan';
   assert.ok(flat.includes(precedence), 'orientation defines the required precedence');
+  assert.match(flat, /\*\*ready to build\*\* — setup is complete, no plan is active in this chat, and free `Ready` issues with plans \(triage `## Plan` comments\) exist/);
+  assert.match(flat, /\*\*ready to plan\*\* — setup is complete, no plan is active, and there are no free `Ready` issues or none of them has a plan/);
   assert.match(flat, /Report \*\*safe to finish\*\* only when no higher state applies/);
   assert.match(flat, /Do not infer a settled plan, build, or verification state from another session/);
+  const orientation = flat.slice(flat.indexOf('## Orientation mode'), flat.indexOf('## Build mode'));
+  assert.match(orientation, /`\/winston build` for plan settled; `\/winston build` for ready to build, with `\/winston plan <draft>` listed as an alternative/);
+  assert.match(orientation, /`\/winston plan <draft>` for ready to plan/);
+  assert.doesNotMatch(orientation, /separate execution authorization for plan settled/);
 
-  const build = flat.slice(flat.indexOf('## Build mode'));
-  assert.match(build, /`\/winston build` is the explicit same-session entry/);
-  assert.match(build, /Plan mode has written a settled plan in the current chat/);
-  assert.match(build, /owner has separately authorized execution/);
-  assert.match(build, /`\/winston plan <draft>` comes first/);
-  assert.match(build, /no claims, dispatches, lane starts, or other writes/);
-  assert.match(build, /If a settled plan exists but the owner has not separately authorized execution/);
-  assert.match(build, /Do not send the user back to Plan/);
-  assert.match(build, /After both same-session conditions hold, run the existing Build setup and execution rules below/);
+  const invocation = flat.slice(flat.indexOf('## Invocation'), flat.indexOf('## Orientation mode'));
+  assert.match(invocation, /`\/winston build`.*Any one of a plan settled in this chat, free `Ready` issues with plans on the board, or a handoff brief naming issues meets its plan gate/);
+  assert.doesNotMatch(invocation, /only after Plan mode has produced a settled plan/);
+
+  const build = flat.slice(flat.indexOf('## Build mode'), flat.indexOf('## Opt-in projects mode'));
+  assert.match(build, /\*\*Any one\*\* of these three meets its plan gate; a plan settled in this chat is not required/);
+  assert.match(build, /\(a\) a plan Plan mode settled in this chat/);
+  assert.match(build, /\(b\) free `Ready` issues on the board that have plans \(triage `## Plan` comments\)/);
+  assert.match(build, /\(c\) a handoff brief naming issues/);
+  assert.match(build, /A session started from a handoff brief goes straight into Build; it never redirects to Plan/);
+  assert.match(build, /Build evaluates as part of itself; it needs no Plan mode/);
+  assert.match(build, /Raise any open decision inline, one at a time, then run Setup/);
+  assert.match(build, /the work set defaults to every free `Ready` issue \(Setup step 3\)/);
+  assert.match(build, /Ask a question only when `Ready` is empty or every `Ready` issue is claimed/);
+  assert.match(build, /None of it implements anything/);
+  assert.match(build, /Setup preparation: resource claims \(the orchestrator, step 1, and any resource a plan lane's probe touches, step 5\)/);
+  assert.match(build, /Issue claims wait for step 11, after step 10's authorization/);
+  assert.doesNotMatch(build, /Setup preparation: claims,/);
+  assert.match(flat, /On authorization: claim each approved issue/);
+  assert.match(flat, /a settled plan becomes work only through Build, once the owner gives Setup step 10's single authorization to start/);
+  assert.match(readmeFlat, /a session started from a handoff brief never goes to Plan and raises a contradiction between the brief and its issues as an inline question instead/);
+  assert.match(readmeFlat, /A session started from a handoff brief never goes to Plan: it raises a contradiction as an inline question instead/);
+  assert.match(build, /only execution authorization is Setup step 10's separate authorization to start the session; Build asks for no earlier one/);
+  assert.match(build, /No implementation lane starts and nothing is built or merged until the owner gives it; only step 5's read-only verification-plan lanes run before it/);
+  assert.match(build, /Build redirects to Plan only for a concrete blocker it cannot build from/);
+  assert.match(build, /unplanned issues outside the work set block nothing/);
+  assert.match(build, /that session raises a contradiction as an inline decision \(the decline path below\) instead of redirecting/);
+  for (const blocker of ['no issues anywhere', 'a `Ready` issue in the work set with no plan', 'a contradiction between the brief and the issues']) {
+    assert.ok(build.includes(blocker), `Build names the blocker: ${blocker}`);
+  }
+  assert.match(build, /names the exact command to run, such as `\/winston plan #44`/);
+  assert.match(build, /on the clipboard \(`pbcopy`\) and says so/);
+  assert.match(build, /states what Build does if the owner declines, so it is never a dead end/);
+  assert.match(build, /with no issues anywhere, Build works from issues or work the owner names in chat/);
+  assert.match(build, /it drops an unplanned issue from the work set and continues Setup with the rest/);
+  assert.match(build, /for a contradiction, it asks inline which side wins and continues/);
+  assert.match(build, /Every Setup ends with a one-line reminder that `\/winston plan` is available any time to firm up the plan/);
+  assert.match(build, /Build does not score how well-organized the work is/);
+  for (const gone of [/`\/winston plan <draft>` comes first/, /Plan mode has written a settled plan in the current chat/, /owner has separately authorized execution/, /After both same-session conditions hold/]) {
+    assert.doesNotMatch(build, gone, `the #99 Plan-first gate is gone: ${gone}`);
+  }
+
+  const setup = flat.slice(flat.indexOf('## Setup'), flat.indexOf('### Known possible stops'));
+  assert.match(setup, /Nothing but step 5's plan lanes starts until the owner authorizes this final plan/);
+  assert.match(setup, /This is the run's only execution authorization \(Build mode\)/);
+  assert.match(setup, /Where Build mode's plan source names issues \(a settled plan or a handoff brief\), those are the work set instead, still checked against other sessions' claims, branches and open PRs/);
+  assert.match(flat, /description: .*`\/winston build` to start Build from a settled plan, planned Ready issues or a handoff brief/);
+  assert.match(setup, /one-line reminder that `\/winston plan` is available any time to firm up the plan/);
 
   assert.match(readmeFlat, /Winston → Plan → Build → Check → Finish/);
   assert.match(readmeFlat, /`\/winston`.*never implicitly starts Build/);
-  assert.match(readmeFlat, /`\/winston build`.*no-write Plan-first redirect.*no authorization.*without writing/);
+  assert.match(readmeFlat, /\*\*ready to build\*\* and recommends `\/winston build`/);
+  assert.match(readmeFlat, /`\/winston build` \| Explicitly enter Build\. Any one of a plan settled in this chat, free `Ready` issues with plans, or a handoff brief naming issues is enough/);
+  assert.match(readmeFlat, /asks for one authorization, at the end of setup, before anything is built/);
+  assert.match(readmeFlat, /only for a concrete blocker/);
+  assert.doesNotMatch(readmeFlat, /no-write Plan-first redirect/);
+  assert.doesNotMatch(readmeFlat, /`\/winston build` and separately authorize execution/);
 });
 
 test('Plan and Setup use the Decision Point question format (#113)', () => {

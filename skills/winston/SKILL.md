@@ -1,6 +1,6 @@
 ---
 name: winston
-description: Winston, the orchestration persona for long unattended work sessions. Use when the user invokes /winston for orientation, `/winston plan <draft>` to turn a draft plan into a settled plan one decision at a time, or `/winston build` to explicitly begin an authorized same-session implementation.
+description: Winston, the orchestration persona for long unattended work sessions. Use when the user invokes /winston for orientation, `/winston plan <draft>` to turn a draft plan into a settled plan one decision at a time, or `/winston build` to start Build from a settled plan, planned Ready issues or a handoff brief, with one authorization at the end of setup before anything is implemented.
 ---
 
 # Winston
@@ -61,9 +61,10 @@ standards, or the repo's process rules.
   one recommended next action, and a few plain-language alternatives. It never starts Build
   setup merely because a `board` is configured.
 - `/winston plan <draft>`: **Plan mode** (below). It never implements.
-- `/winston build`: **Build mode** (below). In the same session it implements only after Plan
-  mode has produced a settled plan in the current chat and the owner has separately authorized
-  execution.
+- `/winston build`: **Build mode** (below). Any one of a plan settled in this chat, free `Ready`
+  issues with plans on the board, or a handoff brief naming issues meets its plan gate. It
+  evaluates inline and prepares Setup, which implements nothing; nothing is built until the
+  owner gives Setup step 10's single authorization to start.
 - `/winston handoff [focus]`: **Handoff mode** (below). It runs the closeout gate,
   composes a successor prompt, and prints it for a new session; it never opens a tab or
   starts another agent.
@@ -78,44 +79,89 @@ fix it.", not a mode to run in.
 ## Orientation mode — `/winston`
 
 Bare `/winston` is a read-only orientation home. It reports the current situation from facts
-available in this chat and the local setup, gives exactly one recommended next action, and
+available in this chat, the local setup and a fresh read of the board, gives exactly one recommended next action, and
 offers a few plain-language alternatives. It does not claim work, dispatch lanes, edit code,
 or start Build setup.
 
 The observable same-session states are:
 
 - **setup needed** — setup is incomplete; doctor/init is first.
-- **ready to plan** — setup is complete and no plan is active.
 - **plan in progress** — Plan mode has unresolved decisions.
 - **plan settled** — Plan mode has written its settled plan in the current chat.
-- **build in progress** — the owner separately authorized implementation and the existing Build
+- **ready to build** — setup is complete, no plan is active in this chat, and free `Ready`
+  issues with plans (triage `## Plan` comments) exist on the board. Free means free of other
+  sessions' claims, branches and open PRs, as in Setup step 3.
+- **ready to plan** — setup is complete, no plan is active, and there are no free `Ready`
+  issues or none of them has a plan.
+- **build in progress** — the owner gave Setup step 10's authorization and the existing Build
   workflow is running.
 - **safe to finish** — no implementation lane or required verification remains in this session.
 
 State precedence is: **setup needed > build in progress > plan in progress > plan settled >
-ready to plan**. Report **safe to finish** only when no higher state applies. Do not infer a
+ready to build > ready to plan**. Report **safe to finish** only when no higher state applies. Do not infer a
 settled plan, build, or verification state from another session; this slice has no cross-session
-state discovery or durable plan artifact.
+state discovery or durable plan artifact. Free `Ready` issues and their `## Plan` comments are
+board facts, read fresh for this orientation; they select **ready to build** and are never
+reported as a plan settled in this chat. Without a board, **ready to build** cannot apply.
 
 The recommendation follows the selected state: doctor/init for setup needed; continue Plan
-mode for plan in progress; `/winston build` followed by a separate execution authorization for
-plan settled; the running Build workflow for build in progress; `/winston plan <draft>` for
-ready to plan; and finish/check for safe to finish. Alternatives remain informational and do
-not bypass the selected state's gate.
+mode for plan in progress; `/winston build` for plan settled; `/winston build` for ready to
+build, with `/winston plan <draft>` listed as an alternative; the running Build workflow for
+build in progress; `/winston plan <draft>` for ready to plan; and finish/check for safe to
+finish. `/winston build` implements nothing before Setup step 10's authorization. Alternatives
+remain informational and do not bypass the selected state's gate.
 
 ## Build mode — `/winston build`
 
-`/winston build` is the explicit same-session entry to the existing Build workflow. Before any
-implementation, verify that Plan mode has written a settled plan in the current chat and that
-the owner has separately authorized execution. If no settled plan exists in this session, say
-that `/winston plan <draft>` comes first and perform no implementation: no claims, dispatches,
-lane starts, or other writes. A settled plan in another session does not satisfy this gate.
+`/winston build` is the explicit entry to the existing Build workflow. **Any one** of these
+three meets its plan gate; a plan settled in this chat is not required:
 
-If a settled plan exists but the owner has not separately authorized execution, say that the plan
-is ready and ask for that authorization; perform no implementation: no claims, dispatches, lane
-starts, or other writes. Do not send the user back to Plan. After both same-session conditions
-hold, run the existing Build setup and execution rules below; all downstream lane, verification,
-review, merge, and closeout rules remain in force.
+- (a) a plan Plan mode settled in this chat;
+- (b) free `Ready` issues on the board that have plans (triage `## Plan` comments);
+- (c) a handoff brief naming issues.
+
+A session started from a handoff brief goes straight into Build; it never redirects to Plan.
+
+**Inline evaluation.** Build evaluates as part of itself; it needs no Plan mode. Read the brief
+or settled plan against the issues (with their `## Plan` comments) and the repo. Raise any open
+decision inline, one at a time, then run Setup (below).
+
+**Work set.** With no issues named and no brief, the work set defaults to every free `Ready`
+issue (Setup step 3), shown in Setup's issue list for the owner to trim. Ask a question only when
+`Ready` is empty or every `Ready` issue is claimed.
+
+**One authorization.** `/winston build` begins Setup preparation: resource claims (the
+orchestrator, step 1, and any resource a plan lane's probe touches, step 5), verification
+plans, permissions and the gate ledger (Setup steps 1-9). None of it implements anything.
+Issue claims wait for step 11, after step 10's authorization. The run's
+only execution authorization is Setup step 10's separate authorization to start the session;
+Build asks for no earlier one. No implementation lane starts and nothing is built or merged
+until the owner gives it; only step 5's read-only verification-plan lanes run before it.
+
+**Plan advice.** Build redirects to Plan only for a concrete blocker it cannot build from:
+
+- no issues anywhere: no plan settled in this chat, no brief naming issues, and no free `Ready`
+  issue;
+- a `Ready` issue in the work set with no plan: no triage `## Plan` comment, and no plan settled
+  in this chat or handoff brief covering it (unplanned issues outside the work set block
+  nothing);
+- a contradiction between the brief and the issues.
+
+Because a handoff brief naming issues is itself a plan source, the first two cannot arise in a
+session started from one, and that session raises a contradiction as an inline decision (the
+decline path below) instead of redirecting.
+
+The redirect names the exact command to run, such as `/winston plan #44` for the unplanned issue
+or `/winston plan <draft>` with the draft filled in, puts that command on the clipboard
+(`pbcopy`) and says so, and states what Build does if the owner declines, so it is never a dead
+end: with no issues anywhere, Build works from issues or work the owner names in chat; it drops
+an unplanned issue from the work set and continues Setup with the rest; for a contradiction, it
+asks inline which side wins and continues. Every Setup ends with a one-line reminder that
+`/winston plan` is available any time to firm up the plan. Build does not score how
+well-organized the work is.
+
+After the gate is met, run the existing Build setup and execution rules below; all downstream
+lane, verification, review, merge, and closeout rules remain in force.
 
 ## Opt-in projects mode (Phase 0)
 
@@ -321,6 +367,8 @@ In order:
 3. Read `chattr state`. Choose every `Ready` issue on the configured board (config `board`:
    `owner`, `number`, `statuses`) that is free of other sessions' claims, branches, and open
    PRs. Radar may help, in a subagent. With no board, the work set is what the owner names.
+   Where Build mode's plan source names issues (a settled plan or a handoff brief), those are
+   the work set instead, still checked against other sessions' claims, branches and open PRs.
    Every board read in this skill (this one, the Release row's `Verified` list) reads the
    board whole as `board-read.md` in this skill's directory says, and a short read stops the step.
 4. Read each chosen issue in full. Walk its label, risk, merge path, and verification path
@@ -404,6 +452,8 @@ In order:
    Show the resulting work set and plan, then ask for a separate authorization to start the
    session. If an answer changes the plan, update the decision list and resolve any new
    questions before asking to start. Nothing but step 5's plan lanes starts until the owner authorizes this final plan.
+   This is the run's only execution authorization (Build mode). End the message with the
+   one-line reminder that `/winston plan` is available any time to firm up the plan.
 11. On authorization: claim each approved issue and `resource:chrome`, then begin.
 
 ### Known possible stops
@@ -480,8 +530,8 @@ recommended option first. Never end on a bare statement.
 
 Take a draft plan and refine it into one the user is ready to execute:
 `/winston plan #44`. Two phases: evaluate once, then iterate one decision at a time. Plan mode
-never claims, dispatches build lanes, or edits code; a settled plan becomes work only through a
-separately authorized Build session.
+never claims, dispatches build lanes, or edits code; a settled plan becomes work only through
+Build, once the owner gives Setup step 10's single authorization to start.
 
 During Phase 2, ask one decision per turn even when the current project's general
 communication rules prefer batching questions. Each answer can change the remaining decision
