@@ -73,8 +73,12 @@ Codex, ask Codex to run `winston ...`, and to use a skill such as `winston:init`
 Winston's own output uses the form for the app it runs in.
 
 Then `/winston` orients you in the current session. The intended flow is **Winston → Plan →
-Build → Check → Finish**: use `/winston plan <draft>` to settle a plan in this chat, then use
-`/winston build` and separately authorize execution. See [Commands](#commands).
+Build → Check → Finish**, and Plan is optional when the work is already planned: `/winston build`
+starts from any one of a plan settled in this chat, free `Ready` issues with triage `## Plan`
+comments, or a handoff brief naming issues. When free planned `Ready` issues exist, `/winston`
+reports **ready to build** and recommends `/winston build`. Build checks the work inline,
+prepares setup without building anything, and asks once, at the end of setup, for the
+authorization to start. See [Commands](#commands).
 
 Plan uses a no-naked-question format for each decision: **Meaning** translates the technical
 choice into plain English, **Recommendation** gives Winston's suggested choice and reason,
@@ -309,9 +313,9 @@ trust them once.
 
 | Command | What it does |
 |---|---|
-| `/winston` | Orientation home. Reports the current same-session situation, one recommended next action, and plain-language alternatives; it never implicitly starts Build. |
+| `/winston` | Orientation home. Reports the current same-session situation, one recommended next action, and plain-language alternatives; it never implicitly starts Build. With free `Ready` issues that have plans it reports **ready to build** and recommends `/winston build`, with Plan as an alternative. |
 | `/winston plan <draft>` | Turn a draft plan into a settled one, one decision at a time. Never implements. |
-| `/winston build` | Explicitly enter Build after Plan has settled a plan in the current chat and the owner separately authorizes execution; with no plan it gives a no-write Plan-first redirect, and with no authorization it asks for authorization without writing. |
+| `/winston build` | Explicitly enter Build. Any one of a plan settled in this chat, free `Ready` issues with plans, or a handoff brief naming issues is enough; with none named it takes every free `Ready` issue. It evaluates inline, prepares setup without implementing, and asks for one authorization, at the end of setup, before anything is built. It sends you to Plan only for a concrete blocker (no issues at all, a `Ready` issue with no plan, or a brief that contradicts its issues), with the exact `/winston plan` command on the clipboard and what it does if you decline. |
 | `/winston:triage` | Whole-board triage pass under the repo's own policy (`TRIAGE.md`). |
 | `/winston:radar` | What to work on next, batched into the time you have. |
 | `/winston:verdict` | Debbie (is it worth doing?) and Sheldon (is it true and well engineered?), together. Called `/winston:consult` before 0.1.15. |
