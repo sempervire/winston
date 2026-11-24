@@ -121,6 +121,9 @@ three meets its plan gate; a plan settled in this chat is not required:
 - (c) a handoff brief naming issues.
 
 A session started from a handoff brief goes straight into Build; it never redirects to Plan.
+That means a session whose first prompt is the successor prompt `/winston handoff` composes,
+containing its authorization contract (Handoff mode, below); a pasted copy counts. A prompt that
+only says it is a handoff, without that contract, is not one.
 
 **Inline evaluation.** Build evaluates as part of itself; it needs no Plan mode. Read the brief
 or settled plan against the issues (with their `## Plan` comments) and the repo. Raise any open
@@ -128,20 +131,25 @@ decision inline, one at a time, then run Setup (below).
 
 **Work set.** With no issues named and no brief, the work set defaults to every free `Ready`
 issue (Setup step 3), shown in Setup's issue list for the owner to trim. Ask a question only when
-`Ready` is empty or every `Ready` issue is claimed.
+`Ready` is empty or every `Ready` issue is claimed. A Build run from a plan settled in this chat,
+or a session started from a handoff brief, whose work set comes out empty (for example, it names no issues and no free `Ready`
+issue exists) also asks what to build, in a question box with clear options (for example, issues
+the owner names, or drafting a plan with `/winston plan`), and does not redirect to Plan. Setup
+continues only once the owner has named work.
 
 **One authorization.** `/winston build` begins Setup preparation: resource claims (the
 orchestrator, step 1, and any resource a plan lane's probe touches, step 5), verification
 plans, permissions and the gate ledger (Setup steps 1-9). None of it implements anything.
-Issue claims wait for step 11, after step 10's authorization. The run's
-only execution authorization is Setup step 10's separate authorization to start the session;
-Build asks for no earlier one. No implementation lane starts and nothing is built or merged
+Issue claims wait for step 11, after step 10's authorization. Setup step 10's separate
+authorization to start the session is the only authorization to start the run; Build asks for no
+earlier one, and every Build run asks it once, including a run started from a handoff brief. No implementation lane starts and nothing is built or merged
 until the owner gives it; only step 5's read-only verification-plan lanes run before it.
 
 **Plan advice.** Build redirects to Plan only for a concrete blocker it cannot build from:
 
 - no issues anywhere: no plan settled in this chat, no brief naming issues, and no free `Ready`
-  issue;
+  issue (a run with a plan settled in this chat, or a session started from a handoff brief, never
+  meets this blocker; with an empty work set it asks what to build, as in Work set above);
 - a `Ready` issue in the work set with no plan: no triage `## Plan` comment, and no plan settled
   in this chat or handoff brief covering it (unplanned issues outside the work set block
   nothing);
@@ -149,7 +157,11 @@ until the owner gives it; only step 5's read-only verification-plan lanes run be
 
 Because a handoff brief naming issues is itself a plan source, the first two cannot arise in a
 session started from one, and that session raises a contradiction as an inline decision (the
-decline path below) instead of redirecting.
+decline path below) instead of redirecting. A session started from a handoff brief that names no
+issues does not redirect either: its work set is the free `Ready` issues (Setup step 3), and it
+raises any unplanned one as an inline decision instead of redirecting, taking the decline path
+below (drop it and continue with the rest) unless the owner names a plan for it; if the work set
+is left empty, it asks what to build (Work set, above).
 
 The redirect names the exact command to run, such as `/winston plan #44` for the unplanned issue
 or `/winston plan <draft>` with the draft filled in, puts that command on the clipboard
@@ -436,7 +448,8 @@ In order:
    `(Recommended)`, then `Explain this further and help me decide` last, before the box's
    automatic "Other" entry. When no safe recommendation exists, Recommendation reads exactly
    `No safe recommendation yet` plus the reason and no option is labelled `(Recommended)`. Selecting that Explain option gives a short
-   plain-language explanation and re-asks the same question; it is never an answer or an
+   plain-language explanation and re-asks the same question (when questions are batched, only
+   the question it was chosen on, not the whole batch); it is never an answer or an
    approval, so it cannot satisfy a gate-ledger entry, a pre-approval, or any gated action. Batch the questions in one setup round where the interface
    permits; ask dependent questions after their prerequisites are answered. This skill requires
    question boxes as its standing setup behavior, even where the repository's general chat
@@ -452,7 +465,9 @@ In order:
    Show the resulting work set and plan, then ask for a separate authorization to start the
    session. If an answer changes the plan, update the decision list and resolve any new
    questions before asking to start. Nothing but step 5's plan lanes starts until the owner authorizes this final plan.
-   This is the run's only execution authorization (Build mode). End the message with the
+   This is the only authorization to start the run (Build mode), and every Build run asks it
+   once, including a run started from a handoff brief; step 9's answers are per-gate
+   pre-approvals, never a start. End the message with the
    one-line reminder that `/winston plan` is available any time to firm up the plan.
 11. On authorization: claim each approved issue and `resource:chrome`, then begin.
 
@@ -509,8 +524,11 @@ secrets and personally identifiable information. Include:
 The authorization contract records what the user authorized for the unfinished task, its exact
 scope, explicit restrictions and pending approvals. Quote the relevant user instruction when
 practical, and distinguish confirmed authorization from inference. Authorization belongs to
-the bounded task and survives the handoff. Approved implementation continues without
-reapproval solely because the session changed. Planning-only and read-only tasks remain so,
+the bounded task and survives the handoff. The gates and pre-approvals the contract carries
+need no reapproval solely because the session changed. They do not cover the start: a successor
+that runs Build still asks Setup step 10's authorization to start, once, because step 10
+authorizes the final plan the successor's own Setup produces, and a quoted authorization in the
+brief never stands in for that ask. Planning-only and read-only tasks remain so,
 including in a successor running with permissive CLI settings. A changed focus does not
 inherit unrelated permissions. CLI permission mode is not user authorization, and cached
 tool approvals do not transfer.
@@ -539,8 +557,9 @@ queue; redraft only the turns it affects before posting the next one. All other 
 still apply.
 
 Every Phase 2 turn follows the same no-naked-question contract. The turn is the question box
-alone: no prose paragraph above it and none after it, except the single opening line that says an
-answer changed the queue (see Phase 2). The box's question text has these labels, in this order:
+alone: no prose paragraph above it and none after it. The only prose a turn may add is the
+single opening line that says an answer changed the queue (see Phase 2), and the explanation the
+`Explain this further and help me decide` option produces when the user selects it. The box's question text has these labels, in this order:
 **Decision Point**, **Explanation**, **Recommendation**. Decision Point states the decision in
 plain English. Explanation gives the decision and its context in 50 words or fewer; count the
 words. Recommendation names one option and gives one short reason. There are no Choices or Help
@@ -613,7 +632,7 @@ Work the queue from the top. Each turn posts one decision and nothing else:
    is also what the run takes if the user says nothing, so silence is a valid reply when a safe
    recommendation exists.
 
-One decision per turn, and no prose before or after the box. Never ask the next question before
+One decision per turn, with no prose beyond what the no-naked-question contract above allows. Never ask the next question before
 the current one is answered.
 
 After each answer, fold it into the plan and recompute the queue. An answer can settle a later
