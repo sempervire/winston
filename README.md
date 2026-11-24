@@ -76,22 +76,27 @@ Then `/winston` orients you in the current session. The intended flow is **Winst
 Build → Check → Finish**: use `/winston plan <draft>` to settle a plan in this chat, then use
 `/winston build` and separately authorize execution. See [Commands](#commands).
 
-Plan uses a no-naked-question format for each decision: **Meaning** translates the technical
-choice into plain English, **Recommendation** gives Winston's suggested choice and reason,
-**Choices** lists only that decision's alternatives, and **Help** says how to get unstuck. Reply
-`Explain this` to get an unfamiliar term explained, or `I don't know` to hear Winston's
-recommendation again. Help is text guidance, not an extra decision option, and Plan still asks one
-decision at a time. If there is no safe recommendation, Winston says so and silence does not
-advance the plan.
+Plan uses a no-naked-question format for each decision. Each turn is the question box alone, with
+no prose above it. Its text has three labels, in order: **Decision Point** states the decision in
+plain English, **Explanation** gives the decision and its context in 50 words or fewer, and
+**Recommendation** names Winston's suggested choice and reason. The box offers at most three real
+choices, the recommended one first, then **Explain this further and help me decide** as the last
+option before the box's own free-text entry. Choosing it gets a short plain-language explanation
+and the same question again; it never settles the decision and never counts as an approval. Plan
+still asks one decision at a time. If there is no safe recommendation, Winston says so and silence
+does not advance the plan.
 
 Example:
 
 ```text
 User draft: “I'm adding profile photo uploads.”
-Meaning: “Where should uploaded photos live?”
-Recommendation: “Use local storage for the first version because this is a local prototype and easy to replace.”
-Choices: “Local disk” or “Object storage”
-Help: “Reply Explain this for a plain-language explanation, or I don't know to hear the recommendation again.”
+Decision Point: “Where should uploaded photos live?”
+Explanation: “Photos need a home. Local disk is simple and free but is lost if the server is replaced. Object storage (such as S3) survives server changes and scales, but adds an account, cost and setup.”
+Recommendation: “Local disk, because this is a local prototype and storage is easy to swap later.”
+Options:
+1. Local disk (Recommended)
+2. Object storage
+3. Explain this further and help me decide
 ```
 
 ### New-issue review gate
