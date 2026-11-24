@@ -58,9 +58,8 @@ work may have moved: after a merge, an issue close, or when results are more tha
 old. Adapt these to your repository:
 
 ```sh
-gh issue list --state open --limit 5000 --json number,title,labels \
-  --jq 'if length >= 5000 then error("issue list reached its limit of 5000; it may be short") else .[] end'
-gh pr list --state open --json number,title,headRefName,statusCheckRollup
+gh issue list --state open --limit 5000 --json number,title,labels --jq 'if length >= 5000 then error("issue list reached its limit of 5000; it may be short") else .[] end'
+gh pr list --state open --limit 1000 --json number,title,headRefName,statusCheckRollup
 git branch --show-current
 git log --oneline -10
 ```

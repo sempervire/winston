@@ -87,16 +87,32 @@ test('every skill that reads the board or lists open issues cites the shared ins
   }
 });
 
-test('no skill hardcodes an unchecked capped board or issue read', () => {
+test('no skill hardcodes an uncapped or unchecked list read', () => {
   for (const { path, text } of docs) {
     if (path === SHARED) continue;
-    for (const [line] of text.matchAll(/^.*gh (?:project item-list|issue list)\b.*$/gm)) {
-      const limit = line.match(/--limit (\d+)/)?.[1];
-      // `--limit 1` picks any one issue (init's triage self-test); it is not a list to count.
-      if (!limit || limit === '1') continue;
-      assert.ok(Number(limit) >= 1000 && /error\(/.test(line + text.slice(text.indexOf(line) + line.length).split('\n')[1]), `${path}: "${line.trim()}" caps a read without a count check`);
-    }
+    const lines = text.split('\n');
+    lines.forEach((line, i) => {
+      for (const [, kind, args] of line.matchAll(/gh (project item-list|issue list|pr list)\b([^`\n]*)/g)) {
+        // A bare mention in prose ("one `gh project item-list` call") has no arguments; it is not a command.
+        if (!args.trim()) continue;
+        assert.doesNotMatch(line, /\\\s*$/, `${path}:${i + 1}: "gh ${kind}" must be one line, not backslash-continued`);
+        const limit = args.match(/(?:--limit|-L)[ =](\d+)/)?.[1];
+        // A read with no --limit gets gh's default of 30, silently.
+        assert.ok(limit, `${path}:${i + 1}: "${line.trim()}" has no --limit (gh returns only 30)`);
+        // `--limit 1` picks any one issue (init's triage self-test); it is not a list to count.
+        if (limit === '1') continue;
+        if (kind === 'pr list') continue;
+        assert.ok(Number(limit) >= 1000 && /error\(/.test(args), `${path}:${i + 1}: "${line.trim()}" caps a read without a count check`);
+      }
+    });
     assert.doesNotMatch(text, /item-list[^\n]*--limit 100\b/, `${path} reads the board at --limit 100`);
+  }
+});
+
+test('the shared commands are single lines', () => {
+  for (const heading of ['Board items', 'Open issues']) {
+    const block = shared.split(`## ${heading}`)[1].match(/```sh\n([\s\S]*?)```/)[1];
+    assert.equal(block.trim().split('\n').length, 1, `${heading}: one line, so a permission rule matches it as written`);
   }
 });
 

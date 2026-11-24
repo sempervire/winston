@@ -82,7 +82,7 @@ Otherwise compare the two complete lists yourself: every open issue in the repos
 (the open-issue list in `../winston/board-read.md`, relative to this skill's directory, where a
 result at the limit is truncated — widen it or stop) against every open issue the board
 returned. Guard both sides
-before diffing; a truncated side is exit 2.
+before diffing; a truncated side is exit 1, the shared command's own exit code.
 
 **A left-only number is an open issue no board-scoped query returns.** Name every one of
 them at the top of the report, and **do not describe the pass as covering the board** while
