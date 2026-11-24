@@ -321,6 +321,8 @@ In order:
 3. Read `chattr state`. Choose every `Ready` issue on the configured board (config `board`:
    `owner`, `number`, `statuses`) that is free of other sessions' claims, branches, and open
    PRs. Radar may help, in a subagent. With no board, the work set is what the owner names.
+   Every board read in this skill (this one, the Release row's `Verified` list) reads the
+   board whole as `board-read.md` in this skill's directory says, and a short read stops the step.
 4. Read each chosen issue in full. Walk its label, risk, merge path, and verification path
    end to end; collect every point where the session could stop.
 5. Build the **gate ledger**: for every chosen issue, walk its path to *closed* and list each

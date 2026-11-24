@@ -58,8 +58,8 @@ work may have moved: after a merge, an issue close, or when results are more tha
 old. Adapt these to your repository:
 
 ```sh
-gh issue list --state open --limit 100 --json number,title,labels
-gh pr list --state open --json number,title,headRefName,statusCheckRollup
+gh issue list --state open --limit 5000 --json number,title,labels --jq 'if length >= 5000 then error("issue list reached its limit of 5000; it may be short") else .[] end'
+gh pr list --state open --limit 1000 --json number,title,headRefName,statusCheckRollup
 git branch --show-current
 git log --oneline -10
 ```
@@ -67,6 +67,10 @@ git log --oneline -10
 Where config names a `board`, add its open items and their Status from `gh` (Projects v2 for
 `board.owner` / `board.number`), and `chattr state` so claimed work is not offered. If
 `chattr state` fails, say ownership is unknown.
+
+**Read the board and the issue list whole**, as `../winston/board-read.md` (relative to this
+skill's directory) says: a limit far above any real board, checked against the board's
+`totalCount`. A short read is reported with both numbers and Radar is not consulted on it.
 
 **Repository access is a hard prerequisite.** If a required read fails, stop. Report the failed
 read and its real error; do not consult Radar from stale or remembered state. Where a check comes
